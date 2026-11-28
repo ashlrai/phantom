@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cmdNodes } from '../src/cli/nodes.js';
 import type { HostStats, NodeRecord, NodesState } from '../src/core/drive/nodes/state.js';
 import { NODES_POOL_SCHEMA, poolText, readNodesPool } from '../src/core/fleet/nodes-pool.js';
+import { readNodesDoctor } from '../src/core/fleet/nodes-doctor.js';
 import type { NodesRegistry, NodesViewDeps } from '../src/core/fleet/nodes-view.js';
 import { createFleetNodesPoolApi } from '../src/core/verse/fleet-nodes-pool-api.js';
 
@@ -45,7 +46,7 @@ describe('readNodesPool', () => {
     expect(pool.nodes).toHaveLength(1);
     expect(pool.nodes[0]).toMatchObject({ name: 'node-a', isSelf: true, status: 'online', freeSlots: 3, jobsRunning: [], load: 1, freeMemoryBytes: 24 * GIB,
       freeMemoryPercent: 75, freeDiskGb: 214.7, offload: 'off', lastSeen: '2026-11-17T12:00:00.000Z' });
-    expect(pool.total).toMatchObject({ macs: 1, online: 1, freeSlots: 3, slotsUnknown: 0, jobsRunning: 0, line: '1 Mac, 3 free slots' });
+    expect(pool.total).toMatchObject({ macs: 1, online: 1, freeSlots: 3, slotsUnknown: 0, jobsRunning: 0, jobsUnknown: 0, line: '1 Mac, 3 free slots' });
     expect(poolText(pool).split('\n')[0]).toBe('1 Mac, 3 free slots. Offload is off on this Mac.');
     expect(poolText(pool)).toContain('● node-a (this Mac): online | 3 free slots | running nothing | load 1 | memory free 24.0 GB | disk free 214.7 GB | offload off | seen just now');
   });
@@ -60,7 +61,7 @@ describe('readNodesPool', () => {
     expect(pool.nodes.map(n => [n.name, n.status, n.freeSlots])).toEqual([['node-a', 'online', 4], ['node-b', 'online', 3], ['node-c', 'offline', 0]]);
     expect(pool.nodes[1]).toMatchObject({ freeDiskGb: 96.6, freeMemoryPercent: 50, load: 4, offload: 'unknown', jobsRunning: ['RQ-FOUR', 'RQ-ONE', 'RQ-THREE', 'RQ-TWO'] });
     expect(pool.nodes[2]).toMatchObject({ lastSeen: '2026-11-17T10:42:00.000Z', freeDiskGb: 'unknown', offload: 'unknown' });
-    expect(pool.total).toMatchObject({ macs: 3, online: 2, freeSlots: 7, jobsRunning: 4, line: '3 Macs, 7 free slots' });
+    expect(pool.total).toMatchObject({ macs: 3, online: 2, freeSlots: 7, jobsRunning: 4, jobsUnknown: 0, line: '3 Macs, 7 free slots' });
     const text = poolText(pool).split('\n');
     expect(text[0]).toBe('3 Macs, 7 free slots. Offload is on on this Mac.');
     expect(text.find(l => l.includes('node-b'))).toContain('running RQ-FOUR, RQ-ONE, RQ-THREE +1 more');
@@ -72,8 +73,24 @@ describe('readNodesPool', () => {
     const pool = readNodesPool({ view: deps([peer('node-b', true)], registry([node('node-a', { slots: 2 }), node('node-b', { slots: undefined })])), readOffload: () => false });
     const b = pool.nodes.find(n => n.name === 'node-b')!;
     expect(b).toMatchObject({ status: 'online', freeSlots: 'unknown', load: 'unknown', freeMemoryBytes: 'unknown', freeDiskGb: 'unknown', offload: 'unknown' });
-    expect(pool.total).toMatchObject({ macs: 2, freeSlots: 2, slotsUnknown: 1, line: '2 Macs, 2 free slots (1 not measured)' });
+    expect(pool.total).toMatchObject({ macs: 2, freeSlots: 2, slotsUnknown: 1, jobsUnknown: 0, line: '2 Macs, 2 free slots (1 not measured)' });
     expect(poolText(pool)).toContain('● node-b: online | free slots unknown | running nothing | load unknown | memory free unknown | disk free unknown | offload unknown');
+  });
+
+  it('a registry that cannot say what runs: the total counts only measured jobs and says how many Macs were skipped', () => {
+    // A pool worker reads the node list on the primary (source 'elsewhere',
+    // state null): every Mac's running count is unknown, so jobsRunning must
+    // not read as "0 jobs" for the whole pool.
+    const elsewhere: NodesRegistry = {
+      source: 'elsewhere', selfNode: 'node-a',
+      pool: { owner: 'acme', primary: 'primary-mac', backup: 'backup-mac' }, state: null,
+    };
+    const pool = readNodesPool({ view: deps([peer('node-b', true), peer('node-c', false)], elsewhere), readOffload: () => false });
+    expect(pool.nodes.map(n => [n.name, n.status, n.jobsRunning])).toEqual([
+      ['node-a', 'online', 'unknown'], ['node-b', 'online', 'unknown'], ['node-c', 'offline', 'unknown'],
+    ]);
+    expect(pool.total).toMatchObject({ macs: 3, online: 2, jobsRunning: 0, jobsUnknown: 2 });
+    expect(poolText(pool)).toContain('running unknown');
   });
 
   it('standalone registry: a peer named like a local node id never inherits this disk', () => {
@@ -84,6 +101,33 @@ describe('readNodesPool', () => {
       localRegistry([node('laptop', { hostStats: stats(8, 1, 55) })])), readOffload: () => false });
     expect(pool.nodes.find(n => n.isSelf)).toMatchObject({ freeDiskGb: 214.7 });
     expect(pool.nodes.find(n => n.name === 'laptop')).toMatchObject({ isSelf: false, freeDiskGb: 'unknown' });
+  });
+
+  it.each([
+    ['expired session', { expiresAt: NOW }, null],
+    ['stale sample', { hostStats: { ...stats(8, 1, 5), sampledAtMs: NOW - 300_000 } }, null],
+    ['future sample', { hostStats: { ...stats(8, 1, 5), sampledAtMs: NOW + 1 } }, null],
+    ['stale mirror', {}, NOW - 120_001],
+    ['future mirror', {}, NOW + 1],
+  ] as const)('reports remote disk as unknown with a %s', async (_reason, extra, mirrorAt) => {
+    const read = registry([node('node-b', { hostStats: stats(8, 1, 5), ...extra })]);
+    if (mirrorAt !== null) {
+      read.source = 'pool-mirror';
+      read.state!.observedAt = mirrorAt;
+    }
+    const view = deps([peer('node-b', true)], read);
+    expect(readNodesPool({ view, readOffload: () => false }).nodes[1]?.freeDiskGb).toBe('unknown');
+    const doctor = await readNodesDoctor({ view, probe: async () => null }, 'node-b');
+    expect(doctor.nodes[0]?.diskFreeGb).toBe('unknown');
+  });
+
+  it('uses the latest host sample even when another session sent a newer heartbeat', () => {
+    const read = registry([
+      node('node-b.local', { heartbeatAt: NOW, hostStats: { ...stats(8, 1, 5), sampledAtMs: NOW - 5_000 } }),
+      node('node-b', { hostStats: stats(8, 1, 0) }),
+    ]);
+    const view = deps([peer('node-b', true)], read);
+    expect(readNodesPool({ view, readOffload: () => false }).nodes[1]?.freeDiskGb).toBe(0);
   });
 
   it('a failing reader never throws: no registry and no setting read as unknown', () => {

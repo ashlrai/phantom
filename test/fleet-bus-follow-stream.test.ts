@@ -316,6 +316,9 @@ it('bus-follow rejects invalid arguments before touching the store', async () =>
     ['--after', '0', '--duration-ms', '100', '--job', 'RQ-1', '--job', 'RQ-2', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--from', 'bad label', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--exclude-from', 'bad label', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--to', 'worker-a', '--with', 'bad label', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--with', 'worker-b', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--to', 'worker-a', '--with', 'worker-b', '--with', 'worker-c', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--exclude-from=', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--exclude-from', 'worker-a', '--exclude-from', 'worker-b', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--priority', 'P9', '--root', root, '--json'],
@@ -499,6 +502,66 @@ it('composes --exclude-from with --to', async () => {
   expect(result.status).toBe('expired');
   expect(messages(records).map(row => row.envelope.id)).toEqual(['kept']);
   expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
+});
+
+it('delivers only the --to/--with pairwise exchange while checkpoints advance', async () => {
+  expect(registerAgentIdentity({ handle: 'worker-a', aliases: ['wa-alias'] }, { root }).status).toBe('created');
+  expect(registerAgentIdentity({ handle: 'worker-b', aliases: ['wb-alias'] }, { root }).status).toBe('created');
+  expect(registerAgentIdentity({ handle: 'worker-c' }, { root }).status).toBe('created');
+  expect(createAgentChannel({ name: 'eng', createdBy: 'worker-a', members: ['worker-b'] }, { root }).status).toBe('created');
+  post('b-direct', 'worker-a', { from: 'agent:worker-b' });
+  post('b-address', 'agent:worker-a', { from: 'wb-alias' });
+  post('c-direct', 'worker-a', { from: 'agent:worker-c' });
+  // A member-channel post the peer sent still streams under --to worker-a,
+  // but --with keeps only the identity-addressed exchange, so it drops out.
+  post('b-channel', 'group:eng:general', { from: 'agent:worker-b' });
+  post('b-bare', 'worker-a', { from: 'worker-b' });
+  post('b-reverse', 'worker-b', { from: 'agent:worker-a' });
+  const { records, pending, expire } = follow({ to: 'worker-a', with: 'worker-b' });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['b-direct', 'b-address', 'b-bare']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 6 });
+});
+
+it('rejects --with without --to as an invalid request', async () => {
+  const list = vi.fn(listBusInboxAfter);
+  for (const request of [{ with: 'worker-b' }, { with: 'worker-b', from: 'worker-a' }]) {
+    const { pending } = follow(request, { list });
+    const result = await pending;
+    expect(result.status).toBe('invalid');
+  }
+  expect(list).not.toHaveBeenCalled();
+});
+
+it('keeps exact-label --with matching when the peer resolves to no identity', async () => {
+  post('hit', 'worker-a', { from: 'worker-b' });
+  post('miss-sender', 'worker-a', { from: 'agent:worker-b' });
+  post('miss-recipient', 'worker-b', { from: 'worker-b' });
+  post('noise', 'worker-c', { from: 'worker-b' });
+  const { records, pending, expire } = follow({ to: 'worker-a', with: 'worker-b' });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['hit']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 4 });
+});
+
+it('filters the CLI stream by --with', async () => {
+  expect(registerAgentIdentity({ handle: 'worker-a' }, { root }).status).toBe('created');
+  expect(registerAgentIdentity({ handle: 'worker-b' }, { root }).status).toBe('created');
+  post('peer-dm', 'worker-a', { from: 'agent:worker-b' });
+  post('noise', 'worker-a');
+  post('peer-other', 'worker-b', { from: 'agent:worker-b' });
+  const emitted: string[] = [];
+  const code = await cmdFleetBusFollow(['--after', '0', '--duration-ms', '250', '--interval-ms', '100',
+    '--to', 'worker-a', '--with', 'worker-b', '--root', root, '--json'],
+    { emit: (json: string) => { emitted.push(json); } });
+  expect(code).toBe(0);
+  const rows = emitted.map(line => JSON.parse(line) as BusFollowRecord);
+  expect(messages(rows).map(row => row.envelope.id)).toEqual(['peer-dm']);
+  expect(rows.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
 });
 
 it('filters the CLI stream by --exclude-from', async () => {

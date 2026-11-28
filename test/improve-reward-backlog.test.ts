@@ -33,11 +33,12 @@ function rewardRow(spec: {
   merged?: boolean;
   recordedAtMs: number;
   dispatchedAtMs?: number;
+  mergedAtMs?: number;
   ciWallMs?: number | null;
 }): string {
   const merged = spec.merged ?? false;
   const dispatchedAtMs = spec.dispatchedAtMs ?? spec.recordedAtMs - 2 * HOUR;
-  const mergedAtMs = merged ? spec.recordedAtMs - HOUR : null;
+  const mergedAtMs = merged ? spec.mergedAtMs ?? spec.recordedAtMs - HOUR : null;
   return J({
     v: 1,
     jobId: spec.jobId,
@@ -121,7 +122,7 @@ describe('foldRewardJournal', () => {
     expect(rewardCells(fold)).toEqual([]);
   });
 
-  it('uses the first valid retained row before applying the time window', () => {
+  it('deduplicates before applying the lower window bound', () => {
     const rows = [
       held('old', NOW_MS - REWARD_BACKLOG_WINDOW_MS - DAY),
       notHeld('old', NOW_MS),
@@ -132,6 +133,28 @@ describe('foldRewardJournal', () => {
     expect(fold.records).toBe(1);
     expect(fold.invalidRows).toBe(1);
     expect(fold.pools.get('claude')).toMatchObject({ rows: 1, held: 1, notHeld: 0 });
+  });
+
+  it('excludes future reward timestamps before deduplicating jobs', () => {
+    const rows = [
+      held('recorded-later', NOW_MS + 1),
+      notHeld('recorded-later', NOW_MS, 'codex'),
+      rewardRow({ jobId: 'dispatch-later', recordedAtMs: NOW_MS, dispatchedAtMs: NOW_MS + 1 }),
+      rewardRow({ jobId: 'merge-later', recordedAtMs: NOW_MS, mergedAtMs: NOW_MS + 1, merged: true }),
+      rewardRow({
+        jobId: 'boundary', recordedAtMs: NOW_MS, dispatchedAtMs: NOW_MS, mergedAtMs: NOW_MS, merged: true,
+      }),
+    ].join('\n');
+    const before = foldRewardJournal(rows, NOW_MS, REWARD_BACKLOG_WINDOW_MS);
+    expect(before.invalidRows).toBe(0);
+    expect(before.records).toBe(2);
+    expect(before.pools.get('codex')).toMatchObject({ rows: 1, notHeld: 1 });
+    expect(before.pools.get('claude')).toMatchObject({ rows: 1, held: 1 });
+
+    const after = foldRewardJournal(rows, NOW_MS + 1, REWARD_BACKLOG_WINDOW_MS);
+    expect(after.records).toBe(4);
+    expect(after.pools.get('codex')).toBeUndefined();
+    expect(after.pools.get('claude')).toMatchObject({ rows: 4, held: 3, notHeld: 1 });
   });
 
   it('groups rows per pool and tallies unattributed rows separately', () => {
@@ -319,6 +342,21 @@ describe('rewardBacklogItems', () => {
     const heldRows = poolSeries('claude', 3, 2, (d, i) => held(`h${d}-${i}`, NOW_MS - d * DAY));
     const path = await ledger('led-trunc', [heldRows.join('\n'), ' '.repeat(17 * 1024 * 1024), ...notHeldRows]);
     expect(await rewardBacklogItems({ repo: 'ashlrai/phantom', ledgerPath: path, now: NOW_MS })).toEqual([]);
+  });
+
+  it.each(['{"v":', '{"v":1}'])('withholds collapse items with an invalid row (%s)', async (invalidRow) => {
+    const rows = [
+      ...poolSeries('claude', 2, 2, (d, i) => notHeld(`n${d}-${i}`, NOW_MS - d * DAY)),
+      held('h1', NOW_MS),
+      held('h2', NOW_MS - DAY),
+      held('h3', NOW_MS - DAY),
+    ];
+    const ledgerPath = await ledger('led-invalid', [...rows, invalidRow]);
+    const opts = { repo: 'ashlrai/phantom', ledgerPath, now: NOW_MS };
+    expect(await rewardBacklogItems(opts)).toEqual([]);
+
+    await writeFile(ledgerPath, rows.join('\n') + '\n');
+    expect(await rewardBacklogItems(opts)).toHaveLength(1);
   });
 
   it('waits until a future receipt enters the evidence window before emitting a brief', async () => {

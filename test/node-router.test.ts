@@ -65,6 +65,22 @@ describe('node router', () => {
     expect(f.box.plan()[0]!.nodeId).toBe('n');
   });
 
+  it('the gh-auth fix prints a runnable beat command naming the blocked node', () => {
+    const f = fixture();
+    const s = f.box.join('n', { owners: ['o'], caps: ['gh'] })!;
+    f.box.enqueue('j', { owner: 'o', requires: ['gh'] });
+    // `phm node beat --probe-auth` alone is a missing-flag error: the fix must
+    // carry the node id and live session so a first-run operator or agent can
+    // run it verbatim. One --probe-auth beat sticks — later beats only
+    // overwrite auth when they carry it.
+    const fix = f.box.plan()[0]!.fix!;
+    expect(fix).toContain('gh auth login');
+    expect(fix).toContain(`phm node beat --node n --session ${s.session} --probe-auth`);
+    // The printed command is the real fix: running that beat routes the job.
+    f.box.heartbeat(s, { auth: 'ok' });
+    expect(f.box.plan()[0]).toMatchObject({ jobId: 'j', nodeId: 'n' });
+  });
+
   it('skips expired nodes and tells the operator how to add one', () => {
     const f = fixture();
     f.box.join('n', { owners: ['o'] });
@@ -572,6 +588,16 @@ describe('phm node CLI', () => {
 
     const lanes = await cli('lanes', '--help');
     expect(lanes.out).toContain('phm node lanes [--json]');
+
+    // `replica` rides the pool dispatch but needs no pool enrollment, so its
+    // help is its own two usage lines — not the pool cluster or the full list.
+    const replica = await cli('replica', '--help');
+    expect(replica.code).toBe(0);
+    expect(replica.out).toContain('Usage: phm node replica status [--json]');
+    expect(replica.out).toContain('phm node replica sync [--leader <alias>]');
+    expect(replica.out).toContain('All node commands: phm node --help');
+    expect(replica.out).not.toContain('Usage: phm node bootstrap');
+    expect(replica.out).not.toContain('phm node pool --role');
 
     // Pool enrollment is `join --primary`, not the standalone fleet join.
     const joinPrimary = await cli('join', '--primary', 'mbp', '--help');

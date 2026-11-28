@@ -1,21 +1,59 @@
 /**
  * src/core/portfolio/scoring.ts — the single source of truth for WorkItem
- * priority scoring: the raw value/effort heuristic and the source-tier
- * weighting applied on top of it.
+ * priority scoring, WorkSource vocabulary, and pure validation guards shared
+ * across src/core/portfolio/ and src/cli/backlog*.
  *
- * A leaf module with no imports. It exists so that both the scanners (which
- * stamp a provisional score onto each item they emit) and backlog.ts (which
- * recomputes the authoritative score during `buildBacklog`) can share one
- * implementation. Previously scanners.ts re-inlined the formula to avoid a
- * cycle with backlog.ts and kept a comment promising the two stayed in sync;
- * they had already diverged. A leaf module removes the cycle risk that made
- * the copy seem necessary.
+ * A pure leaf module with zero runtime imports (type-only import of WorkSource
+ * is erased at compile time). Both scanners and backlog/queue modules share
+ * these definitions without introducing cycles or growing authority closures.
  *
  * backlog.ts re-exports `scoreItem` and `sourceTierMultiplier` so existing
  * importers keep working.
  *
  * Pure and deterministic.
  */
+
+import type { WorkSource } from '../types.js';
+
+/** Canonical list of all WorkItem sources; stays in lockstep with WorkSource. */
+export const WORK_SOURCES = [
+  'issue',
+  'todo',
+  'test',
+  'dep',
+  'doc',
+  'security',
+  'plugin',
+  'self',
+  'lint',
+  'goal',
+  'hygiene',
+  'invent',
+] as const satisfies readonly WorkSource[];
+
+const WORK_SOURCE_SET: ReadonlySet<string> = new Set(WORK_SOURCES);
+
+/** Type guard for canonical WorkSource strings. */
+export function isWorkSource(value: unknown): value is WorkSource {
+  return typeof value === 'string' && WORK_SOURCE_SET.has(value);
+}
+
+/** True when `value` is a non-null, non-array object. */
+export function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+const SHA256_HEX_RE = /^[a-f0-9]{64}$/;
+
+/** True when `value` is a lowercase 64-character hex SHA-256 digest string. */
+export function isSha256Hex(value: unknown): value is string {
+  return typeof value === 'string' && SHA256_HEX_RE.test(value);
+}
+
+/** Normalize Windows backslashes to POSIX forward slashes for path matching. */
+export function normalizePathSeparators(filePath: string): string {
+  return filePath.replace(/\\/g, '/');
+}
 
 /**
  * Priority score; higher = do first.

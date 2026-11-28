@@ -32,6 +32,13 @@ malformed. With no cutoff, all observation times are eligible.
 Zero suppresses idle alarms and null preserves unknown headroom. When the
 argument is omitted, the lane's target and running count supply headroom.
 
+`readStarved(...)` returns `StarvedRead.waiting_elsewhere` as a count of READY
+rows hinted to held or drained lanes when any lane is starved. An unknown READY
+count on a held or drained lane makes the total null. A snapshot with no starved
+lanes returns zero. `noticeText(line, waitingElsewhere)` accepts a nullable total
+and mentions waiting work only for a positive count. The CLI returns null for
+`waiting_elsewhere` when the starvation snapshot is unavailable.
+
 `unfedTickLanes(row)` (`src/core/fleet/unfed-market.ts`) reads a decoded
 `unfed_capacity` snapshot and returns its usable lane observations as
 `{ lane, slots, blocked }`. Each observation requires positive headroom
@@ -472,6 +479,13 @@ The same module exports `observedAttempts(entries, nowMs)` for journal
 consumers. It returns the earliest visible attempt per case-insensitive
 repository and workflow run ID. Conflicting head SHAs or sets of triggering
 test IDs clear both per-test fields while preserving the attempt count.
+`observedVerdicts(entries, nowMs)` returns the earliest visible verdict per
+case-insensitive repository and workflow run ID. Conflicting heads or verdicts
+withhold the run, and conflicting tests withhold per-test attribution.
+`attributedTestVerdicts(attempts, verdicts, nowMs)` takes these reconciled
+observations and retains verdicts with a matching repository, head SHA, run ID
+and single triggering test on an attempt inside the recurrence window and
+at or before the verdict.
 `src/core/fleet/ci-flakes.ts` exports `recurringFlakes(rows, opts?)`,
 `flakeJobId(repo, test)` and `enqueueFlakeFixes(flakes, absoluteQueuePath)`:
 a test probable-flaking on at least three distinct heads within seven days
@@ -504,6 +518,10 @@ test IDs in the same workflow run. Each ID contributes to recurrence.
 A multi-test rerun verdict contributes only to the workflow totals.
 The CLI `ci reruns [--json]` reads recent journal entries, counts,
 recurringFlakes and verdicts without mutation.
+`observedCallResults(entries, nowMs)` folds visible call receipts by
+case-insensitive repository and workflow run ID. It preserves the earliest
+receipt, excludes conflicting heads or call outcomes, and removes test
+attribution when the receipts disagree on the test.
 
 `src/core/fleet/ci-baseline.ts` exports `analyzeCiBaseline(repo, gh?)`, a
 read-only version 1 evidence report, and `parseBaselineFailures(log, repo?,
@@ -560,7 +578,12 @@ budget gate's
 `> (first-paint) phone` rows from the `OVER BUDGET: <arm>
 first-paint critical JS <kb> KB (budget <kb> KB)` verdicts and its
 `> (first-paint) gate` row from the script's
-`check-first-paint-budget: <message>` error lines, plus
+`check-first-paint-budget: <message>` error lines, the scheduled
+companion smoke's
+`scripts/companion-workflow-smoke.mjs > (companion-smoke) <check-id>`
+rows from the smoke's `FAIL <check-id>: <detail>` verdict lines --
+counted only inside a log carrying the `N pass, N warn, N fail, N
+skip` tally whose fail count equals the FAIL rows -- plus
 summaries. `auditExceptions` is the optional
 `DependencyAuditException[] | null` list (`{id, package, graph}` with
 graph `full` or `raycast-production`); `null` leaves npm audit reports
@@ -625,10 +648,24 @@ config names, plus each arm's manifest roots
 gate identity takes the union of both arms) -- never the failing
 file's import closure, since the measured bundle graph has no
 enumerable closure, and the harness ambient set does not apply to it
-either. Parenthesized
+either. The companion smoke's dependency set is the closed input list
+`scripts/companion-workflow-smoke.mjs` plus
+`.github/workflows/companion-smoke.yml` -- the checks exercise
+published companions and the ref's built `dist/` graph, which has no
+enumerable closure -- and the harness ambient set does not apply to
+it either. Parenthesized
 gate identities other than `(suite)` can never resolve a master pass or
 flake classification, even when their file is a test path a green-module
-line could otherwise match.
+line could otherwise match. Groups also emit from master evidence
+alone: a parsed failure on a verified master run that no open PR
+reproduced -- scheduled or master-push workflow evidence such as the
+companion smoke, or a suite break with no PR victim -- becomes a
+`shared-baseline`/`queue-master-fix` group with empty `prs`, `runs` and
+`unaffectedPrs`, `master: 'fail'` and a brief naming the master-run
+provenance; a test id an open PR did observe keeps its observation
+group and each id emits once. Master-only groups queue master fixes
+through the same path but never produce update-branch plans or rerun
+proposals.
 `enqueueBaselineFixes(report,
 absoluteQueuePath)` explicitly writes work-tier master-fix rows deduplicated
 by queue state via `nextFixGeneration`: a failure whose prior fix generations
@@ -771,6 +808,8 @@ decisions only) and `fallback_used` (job receipts). See [gates and inert status]
 producing `router.outcome.v1` records folded from `metrics/jobs.jsonl`.
 `foldSpendCosts` defaults to an open time bound. A supplied epoch-millisecond
 bound includes receipts at that instant and retains undated receipts.
+If a nonblank line fails to decode as a JSON object, `foldSpendCosts` returns
+an empty map because no per-job total has complete spend coverage.
 `verdictSinceMsFor(job)` sets an inclusive lower timestamp bound for that job's
 merge, close and revert ledger verdicts. An undefined return leaves the lower
 bound open. `verdictAsOfMs` supplies an inclusive upper bound. If either bound
@@ -909,11 +948,18 @@ Merge-events rows never create outcomes. GitHub pull URLs that differ only
 in case or a trailing slash share one claim identity for URL-only jobs
 rows and all PR evidence joins. Multiple jobs claiming that identity
 count once in `ambiguous_urls` and receive no evidence through it. Other
-URLs still match literally for URL-only jobs rows. The same joined check record
-resolves `ci_first_pass` fill-only when no jobs row recorded a verdict.
-Conflicting jobs-ledger boolean verdicts for one job leave `ci_first_pass`
-unknown (`null`). Replaying either verdict or joining queue observations
-cannot resolve that conflict. For jobs without an explicit verdict,
+URLs still match literally for URL-only jobs rows. When the supported URL
+fields on one row identify different claims, a URL-only row stays
+unattached. A row with a job ID retains its job-level evidence, but cannot
+supply PR-scoped evidence. Each claim on that row still counts when
+determining whether another job has an exclusive claim. The same joined check record
+resolves `ci_first_pass` fill-only when the jobs ledger supplies no
+attributable verdict. PR-scoped verdicts require a unique job claim and
+must match the standing PR. Job-only verdicts are usable with no PR
+claim or one unambiguous standing PR. Conflicting attributable
+jobs-ledger boolean verdicts leave `ci_first_pass` unknown (`null`).
+Replaying either verdict or joining queue observations cannot resolve
+that conflict. For jobs without an attributable verdict,
 any recorded `check_observed` failure — required or unrelated — reads
 `false` even beside a later `checks_passed` boundary or a merge (a
 rerun or a new head got it green, which is not a first pass). A
@@ -987,7 +1033,11 @@ The join fills `launch_cost_status`,
 `launch_peak_processes`, `launch_mean_cpu_pct` and
 `launch_peak_cpu_pct` — fields no jobs-ledger row supplies, the only
 per-attempt resource-cost evidence subscription lanes record — with
-the last appended row for a resolved job standing; rows resolving
+the newest eligible recorded start standing, with distinct receipts at the
+same start and undated receipts retaining append order. Dated receipts must
+start by report time. Measured probes require the full 60-second window to
+elapse, and partial probes require at least their recorded sampling duration
+to elapse. Rows resolving
 outside the jobs window join nothing and never create outcomes.
 `RouterOutcomeRead.launch_cost_state` reports the ledger's health and
 `launch_cost_truncated` marks a cut tail; anything but `read` leaves
@@ -1014,8 +1064,10 @@ invalid head supplies no identity and cannot settle a conflict. The fold's
 `crossReviews` option joins each outcome's `cross_review` through the
 same PR identity as the merge-queue join. For a dated standing merge or close,
 the latest review must have a recorded time at or before the verdict.
-A later or undated latest review leaves the join unknown without falling
-back to an earlier review. Review rows never create
+The ledger reader selects the latest dated review through that cutoff.
+When only the reward journal supplies a merge verdict, its merge timestamp
+bounds the review join and the job must have a single attributable PR.
+With no eligible review, the join stays null. Review rows never create
 outcomes. The join is fill-only
 diagnostic context: it explains what the review gate recorded while
 the merge verdict stayed unrecorded, and it never feeds routing,
@@ -1044,7 +1096,10 @@ claims never mark). `readRouterOutcomes` reads that index lazily through
 `ledgerSnapshot('cached')` — only hash-verified rows contribute, a broken
 chain still marks only its verified prefix, and any read failure degrades
 to no join; `authorityEvidence: null` skips the authority join only and an
-explicit array is used as given. A second, independent revert source joins
+explicit array supplies the index. Before resolving landing IDs, the reader
+filters authority rows with a supplied `at` timestamp to parseable times
+at or before report start. Explicit structural evidence rows may omit
+`at` for compatibility. A second, independent revert source joins
 under the same claim rule: `improve/revert-outcomes.jsonl`, the bounded
 append-only ledger `phm fleet reverts --record` writes from its
 72h-window git-history scan. Its newest record per `owner/repo#n` key
@@ -1470,12 +1525,40 @@ no-follow tail read and `parseOutsidePrOutcomeJournal`, resolving
 `runsDir` like `readRouterOutcomes` (ASHLR_RUNS_DIR, then
 `~/.ashlr-runs`); `journalPath` overrides the location and `runsDir`
 must be absolute when given. The read state is `'read'` or the tail
-read's `'missing'`/`'unreadable'`/`'not-file'`; on `'read'` the fold
+read's `'missing'`/`'unreadable'`/`'not-file'`. The parser's optional
+`throughMs` argument bounds receipts by their recorded `at` timestamp
+(inclusive) before the last appended outcome per PR and scan are
+selected. With the bound, unparseable receipt stamps count as ignored
+rows, and future receipts are skipped. Without the argument the parser
+reads all recognized receipts in append order. Community-seat reads and
+outside-PR improvement discovery pass their report time as the bound.
+On `'read'` the fold
 keeps each PR's newest outcome row inside the `windowDays` window keyed
 on `mergedAt` (unparseable stamps and stamps past `now` plus the
 future-skew bound are skipped, never counted), tallies them per recorded
 `agent` attribution (`null` = the unattributed bucket, `model` always
-`null`), sorts by PR count and caps at 32 seats. `coverage` carries the
+`null`), sorts by PR count and caps at 32 seats. Each seat also carries
+the journaled merge evidence with honest denominators: `ttm_known`
+counts rows whose `createdAt` parses at or before `mergedAt` and
+`ttm_minutes_mean` is the mean open→merge minutes over them (`null`
+when none qualify), while `reviews_known` counts rows carrying a
+`reviews` object and `reviewed`/`unreviewed`/`approved`/
+`changes_requested`/`review_required` tally its contents — journal rows
+written before the fields existed, or gh rows missing them, read as
+unknown denominators, never as zero reviews or zero latency. `ci_known`
+counts rows carrying a journaled `ci` verdict (the check-rollup outcome
+the sync's bounded per-PR `gh pr view` read recorded — `success`/
+`failure`/`pending`/`none`, the same closed vocabulary
+cloud/tracker.ts reports) and `ci_passed`/`ci_failed`/`ci_pending`/
+`ci_none` tally its contents; a null `ci` — pre-fields rows, a failed
+or capped read — never counts toward any verdict, matching the reviews
+rule. `diff_known` counts rows carrying a journaled `diff` triple —
+gh's recorded `additions`/`deletions`/`changedFiles` merge size, frozen
+at merge — and `diff_lines_mean`/`diff_files_mean` are the mean lines
+changed (additions plus deletions) and files touched over that
+denominator (null when it is empty); a null or malformed `diff` never
+counts, matching the same rule.
+`coverage` carries the
 newest scan row's `source_state`, `revert_ledger` and bounded
 `degraded_repos`; `truncated`/`ignored_rows` mark a cut tail and
 contract-rejected lines. The read feeds the advisory
@@ -1705,7 +1788,10 @@ window's `route_decision` rows to each job's latest decision and tallies
 `claim`/`batch_claim` events — launches that actually left their hinted
 lane, including `batch_session` moves decisions never record — into the
 report's `claims` field (`available`, `truncated`, `claimed`, `overridden`,
-`byReason`, `lanes`). `foldDecisionOutcomes` joins the same collapsed
+`byReason`, `lanes`). A missing or unreadable jobs ledger sets `available`
+to false and both `claimed` and `overridden` to null. A readable ledger
+with no matching evidence returns zero counts. Counts from a truncated tail
+are lower bounds. `foldDecisionOutcomes` joins the same collapsed
 latest-per-job decisions to the newest recorded outcome in the retained
 jobs.jsonl tail through the router outcome fold, partitioning decided jobs
 into `hinted`/`overridden`/`open`/`unrouted`/`unexplained` outcome tallies
@@ -2585,9 +2671,16 @@ See [node admission](docs/NODES.md#small-mac-enrollment-and-admission).
 ## Node provider binaries and runner errors
 
 `src/core/drive/nodes/provider-binary.ts` exports `NODE_PROVIDERS`,
-`isNodeProvider`, `providerBinaryCandidates(provider, deps?)` and
+`isNodeProvider`, `providerBinaryCandidates(provider, deps?)`,
+`binaryCandidates(name, deps?)`, `executableFile(path)`,
 `resolveProviderBinary(provider, deps?) => string | null`, the single absolute
-allowlist resolver (no `PATH` lookup). `worker.ts` adds
+allowlist resolver (no `PATH` lookup), plus `COMMUNITY_CLI_CANDIDATES` and
+`installedAgentClis(deps?) => string[]`, the bare join's installed-community-CLI
+probe (file presence at the same allowlist only — no execution, sign-in check or
+credential read). The allowlist covers macOS and
+user-level locations first, then version-manager shims and Linux system
+locations (`/usr/bin`, `/bin`, `/snap/bin`); appended locations only resolve
+when nothing earlier exists. `worker.ts` adds
 `probeProviderBinaries(run?, deps?) => ProviderBinaries`,
 `classifyRunnerReply(code, fenced, stdout)`, `PACK_FAILURE_LIMIT` (2), and an
 optional third `binaryDeps` argument to `probeNodeLanes`. `NodeRunnerRequest` gains
@@ -2604,6 +2697,13 @@ For each harness it returns the maximum `mem_bytes_max` and maximum measured
 from different nodes. CPU stays `null` when all supplied costs are unknown.
 `planAutoscaleRoutes` supplies only fresh, non-conflicting snapshots and uses
 the aggregate when the candidate node has no footprint for that harness.
+The same module exports `fleetRunnable(docs, nowMs)`, the fleet-wide rollup
+`phm node route` reports as `fleet_runnable` in its `phantom.node-route.v1`
+JSON envelope and as a `fleet runnable now:` line in text: additional
+sessions each harness could start right now, summed over the newest
+plausible snapshot per node under the same freshness, conflict,
+measured-memory, footprint-expiry and host-stop rules the planner applies.
+A harness no eligible node can answer for reports `null`, never zero.
 
 ## Node route lane outcomes (`phantom.node-route-outcomes.v1`)
 
@@ -2618,9 +2718,28 @@ matching `proposeRouterWeights`. `readRouteLaneOutcomes`
 wraps the bounded `readRouterOutcomes` ledger read: 'read' carries the tallies,
 'missing' is an absent journal with empty tallies, and 'unreadable'/'not-file'
 report unusable evidence. `phm node route --outcomes-ledger [--runs-dir <dir>]`
-merges these tallies under any explicit `--outcomes` file (file wins per
-provider) and reports `outcomes_ledger` state in its JSON plan. See
+passes ledger tallies as `RouterInput.outcomes` and explicit file entries as
+the optional `RouterInput.outcomeOverrides` map. A provider override needs a
+positive safe integer attempt count and a safe integer merge count from zero
+through attempts. Otherwise the planner uses that provider's ledger tally.
+The command reports `outcomes_ledger` state in its JSON plan.
+For a placed job, the `phantom.node-route.v1` fields `mergeRate`,
+`mergesPerMTok` and `mergesPerHour` require at least one recorded attempt
+with valid outcome counts. Otherwise they are `null`, and the placement
+score uses the neutral prior. See
 [measured capacity and routing](docs/NODE-ROUTER.md#measured-capacity-and-node-provider-model-routing).
+
+## Node pool join readiness note
+
+`src/core/drive/nodes/pool-readiness.ts` exports
+`poolJoinReadinessNote(lanes, capacity)`. A pool `phm node join` enrollment
+that registers but reports `ready: false` carries a `note` naming why the
+node will sit idle: no detected codex/claude sign-in or enabled local model
+lane (the join advertised no capabilities), a reported capacity hold, or
+both — each with its fix (`phm node join --json` again after signing in or
+configuring a lane, `phm node measure` for the hold). A ready join carries
+no readiness note; when both apply it shares the reply's `note` field with
+the probe-session release warning.
 
 ## Router calibration
 
@@ -2706,7 +2825,9 @@ match event names case-insensitively. Timestamps follow the shared
 jobs-ledger parser, including space-separated datetimes with UTC offsets.
 Per-job phase totals and job counts exclude
 `RQ-BATCH-*` session wrappers and node-pool telemetry
-(`fleet.session-pool.v1` and `phm-node-runner.v1`). Batch member rows
+(`fleet.session-pool.v1` and `phm-node-runner.v1`). Both reports also skip
+receipts explicitly marked `launched: false`. Other receipts for the same
+job remain eligible. Batch member rows
 still contribute their own recorded boundaries. Excluded rows do not
 count as ignored events. Merge and close verdicts across
 `outcome|state|status|phase|result|conclusion` take precedence over a publish
@@ -3023,12 +3144,16 @@ read, 1 list unreadable, 2 usage or unknown id).
 are listed in `docs/FLEET-API.md`.
 
 **Team org planning.** Without an org configuration file, `phm org plan --json`
-exits 0 with `schema: "org.plan.v1"`, `state: "not-configured"`, and
-`generatedAt`, `leader`, `budgets`, `roles`, `assignments`, `unassigned`,
-`held` and `joinsDir` all null. Consumers, including the leader, skip team assignment
-planning without treating this as an empty plan or changing solo fleet capacity.
-Present but invalid or unreadable files still return `org.error.v1` with
-`code: "rejected"`. Configured plans keep their existing shape.
+exits 0 with `schema: "org.plan.v1"`, `state: "not-configured"`, `file` naming
+the org.toml path probed (the `--file` override when given, else the default),
+and `generatedAt`, `leader`, `budgets`, `roles`, `assignments`, `unassigned`,
+`held` and `joinsDir` all null. Text mode appends the same guidance `org join`
+and `org show` print for a missing file: where a copy comes from and how to
+start a new org with `phm org init`. Consumers, including the leader, skip team
+assignment planning without treating this as an empty plan or changing solo
+fleet capacity. Present but invalid or unreadable files still return
+`org.error.v1` with `code: "rejected"`. Configured plans keep their existing
+shape.
 
 **Org tree states (RQ-ORGVIEWN18BQ8).** `fleet.org.v1` gains `version: 1` and,
 on the leader, every lane and every job, `state` (`OrgState`: `running`,
@@ -3146,7 +3271,9 @@ and TTL of the retained envelope whose processing refused the projection),
 present on the body-level refusals (`invalid-body`, `missing-provider`,
 `duplicate-job`, `owner-mismatch`) and absent when no single well-formed
 receipt is the cause (`invalid-receipts`, `invalid-participants`).
-It validates at most 1024 retained receipts in strictly increasing cursor order;
+It validates at most the bus store's retained bound (`BUS_INBOX_MAX_MESSAGES`
+receipts) in strictly increasing cursor order and refuses a snapshot that
+would emit more than the feed's 1024-job wire bound;
 legacy and unrelated bodies stay opaque. Posts start queued with `owner=from`,
 `to` set to the announcement envelope's routing label, and the announcement's
 own `title` plus optional `dispatch` spec carried onto the job so the feed
@@ -3334,12 +3461,12 @@ undefined for non-claim bodies so opaque mail still appends),
 `BusClaimJobRef` claim views share — id, announcer, status, title, newest
 detail and the `postId`/`statusId` receipt citations.
 `listBusClaims(BusClaimsListOptions)` (`root?`, `now?`, `key?`, `owner?`,
-`excludeOwner?`, `contains?`, `since?`, `before?`, `origin?`, `jobs?`) is the
+`excludeOwner?`, `contains?`, `since?`, `before?`, `origin?`, `job?`, `jobs?`) is the
 read-side companion: it returns the live coordination claims as
 `CoordinationView` rows (fencing tokens never leave the store) with `source`
 of `missing` (verified empty), `available` or `unavailable` (holds unknown,
 not free), plus `asOf`. A malformed `key`, `owner`, `excludeOwner`,
-`contains`, `origin`, `since` or `before` answers
+`contains`, `origin`, `job`, `since` or `before` answers
 `invalid`; a set
 `key` narrows the list through the same `coordinationRowBlocks` overlap rule
 an acquire applies, previewing the claims that would block it. A set `owner`
@@ -3372,8 +3499,19 @@ status, title, detail?, postId, statusId}` per job — `postId`/`statusId`
 the retained `work.post`/`work.status` receipt wire ids `agents bus show`
 reads, the reverse of the feed's `--claims` hold join) and the
 result's `feed` field reports the feed read state; a non-`ok` feed leaves
-`jobs` absent so blocked work stays unknown, never an empty list.
-`phm agents bus claim list [--key] [--owner] [--exclude-owner] [--origin] [--contains] [--since] [--before] [--jobs]`
+`jobs` absent so blocked work stays unknown, never an empty list. With
+`job` set the list narrows to the live claims that block the one named
+feed job — the same `coordinationRowBlocks` overlap the feed's holds join
+and `key` apply, decided over every claim key the job's `work.post`
+announcement declared — and the result's `job` field (`{id, announced,
+claimKeys}`) reports how the id resolved once the feed read completes. The
+same work-feed read serves `job` and `jobs`, so `feed` reports its state
+whenever either is given; a feed that reads ok but names no such job leaves
+the list provably empty, a feed that cannot complete while claims remain
+listed answers `unavailable` with `feed` carrying the feed's own state
+(never an unfiltered or invented-empty list), and a claim table already
+empty keeps its proven-empty list under the reported `feed` state.
+`phm agents bus claim list [--key] [--owner] [--exclude-owner] [--origin] [--contains] [--since] [--before] [--job] [--jobs]`
 prints it.
 `claimBusWorkJob(BusWorkJobClaimOptions)` (`job`, `owner`, `leaseMs`, the
 `BusClaimOptions` `root?`/`now?`, and optional `key?`/`id?`) is the job-level
@@ -3470,10 +3608,10 @@ while reuse on another key cannot relocate it. Claims coordinate only and grant
 no execution authority; the token returns only to its acquirer.
 
 `src/core/agents/bus-work-mine.ts` is the read-side per-agent digest behind
-`phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--thread <t>]`. `readBusWorkMine(agent, options?)`
-(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `coordination?`, `job?`, `contains?`, `since?`, `before?`, `priority?`, `channel?`, `from?`, `excludeFrom?`, `id?`, `inReplyTo?`, `bodyKind?`, `result?: WorkResultOutcome`, `thread?: string`, `now?: () => number` frozen once
+`phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--topic <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--thread <t>]`. `readBusWorkMine(agent, options?)`
+(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `coordination?`, `job?`, `contains?`, `since?`, `before?`, `priority?`, `channel?`, `topic?`, `from?`, `excludeFrom?`, `id?`, `inReplyTo?`, `bodyKind?`, `result?: WorkResultOutcome`, `thread?: string`, `now?: () => number` frozen once
 across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, job?, contains?, since?, before?, priority?, channel?, from?, excludeFrom?, id?, inReplyTo?, bodyKind?, result?, thread?, claims, jobs, announced, next, handoffs, deadLetters, threads, awaiting, blocked, wakes, inbox, mailbox, board, workBoard, sessions, coordination, channels, seats?}` or `{status:'invalid',
+asOf, job?, contains?, since?, before?, priority?, channel?, topic?, from?, excludeFrom?, id?, inReplyTo?, bodyKind?, result?, thread?, claims, jobs, announced, next, handoffs, deadLetters, threads, awaiting, blocked, wakes, inbox, mailbox, board, workBoard, sessions, coordination, channels, seats?}` or `{status:'invalid',
 reason}` for a
 ref outside the printable-label rule, a `job` outside the same rule
 (`invalid-job`), a `contains` outside the shared bounded free-text
@@ -3482,13 +3620,15 @@ rule every bus `--contains` read applies (`invalid-contains`), a
 (`invalid-since`/`invalid-before`), a `priority` outside the P0..P3 band
 (`invalid-priority`), a `channel` outside the strict channel-name
 grammar every bus `--channel` read validates (`invalid-channel`), a
+`topic` outside the same grammar a `group:<room>:<topic>` label's
+topic segment must satisfy (`invalid-topic`), a
 `from`/`excludeFrom` outside the same printable-label bound every bus
 sender filter shares (`invalid-from`/`invalid-exclude-from`), an
 `id`/`inReplyTo`/`bodyKind`/`thread` outside the same printable-label bound every bus
 `--id`/`--in-reply-to`/`--body-kind`/`--thread` read validates (`invalid-id`/`invalid-in-reply-to`/`invalid-body-kind`/`invalid-thread`),
 or a `result` outside the `WORK_RESULT_OUTCOMES` vocabulary every bus
 `--result` read validates (`invalid-result`).
-`job`, `contains`, `since`/`before` (as ISO), `priority`, `channel`, `from`, `excludeFrom`, `id`, `inReplyTo`, `bodyKind`, `result` and `thread` echo the applied
+`job`, `contains`, `since`/`before` (as ISO), `priority`, `channel`, `topic`, `from`, `excludeFrom`, `id`, `inReplyTo`, `bodyKind`, `result` and `thread` echo the applied
 filters and are absent on an
 unfiltered read. `agent` echoes `ref`, resolved
 `handle`/`identity` (null when unregistered) and the `registry` state.
@@ -3716,7 +3856,12 @@ a lower bound, never a proven total, when `truncated` marks queue-tail or
 cap cuts beyond the shown slice — carrying the same `scope`
 (`'identity'`/`'label'`) the page reports — claim-holder `wh-…` rows carrying the
 same `claimHolder` citation `readAgentWakes` resolves — and
-`unknown-agent`/`unavailable` with `reason`. `inbox` reuses `readAgentInbox`
+`unknown-agent`/`unavailable` with `reason`. Under `topic` the section
+forwards the value to `readAgentWakes`' `filter.topic`, so the shared
+`groupAddressTopicOf` verdict counts inside the bounded queue-tail
+match: `matched` stays exact when that read is complete and a proven
+lower bound under `truncated`, the same convention the section's
+`truncated` flag documents. `inbox` reuses `readAgentInbox`
 for the next page of mail addressed to the agent — same matching, order and
 owner-share receipt checks as `agents bus inbox` — as `{status:'ok', agent,
 messages, nextCursor, matched, truncated}`: `matched` is the true pending
@@ -3738,7 +3883,11 @@ the digest's mail rows answer where each announced job stands without a
 for one row past the 20-message cap so `truncated` is definitive — a full
 window proves mail remains beyond `nextCursor`, a short one proves the scan
 reached the store's end — and on overflow the newest scanned row is the one
-dropped, so `nextCursor` resumes strictly before it. A non-ok inbox read
+dropped, so `nextCursor` resumes strictly before it. Under `topic` the
+section forwards the value to `readAgentInbox`'s own `topic` filter, so
+`matched` reports the true topic-filtered total the store-wide scan
+counts and `messages`/`nextCursor` follow the same window rule every
+other filter applies. A non-ok inbox read
 reports `unknown-agent`/`unavailable`/`retryable`/`invalid` with `reason`.
 `mailbox` is the digest's window into the legacy `phm bus` mailbox store
 (`$ASHLR_HOME/bus-mailbox`, the records `phm bus inbox --to <label>` reads and
@@ -3750,8 +3899,9 @@ shown with `matched` the true total and `truncated` definitive. The store's
 `pendingFor` does — applied to the pending set before `limit` and `hasMore`
 count it — and `phm bus inbox` composes the shared bus read filters
 (`--from`/`--exclude-from` sender matching, `--priority`, `--job`,
-`--channel`, the `[since, before)` acceptance-time window, `--contains`,
-`--in-reply-to`, `--thread`, `--id` and `--body-kind`) into that one
+`--channel`, `--topic`, the `[since, before)` acceptance-time window,
+`--contains`, `--in-reply-to`, `--thread`, `--id`, `--body-kind` and
+`--result`) into that one
 predicate, so the legacy mailbox read answers the same filter grammar every
 other bus read shares. Labels are the
 resolved identity's `agentLabels` set, or the literal ref alone when no
@@ -3865,12 +4015,15 @@ state/channel/missing-evidence/dependency text (ids, routing labels,
 owner and receipt stay out — they have their own fields and filters),
 `since`/`before` bound `receivedAt` on the shared `[since, before)`
 window, `channel` keeps requests whose `to` carries `group:<name>:` (no
-provable `to` never lists), `from`/`excludeFrom` match the request's
-`from` label under `agentRefAddressMatcher` (an item naming no provable
-`from` never lists under either), `id` keeps the request whose envelope
-id equals the value, and `priority`/`bodyKind`/`result`/`thread` leave
-the section whole — the board projection carries no per-item band, body
-kind, wire result outcome or thread label. An item may also appear under
+provable `to` never lists), `topic` keeps requests whose `to` parses to
+`group:<room>:<topic>` under the same `groupAddressTopicOf` verdict every
+other section applies — room-agnostic, composing with `channel` into one
+room AND topic, no provable `to` never listing — `from`/`excludeFrom`
+match the request's `from` label under `agentRefAddressMatcher` (an item
+naming no provable `from` never lists under either), `id` keeps the
+request whose envelope id equals the value, and `priority`/`bodyKind`/
+`result`/`thread` leave the section whole — the board projection carries
+no per-item band, body kind, wire result outcome or thread label. An item may also appear under
 `next`, `handoffs`, `inbox` or the thread sections with its raw envelope
 view — this section adds the ownership/verification classification those
 projections do not compute, the same split the unified inbox keeps
@@ -4433,7 +4586,7 @@ carry `claimHoldersWoken`; the three conversational sends accept `replyTo`,
 stamped as the body's `inReplyTo` citation after the same printable-label
 check `thread` gets, and `kind` — `note` or `context`, the v2 conversational
 body kind `postLabelMessage` already exposed, now shared by all three so a
-DM or channel post can carry reference material too), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, with?, priority?, kind?, job?, matched?, since?, before?, channel?, contains?, inReplyTo?, id?, bodyKind?, result?}, options?)`
+DM or channel post can carry reference material too), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, with?, priority?, kind?, job?, matched?, since?, before?, channel?, topic?, contains?, inReplyTo?, id?, bodyKind?, result?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label,
 `from` filters by sender through identity-label matching, an unresolvable ref
 keeping exact-label matching, `excludeFrom` drops mail sent under every
@@ -4455,7 +4608,15 @@ keeps only mail addressed to `group:<name>:*` of one registry channel the
 agent belongs to — channel posts and channel-addressed handoffs alike,
 matched on the delivery address rather than the reported kind, so it
 composes with `kind` and a channel the agent is not a member of simply
-has no mail to show; `job` keeps
+has no mail to show; `topic` keeps only mail whose `to` parses to that
+exact topic component of a well-formed `group:<room>:<topic>` address —
+the same `groupAddressTopicOf` verdict `phm messages --topic`, `channel
+read --topic` and the wakes reads apply, grammar-validated by the shared
+channel-name rule, room-agnostic like `channel`'s prefix but narrowed to
+the topic segment so it composes with `channel` into one room AND one
+topic, decided on the delivery address alone so it needs no registry,
+counted inside the store-wide `matched` scan, and a DM, legacy label or
+deeper `group:` address that parses to no topic never matching; `job` keeps
 only mail that names one job — a `work.post`/`work.status`/`work.result`/`wake`
 body declaring that `jobId`, a `worker-handoff` assigning that fleet job id
 through `taskId`, or a `note`/`context` body carrying the
@@ -4559,6 +4720,15 @@ the addressee scope (a per-agent read narrows to one room's hints for
 that agent) and with every other filter, `matched` counting it inside
 the queue-tail match, a name no hint addresses matching nothing rather
 than erroring, and a malformed channel name answering `invalid`;
+`filter.topic` keeps only hints whose own `to` label parses to that
+exact topic component of a well-formed `group:<room>:<topic>` address —
+the same `groupAddressTopicOf` verdict `readAgentInbox`'s `topic` and
+`phm messages --topic` apply, grammar-validated by the shared
+channel-name rule and decided on the hint's address alone so it needs
+no referent resolution, composes with the addressee scope and with
+`channel` into one room AND one topic, `matched` counting it inside
+the queue-tail match, a topic no hint addresses matching nothing rather
+than erroring, and a malformed topic answering `invalid`;
 `filter.priority` keeps only
 hints in one exact P0..P3 band — the same match every other bus read's
 `--priority` applies — decided on the resolved referent's own band (the
@@ -4626,10 +4796,13 @@ claim-holder fan-out writes appear beside registered identities' hints,
 each row's own `to` naming its addressee; the ok page carries
 `scope:'fleet'`, `wakes`, `matched` and `truncated` under the same
 queue-tail semantics `readAgentWakes` documents, and the same
-`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority`/`before`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` filter set validates
+`job`/`from`/`excludeFrom`/`channel`/`topic`/`contains`/`priority`/`before`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` filter set validates
 and resolves referents identically — sender matchers resolve through
 the registry with exact-label fallback, `channel` keeps only hints whose
 own `to` label sits under `group:<name>:*` inside the queue-tail match,
+`topic` keeps only hints whose own `to` label parses to that exact
+topic component of a well-formed `group:<room>:<topic>` address under
+the same `groupAddressTopicOf` verdict,
 filtered verdicts fail closed
 `unavailable` on an unreadable bus store, and malformed filter values
 answer `invalid`; an unreadable registry or wake queue answers
@@ -4742,8 +4915,12 @@ citations, conversations by `thread.jobs`, wake hints by their cited job —
 a claim-holder hint's `jobId` or a resolved referent's feed citation —
 teammate tasks by `jobId`, seat
 handoffs by `node-job` refs, peer-dispatch receipts by their peer-announced
-`jobId`, session-handoff items by their journal's job id) for `comms inbox
---job` to match against,
+`jobId`, session-handoff items by their journal's job id, router-queue rows
+by their own READY id, jobs-stuck markers by their own job id, queue-parked
+rows by their own job id plus the gate ids they name, stuck-fix
+rows by their own FIXUP-MAIN job id, stranded-work rows by their own job
+id and dispatch-stuck rows by their own job id) for `comms
+inbox --job` to match against,
 absent when no job relation is provable; `busReadContains(value)` and
 `busReadContainsMatch(body, needle)` — bounded by `BUS_READ_CONTAINS_MAX` —
 are the shared `--contains` validation and match every bus read applies:
@@ -4846,16 +5023,49 @@ share (`comms bus read|watch --channel`, `fleet bus-follow --channel`,
 `fleet_bus_inbox`'s `channel`, `wakes --channel`, `phm messages --channel`,
 the work feed's `--channel`; the addressed `agents bus inbox --channel`
 resolves the same prefix only across the agent's member channels), strict
-channel-name grammar with no registry dependence — each
+channel-name grammar with no registry dependence — and
+`with`, the pairwise exchange filter `agents bus inbox --with`, `agents bus
+follow --with`, `phm messages --with` and `agents conversations --with`
+share: `--with` requires `--to`, and an envelope emits only when its `to`
+is an identity label of the `--to` agent — the strict match that excludes
+the member-channel posts `--to` alone streams — and its `from` matches
+every registered spelling of the peer through the same
+`agentRefAddressMatcher` rule `--from`/`--exclude-from` apply, an
+unresolvable ref on either side and an unreadable registry keeping
+exact-label matching — each
 skipping non-matching rows while checkpoints still advance past them.
+`bus-page-filters.ts` (`src/core/fleet/`) owns the one page-filter
+contract the durable-store reads share: `BusPageFilters` (the scalar and
+body dimensions — `id`, `inReplyTo`, `priority`, `kind`, `topic`,
+`thread`, `job`, `channel`, `bodyKind`, `result`, `since`, `before`,
+`contains`), `BusPageAddressRefs`/`BusPageMatchers` (the `to`/`from`/
+`excludeFrom` labels resolved through `busPageAddressMatchers`, the same
+registry read with exact-label fallback), `busPageRowMatch`/
+`filterBusInboxPage` (the single row predicate and page narrow that keep
+the scanned page's own `nextCursor`, so a filtered page that matches
+nothing still advances without replay) and `parseBusPageQuery`/
+`BUS_PAGE_QUERY_PARAMS` — the string validation `GET
+/api/verse/agent-bus` (`src/core/verse/agent-bus-api.ts`) applies, so the
+raw HTTP page takes the identical filter set `comms bus read|watch`,
+`fleet bus-follow` and `fleet_bus_inbox` (`src/mcp/fleet-inbox.ts`, which
+resolves its args into the same `BusPageFilters`/`busPageAddressMatchers`
+pair) do; an unknown, repeated or malformed parameter or value is a 400,
+never a silently ignored filter.
 Claim tokens and `work.result`
 queueId/receiptId never appear in a summary.
 `parseUnifiedInboxQuery` (`src/core/comms/unified-inbox-query.ts`) is the
 shared validation `GET /api/verse/comms/inbox`
 (`src/core/verse/comms-inbox-api.ts`) applies to its query — `limit`
 (1–200, default 50) plus the `UnifiedInboxFilter` dimensions `source`,
-`kind`, `severity`, `blocking` (`true`/`false`), `job`, `since`, `before`
-and `contains`, each at most once — `since` the inclusive appearance-time
+`kind`, `severity`, `blocking` (`true`/`false`), `id`, `job`, `since`,
+`before`
+and `contains`, each at most once — `id` (`UnifiedInboxFilter.id`,
+`comms inbox --id`, `isUnifiedInboxItemId` bounded by
+`UNIFIED_INBOX_ID_MAX`) keeps only the item whose stable `<source>:<ref>`
+id strictly equals the value — the same exact-id match every bus read's
+`--id` applies, the one dimension that pinpoints a single projected item
+since `--contains` searches title/detail only and `--job` matches the
+citation set — `since` the inclusive appearance-time
 lower bound, `before` (`UnifiedInboxFilter.before`, `comms inbox --before`)
 the exclusive `<` upper bound composing with it into one
 `[since, before)` window under the same `parseSince` grammar every bus
@@ -4938,11 +5148,70 @@ show the shared `busInboxJobMarker` (`job=<id>:<state>` plus `result=<outcome>`
 when the feed job cites a `work.result`, and `claimable=`
 when the claims join computed it) the same way. `frameBusChannelRead(cli,
 channel, messages)` renders a channel page through the same markers, scrub
-and bound, each bracket naming `#<channel>:<topic>`. Identities
+and bound, each bracket naming `#<channel>:<topic>`. `frameBusWakes(cli,
+wakes)` renders a wake-hint page (`agents bus wakes [--all] --frame <cli>`)
+through the same markers, scrub and bound: each line leads with the
+resolved referent's own priority — the live message a `bus.send` hint
+points at or the citing `work.status` receipt behind a claim-holder `wh-…`
+hint — names the hint id, its recorded sender and addressee labels and the
+same held/holder/job bracket evidence, and carries the resolved summary or
+the claim-holder detail as payload; a hint whose referent is `unresolved`
+or `unknown` shows that state with no invented band or payload, so the
+claim-holder hints an inbox frame can never carry still reach a CLI's next
+turn as untrusted data. `frameBusWorkMine(cli, lines)` renders one agent's
+`work mine` digest (`agents bus work mine --frame <cli>`) — the
+already-formatted `formatBusWorkMine` lines — through the same markers'
+discipline, scrub and 32 KiB bound under BEGIN/END UNTRUSTED AGENT BUS WORK
+DIGEST markers, newline and tab flattened so one digest line never opens a
+second framed row and the cut stated; `--json` carries it as `framed`
+beside the full projection. `frameBusWorkFeed(cli, lines)` renders the
+fleet work feed (`agents bus work feed --frame <cli>`) — the
+already-formatted `formatBusWorkFeed` lines, job rows, hold rows and the
+honest `jobs=… feed=…` summary — through the same shared line renderer
+under BEGIN/END UNTRUSTED AGENT BUS WORK FEED markers, so a refused or
+unavailable feed frames its own state line and never an invented job
+list; `--json` carries it as `framed` beside the full projection the same
+way. `frameBusThread(cli, lines)` renders one reply chain
+(`agents bus thread <id> --frame <cli>`) — the already-formatted
+`threadHuman` lines, verdict header and per-receipt summary and
+held/holder/job evidence rows — through the same shared line renderer
+under BEGIN/END UNTRUSTED AGENT BUS THREAD markers, so the whole
+exchange reaches a CLI's next turn as marked-untrusted data in a single
+block and a thread block can never pass for an inbox page, a digest or
+a feed; `--json` carries it as `framed` beside the full projection the
+same way, and a proven miss frames its own not-found verdict.
+`frameBusClaims(cli, lines)` renders the live-claims list
+(`agents bus claim list --frame <cli>`) — the already-formatted claim
+rows with their `--jobs` blocked-job labels and the honest
+`claims=… source=… as-of=…` summary — through the same shared line
+renderer under BEGIN/END UNTRUSTED AGENT BUS CLAIMS markers, so the
+whole held-scope table reaches a CLI's next turn as marked-untrusted
+data in a single block; `--json` carries it as `framed` beside the full
+projection the same way, and a read that cannot complete still answers
+its own status line rather than an invented claim list.
+`frameBusDeadLetters(cli, lines)` renders the transport dead-letter
+list (`agents bus dead-letters --frame <cli>`) — the already-formatted
+letter lines and the `matched=… shown=… source=… as-of=…` summary —
+through the same shared line renderer under BEGIN/END UNTRUSTED AGENT
+BUS DEAD LETTERS markers, so the whole delivery-failure backlog reaches
+a CLI's next turn as marked-untrusted data in a single block; `--json`
+carries it as `framed` beside the full projection the same way, and a
+verified-missing store frames its own missing line rather than an
+invented letter. `frameBusShow(cli, lines)` renders one resolved
+envelope (`agents bus show <id> --frame <cli>`) — the
+already-formatted show lines, the cursor/priority/id/parties receipt
+row, the scrubbed body summary and the held/holder/job/wake-hint
+evidence rows — through the same shared line renderer under
+BEGIN/END UNTRUSTED AGENT BUS ENVELOPE markers, so the receipt a
+citation names reaches a CLI's next turn as marked-untrusted data in
+a single block and an envelope block can never pass for an inbox
+page, a chain or a feed; `--json` carries it as `framed` beside the
+full lookup the same way, and a not-found or unreadable lookup
+answers its own status rather than an invented envelope. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
-read-only probe over the nineteen dependencies the unified verbs touch — the
+read-only probe over the twenty-one dependencies the unified verbs touch — the
 message store (`inspectBusInbox` pass-through), the identity registry (counts,
 null when unreadable), the wake queue (`state`, the observed hint count
 before the row cap — 0 on a verified-missing queue, null when unreadable —
@@ -5050,7 +5319,32 @@ path; `source` plus `messages`/`proposals`/`returns` counts of the live
 pending surface — posted coordination mail, advisory assignment proposals
 and unpublished RESULT intents still inside their TTLs; 0 on a
 verified-missing ledger, null when unreadable, never agent labels, repos,
-task text, bodies or record ids), and — as a verdict over the claim journal and
+task text, bodies or record ids), the org plane's membership outbox
+(`previewOrgOutbox` over `<runsRoot>/org/agents.json` — the `org.agents.v1`
+store `phm fleet org-sync`/`org-board` read under the same runs root
+`options.runsRoot` selects, else `ASHLR_RUNS_DIR` or `~/.ashlr-runs`, never
+the bus `root` override — the same read-only replay `org-sync` previews and
+the unified inbox org-outbox source itemizes; `source` plus a `pending`
+count of distinct `org.membership` events the apply pass would post — the
+same count the unified inbox reports, deduplicated on the stable event id
+repeated edits of one revision share; 0 on a verified-missing store or a
+fully delivered ledger, null when the store cannot be read or validated,
+never role ids, actors, revisions, proposals or bodies), the channel adapter
+registry
+(`listChannelRegistry` over the process-local adapter table — the same
+read `agents bus channels list`, `agents bus channels test` and the
+comms-agent adapter probe serve — under the probe's `root` and clock;
+`source` plus one `adapters` row per fixed channel id in CHANNEL_IDS
+order carrying `adapterRegistered` and the adapter's own `healthy`
+verdict — `true` usable, `false` confirmed down, `'unknown'` when nothing
+can assess it, never collapsed to a boolean and never guessed for an
+unregistered channel; the bus and handoff adapters probe the same inbox
+store `store` reports, so their health tracks it, and the section
+describes this process's adapter table, never a fleet-wide channel
+census; `adapters` is null only when the registry cannot be read —
+`source:'unavailable'`, never an invented empty table — channel ids and
+verdicts only, never adapter internals or message data), and — as a
+verdict over the claim journal and
 coordination table rather than another dependency — the claim-store drift
 comparison (`readClaimStoreDrift` run over the probe's own two reads, the
 same `fleet.claim-drift.v1` read `ashlr fleet claim-drift` serves:
@@ -5081,8 +5375,8 @@ cursor order, each row annotated with the same `held`/`holder`/`job`/
 `readBusEnvelopeById` report, and `rootFound`/`complete`/`sourceFailure`
 keeping a proven miss distinct from an unreadable walk. `filters` is the
 shared bus-read filter set `BusThreadFilters` declares — `to`/`from`/
-`excludeFrom`/`channel`/`job`/`priority`/`thread`/`inReplyTo`/`bodyKind`/
-`result`/`since`/`before`/`contains` — applied by `readBusThread` to the
+`excludeFrom`/`channel`/`topic`/`job`/`priority`/`thread`/`inReplyTo`/
+`bodyKind`/`result`/`since`/`before`/`contains` — applied by `readBusThread` to the
 projected chain members only under the same matcher rules `followBusStream`
 builds, so the walk, `rootFound` and the scan honesty fields still describe
 the whole chain and a root whose every member a filter excludes reports
@@ -5103,7 +5397,8 @@ descriptive facts only, never routing labels or wire ids. `work mine`'s
 deadLetters section and `agents bus dead-letters` both read through it.
 
 `src/core/agents/bus-dead-letters.ts`: `readBusDeadLetters(options?)` is the
-fleet-level dead-letter list behind `phm agents bus dead-letters` — every
+fleet-level dead-letter list behind `phm agents bus dead-letters` and the
+`fleet_bus_dead_letters` fleet MCP tool — every
 LIVE envelope addressed to `bus.dead-letter` in the same bus store
 `agents bus status`'s deadLetters probe counts, walked by the same bounded
 `listBusInboxAfter` live-receipt paging `work mine`'s pending-work sections
@@ -5145,14 +5440,20 @@ explicit and peer mappings confer no authority. See the
 `listTrajectoryRecords(opts?)` (`src/core/autonomy/trajectory-records.ts`) accepts
 an optional `asOfMs` report time in epoch milliseconds. It defaults to the
 current time and anchors the lookback and both endpoints of the skill-use
-and post-merge observation windows. Direct dispatch ledger reads use the
-same cutoff.
+and post-merge observation windows. Direct dispatch and agent-action ledger
+reads use the same cutoff.
 
 `readDispatchProductionEventsDetailed(opts?)` and
 `readDispatchProductionEvents(opts?)` accept an optional inclusive `asOfMs`
 in epoch milliseconds. Future UTC partitions do not consume dated file
 slots, and future events, including treatment outcome receipts, do not
 consume event slots. Physical scan limits still apply to selected files.
+
+`readAgentActionsDetailed(opts?)` and `readAgentActions(opts?)` accept an
+optional inclusive `asOfMs` in epoch milliseconds. Future UTC partitions
+are excluded from the dated file budget. Valid future receipts in selected
+files are excluded from the event cap and rejected-carrier counts. Physical
+scan limits and row validation still apply to selected files.
 
 `fleet.plugins-panel.v1` and `fleet.skills-panel.v1` (`src/core/fleet/installed-panels.ts`):
 `readPluginsPanel(opts?)`, `readSkillsPanel(opts?)`, `formatInstalledPanel(panel, noun)`.
@@ -5391,3 +5692,11 @@ after the cutoff are excluded from the fold and from PR claim attribution.
 Receipts at the cutoff are included. Exact replays of dated terminal
 receipts preserve the first occurrence's position and evidence snapshot.
 Undated receipts retain ledger order.
+
+## Launch vitals reader
+
+`readLaunchVitals(runs?, now?)` accepts optional report time in epoch
+milliseconds, defaulting to the current time. It projects the validated
+launch guard's public reason and exposes `nextWindowSeconds` only for
+open or settling guard states. Missing or invalid guard evidence leaves
+both fields null. Queue counts use independent dispatcher evidence.

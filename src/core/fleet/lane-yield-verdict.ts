@@ -7,6 +7,7 @@
  *   low-yield  20 or more finished jobs and empty_rate >= 0.8
  *   productive everything else
  */
+import { canonicalJson } from '../authority/canonical-json.js';
 import { parseLedgerTs } from '../metrics/loop.js';
 import { hasRevertEvidence } from './slot-yield.js';
 
@@ -80,6 +81,17 @@ const EMPTY_PHASES: ReadonlySet<string> = new Set(['DONE-NOOP', 'EMPTY', 'EMPTY_
 const OUTCOME_EVENTS: ReadonlySet<string> = new Set(['outcome', 'result', 'resolved', 'resolution']);
 const FINISH_EVENTS: ReadonlySet<string> = new Set(['finish', 'finished', 'complete', 'completed']);
 const RESOLVED_PHASES: ReadonlySet<string> = new Set(['MERGED', 'CLOSED', 'OPEN']);
+/**
+ * RQ-BATCH-* ids are batch-session infrastructure, not jobs: dispatchd runs
+ * related ready lines as one session whose members arrive through
+ * `batch_claim`/`task_outcome` rows, while the session id's own launch/finish
+ * rows carry session-aggregate evidence no single job owns. Every sibling
+ * reader — outcome-metrics, lane-reward, the router outcome fold and the
+ * unfed claims fold — skips the prefix; counting the session here would add
+ * a finished job that is never empty and never merged, diluting the lane's
+ * empty rate toward zero.
+ */
+const BATCH_SESSION_PREFIX = 'RQ-BATCH-';
 
 const firstString = (row: Record<string, unknown>, keys: readonly string[]): string | null => {
   for (const key of keys) {
@@ -131,20 +143,33 @@ export function parseLaneJobs(ledger: string): LaneJob[] {
   type Launch = Receipt & { lane: string };
   type Outcome = Receipt & { merged: boolean; reverted: boolean; finished: boolean; empty: boolean };
   const launches = new Map<string, Launch>();
+  const seenLaunchReceipts = new Set<string>();
   const outcomes = new Map<string, Outcome[]>();
   for (const [seq, line] of ledger.split('\n').entries()) {
     let row: unknown;
     try { row = JSON.parse(line); } catch { continue; }
     if (!isObject(row)) continue;
     const id = firstString(row, JOB_KEYS);
-    if (!id) continue;
+    if (!id || id.startsWith(BATCH_SESSION_PREFIX)) continue;
     const phase = phaseOf(row);
     const event = ledgerEvent(row, phase);
     const at = eventTs(row, phase);
     if (event === 'launch') {
-      const lane = firstString(row, LANE_KEYS) ?? '';
+      const lane = firstString(row, LANE_KEYS);
+      if (!lane) continue;
+      if (at !== null) {
+        let receipt: string;
+        try {
+          receipt = canonicalJson(row);
+        } catch {
+          // Retain exact-text deduplication for rows that cannot be canonicalized.
+          receipt = line.trim();
+        }
+        if (seenLaunchReceipts.has(receipt)) continue;
+        seenLaunchReceipts.add(receipt);
+      }
       const prev = launches.get(id);
-      if (lane && (!prev || (at ?? 0) >= (prev.at ?? 0))) launches.set(id, { lane, at, seq });
+      if (!prev || (at ?? 0) >= (prev.at ?? 0)) launches.set(id, { lane, at, seq });
       continue;
     }
     const reverted = hasRevertEvidence(row);

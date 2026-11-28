@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
@@ -7,9 +6,9 @@ import { getLocalReleaseStatus, type ReleaseSummary } from '../fleet/release-cha
 export { getLocalReleaseStatus } from '../fleet/release-chain-status.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { AUTONOMY_REPOS } from './autonomy-audit.js';
-import { readBehindReleases, type InstalledBuild } from './drift.js';
+import { RELEASE_DAY_MS, isNonNegativeInt, parseWholeNumber, releaseCount as count, stripReleaseOwner } from './cadence.js';
+import { gitReader, readBehindReleases, type InstalledBuild } from './drift.js';
 import { readReleaseRepos, type ReleaseRepoStatus } from './release-repos.js';
-import { releaseCount as count } from './releases-lines.js';
 
 export { releaseDueLine, releasesLeaderLine } from './releases-lines.js';
 
@@ -36,8 +35,7 @@ export interface ReleaseStatusRow {
 export interface ReleasePrTitle { number: number; title: string }
 export interface ReleaseStatusReport { schema: 'phantom.release-status.v2'; repos: ReleaseStatusRow[]; releaseRepos: ReleaseRepoStatus[]; release: ReleaseSummary }
 export interface ReleaseStatusDeps { root?: string; roots?: readonly string[]; repos?: readonly string[]; now?: number; repoPath?: string; runsDir?: string; cadenceMinutes?: number; installed?: () => InstalledBuild }
-const DAY_MS = 86_400_000;
-export const RELEASE_PR_TITLES_SHOWN = 5;
+const RELEASE_PR_TITLES_SHOWN = 5;
 
 const plainTitle = (text: string): string => {
   // eslint-disable-next-line no-control-regex
@@ -76,10 +74,8 @@ export function readReleaseRows(deps: ReleaseStatusDeps = {}): ReleaseStatusRow[
   return (deps.repos ?? AUTONOMY_REPOS).map((name): ReleaseStatusRow => {
     const tried = roots.map(root => join(root, name));
     const path = tried.find(candidate => existsSync(join(candidate, '.git'))) ?? tried[0] ?? name;
-    const git = (...args: string[]): string | null => {
-      try { return execFileSync('git', ['-C', path, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000, maxBuffer: 16 * 1024 * 1024 }).trim(); }
-      catch { return null; }
-    };
+    const readGit = gitReader(path);
+    const git = (...args: string[]): string | null => readGit(args);
     const empty: ReleaseStatusRow = { repo: `ashlrai/${name}`, defaultBranch: null, latestTag: null, ageDays: null, unreleasedCommits: null, readable: false, taggedAt: null, mergedPrsSinceTag: null, mergedPrs: null, path: null, tried, reason: null };
     if (!existsSync(join(path, '.git'))) return { ...empty, reason: `not found (tried ${tried.join(', ') || 'no folders'})` };
     const remoteHead = git('symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD') || null;
@@ -89,8 +85,9 @@ export function readReleaseRows(deps: ReleaseStatusDeps = {}): ReleaseStatusRow[
     const reachable = remoteHead ? git('describe', '--tags', '--abbrev=0', `refs/remotes/${remoteHead}`) : null;
     const tag = git('for-each-ref', ...(reachable ? [`refs/tags/${reachable}`] : ['--sort=-creatordate', '--count=1', 'refs/tags']), '--format=%(refname:strip=2)%09%(creatordate:unix)');
     const [latestTag, seconds] = tag?.split('\t') ?? [];
-    const timestamp = seconds && /^\d+$/.test(seconds) ? Number(seconds) * 1000 : NaN;
-    const ageDays = Number.isFinite(timestamp) ? Math.max(0, Math.floor(((deps.now ?? Date.now()) - timestamp) / DAY_MS)) : null;
+    const parsedSeconds = parseWholeNumber(seconds);
+    const timestamp = parsedSeconds !== null ? parsedSeconds * 1000 : NaN;
+    const ageDays = Number.isFinite(timestamp) ? Math.max(0, Math.floor(((deps.now ?? Date.now()) - timestamp) / RELEASE_DAY_MS)) : null;
     const shallow = git('rev-parse', '--is-shallow-repository') !== 'false';
     const range = latestTag && remoteHead ? `refs/tags/${latestTag}..refs/remotes/${remoteHead}` : null;
     const count = range && !shallow ? git('rev-list', '--count', range) : null;
@@ -107,7 +104,7 @@ export function readReleaseRows(deps: ReleaseStatusDeps = {}): ReleaseStatusRow[
     const reason = tag === null ? 'could not read tags' : !latestTag ? 'no tags in this clone' : !remoteHead ? 'no default-branch ref (origin/HEAD is not set; fetch or set it)'
       : latestTag && mergedPrs === null ? 'clone is shallow or incomplete, so PRs since the tag cannot be counted' : null;
     return { ...empty, path, reason, readable: tag !== null && !(shallow && !latestTag), defaultBranch, latestTag: latestTag || null, ageDays,
-      unreleasedCommits: count !== null && /^\d+$/.test(count) && Number.isSafeInteger(Number(count)) ? Number(count) : null,
+      unreleasedCommits: parseWholeNumber(count),
       taggedAt: Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null,
       mergedPrsSinceTag: mergedPrs === null ? null : mergedPrs.length, mergedPrs };
   });
@@ -119,7 +116,7 @@ export function readReleaseRows(deps: ReleaseStatusDeps = {}): ReleaseStatusRow[
  */
 export function releaseTagLines(rows: readonly ReleaseStatusRow[]): string[] {
   return rows.map(row => {
-    const name = row.repo.replace(/^ashlrai\//, '');
+    const name = stripReleaseOwner(row.repo);
     if (!row.path) return `${name}: not checked out here`;
     if (!row.readable) return `${name}: unknown${row.reason ? ` (${row.reason})` : ''}`;
     if (!row.latestTag) return row.reason === 'no tags in this clone' ? `${name}: never released` : `${name}: unknown${row.reason ? ` (${row.reason})` : ''}`;
@@ -176,10 +173,10 @@ const overdue = (row: ReleaseCadenceRow): number =>
  */
 export function releaseCadence(inputs: readonly ReleaseCadenceInput[], now: number): ReleasesReport {
   const repos = inputs.map((input): ReleaseCadenceRow => {
-    const name = input.repo.replace(/^ashlrai\//, '');
-    const merged = typeof input.mergedPrsSinceTag === 'number' && Number.isSafeInteger(input.mergedPrsSinceTag) && input.mergedPrsSinceTag >= 0 ? input.mergedPrsSinceTag : null;
+    const name = stripReleaseOwner(input.repo);
+    const merged = isNonNegativeInt(input.mergedPrsSinceTag) ? input.mergedPrsSinceTag : null;
     const at = input.taggedAt === null ? NaN : Date.parse(input.taggedAt);
-    const ageDays = input.latestTag !== null && Number.isFinite(at) ? Math.max(0, Math.floor((now - at) / DAY_MS)) : null;
+    const ageDays = input.latestTag !== null && Number.isFinite(at) ? Math.max(0, Math.floor((now - at) / RELEASE_DAY_MS)) : null;
     const behind = typeof input.behindReleases === 'number' && Number.isSafeInteger(input.behindReleases) && input.behindReleases > 0 ? input.behindReleases : null;
     const recentPrs = input.latestTag !== null && Array.isArray(input.mergedPrs) ? input.mergedPrs.slice(0, RELEASE_PR_TITLES_SHOWN).map(({ number, title }) => ({ number, title })) : null;
     const reason = input.reason ?? null;

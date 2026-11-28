@@ -37,7 +37,7 @@ function compareVerdictPosition(a: VerdictCursor, b: VerdictCursor): number {
 }
 
 /** Keep one verdict per workflow run as of the observation time. */
-function observedVerdicts(entries: readonly Entry[], nowMs: number): Entry[] {
+export function observedVerdicts(entries: readonly Entry[], nowMs: number): Entry[] {
   const runs = new Map<string, { first: Entry; verdictConflict: boolean; testConflict: boolean }>();
   for (const entry of entries) {
     if (entry.outcome !== 'verdict' || Date.parse(entry.at) > nowMs) continue;
@@ -56,9 +56,13 @@ function observedVerdicts(entries: readonly Entry[], nowMs: number): Entry[] {
 }
 
 function triggeringTests(entry: Entry): string[] {
-  const tests = Array.isArray(entry.tests) ? entry.tests : [entry.test];
-  return [...new Set(tests.filter((test): test is string =>
-    typeof test === 'string' && test.length > 0 && test.length <= JOURNAL_TEST_MAX))].sort();
+  const validTest = (test: unknown): test is string =>
+    typeof test === 'string' && test.length > 0 && test.length <= JOURNAL_TEST_MAX;
+  if (entry.tests === undefined) return validTest(entry.test) ? [entry.test] : [];
+  if (!Array.isArray(entry.tests) || !entry.tests.every(validTest)) return [];
+  const tests = [...new Set(entry.tests)].sort();
+  if (entry.test !== undefined && (tests.length !== 1 || tests[0] !== entry.test)) return [];
+  return tests;
 }
 
 /** Keep the earliest attempt time and only attribute consistent test evidence. */
@@ -80,32 +84,39 @@ export function observedAttempts(entries: readonly Entry[], nowMs: number): Entr
     testConflict ? { ...first, test: undefined, tests: undefined } : first);
 }
 
-/** Expand each observed attempt once for each triggering test. */
-function summarizeFlakes(attempts: readonly Entry[], nowMs: number, verdicts: readonly Entry[]) {
-  const recentAttempts = attempts.filter(entry => Date.parse(entry.at) >= nowMs - RECURRING_FLAKE_WINDOW_MS);
-  const attemptsByRun = new Map(recentAttempts.map(entry => [rerunKey(entry), entry]));
-  const testsByAttempt = recentAttempts.flatMap(entry => triggeringTests(entry).map(test => ({ ...entry, test })));
-  const attributedVerdicts = verdicts.filter(verdict => {
+/** Attribute workflow verdicts only to a matching single-test attempt in the window. */
+export function attributedTestVerdicts(attempts: readonly Entry[], verdicts: readonly Entry[], nowMs: number): Entry[] {
+  const cutoff = nowMs - RECURRING_FLAKE_WINDOW_MS;
+  const attemptsByRun = new Map(attempts.filter(entry => Date.parse(entry.at) >= cutoff)
+    .map(entry => [rerunKey(entry), entry]));
+  return verdicts.filter(verdict => {
+    if (!verdict.test) return false;
     const attempt = attemptsByRun.get(rerunKey(verdict));
     if (!attempt || Date.parse(attempt.at) > Date.parse(verdict.at)) return false;
     const tests = triggeringTests(attempt);
     return tests.length === 1 && tests[0] === verdict.test;
   });
-  return recurringFlakes([...testsByAttempt, ...attributedVerdicts], { nowMs });
+}
+
+/** Expand each observed attempt once for each triggering test. */
+function summarizeFlakes(attempts: readonly Entry[], nowMs: number, verdicts: readonly Entry[]) {
+  const recentAttempts = attempts.filter(entry => Date.parse(entry.at) >= nowMs - RECURRING_FLAKE_WINDOW_MS);
+  const testsByAttempt = recentAttempts.flatMap(entry => triggeringTests(entry).map(test => ({ ...entry, test })));
+  return recurringFlakes([...testsByAttempt, ...attributedTestVerdicts(recentAttempts, verdicts, nowMs)], { nowMs });
 }
 
 /** Reconcile call receipts without treating replays as new calls. */
-function observedCallResults(entries: readonly Entry[], nowMs: number): Entry[] {
+export function observedCallResults(entries: readonly Entry[], nowMs: number): Entry[] {
   const calls = new Map<string, { first: Entry; outcomeConflict: boolean; testConflict: boolean }>();
   for (const e of entries) {
     if ((e.outcome !== 'ok' && e.outcome !== 'failed') || Date.parse(e.at) > nowMs) continue;
-    const key = rerunKey(e);
+    const key = workflowRunKey(e);
     const call = calls.get(key);
     if (!call) {
       calls.set(key, { first: e, outcomeConflict: false, testConflict: false });
       continue;
     }
-    call.outcomeConflict ||= call.first.outcome !== e.outcome;
+    call.outcomeConflict ||= call.first.head !== e.head || call.first.outcome !== e.outcome;
     call.testConflict ||= call.first.test !== e.test;
     if (Date.parse(e.at) < Date.parse(call.first.at)) call.first = e;
   }
@@ -115,9 +126,9 @@ function observedCallResults(entries: readonly Entry[], nowMs: number): Entry[] 
 
 /** Fired reruns still awaiting a run verdict, oldest first. */
 function pendingVerdicts(entries: readonly Entry[], calls: readonly Entry[], nowMs: number): Entry[] {
-  const verdicted = new Set(entries.filter(e => e.outcome === 'verdict' && Date.parse(e.at) <= nowMs).map(rerunKey));
+  const verdicted = new Set(entries.filter(e => e.outcome === 'verdict' && Date.parse(e.at) <= nowMs).map(workflowRunKey));
   return calls
-    .filter(e => e.outcome === 'ok' && !verdicted.has(rerunKey(e)) && Date.parse(e.at) >= nowMs - VERDICT_MAX_AGE_MS)
+    .filter(e => e.outcome === 'ok' && !verdicted.has(workflowRunKey(e)) && Date.parse(e.at) >= nowMs - VERDICT_MAX_AGE_MS)
     .sort(compareVerdictPosition);
 }
 
@@ -166,10 +177,12 @@ export function readCiReruns(path = ciRerunPaths().journalPath, now = Date.now()
     const fd = openSync(path, 'r');
     try {
       const size = fstatSync(fd).size, start = Math.max(0, size - 4 * 1024 * 1024);
-      const buffer = Buffer.alloc(size - start);
-      readSync(fd, buffer, 0, buffer.length, start);
-      const lines = buffer.toString('utf8').split('\n');
-      if (start) lines.shift();
+      // Inspect the preceding byte to tell a partial row from a complete one.
+      const offset = Math.max(0, start - 1);
+      const buffer = Buffer.alloc(size - offset);
+      const bytesRead = readSync(fd, buffer, 0, buffer.length, offset);
+      const lines = buffer.toString('utf8', start - offset, bytesRead).split('\n');
+      if (start && buffer[0] !== 0x0a) lines.shift();
       for (const line of lines) {
         try {
           const e = JSON.parse(line) as Entry;
@@ -324,9 +337,9 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
         const attemptsByRun = new Map(observedAttempts(repoEntries, pendingAt).map(entry => [workflowRunKey(entry), entry]));
         s.verdictsPending = pending.length;
         // A future-dated verdict is invisible to the tally but still deduplicates writes.
-        const recordedVerdicts = new Set(journal.filter(e => e.outcome === 'verdict').map(rerunKey));
+        const recordedVerdicts = new Set(journal.filter(e => e.outcome === 'verdict').map(workflowRunKey));
         const eligible = pending.filter(e =>
-          !recordedVerdicts.has(rerunKey(e)) && Date.parse(e.at) <= now() - VERDICT_MIN_AGE_MS);
+          !recordedVerdicts.has(workflowRunKey(e)) && Date.parse(e.at) <= now() - VERDICT_MIN_AGE_MS);
         const cursor = s.verdictCursor;
         const next = cursor ? eligible.findIndex(e => compareVerdictPosition(e, cursor) > 0) : 0;
         const start = Math.max(0, next);

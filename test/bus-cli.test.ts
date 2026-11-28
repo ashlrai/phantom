@@ -269,6 +269,25 @@ describe('phm bus inbox read filters', () => {
     expect(ids((await json(['inbox', '--to', 'fleet', '--contains', 'nomatch'])).value)).toEqual([]);
   });
 
+  it('keeps only mail whose group address carries the exact topic component', async () => {
+    bus.send(envelope({ id: 'topic-work', to: 'group:general:work' }));
+    // --topic reads the to label's own topic component through the shared
+    // groupAddressTopicOf parse: the same topic keeps the mail, another topic
+    // or a non-group to drops it, and --channel composes into room AND topic.
+    expect(ids((await json(['inbox', '--to', 'group:general:work', '--topic', 'work'])).value)).toEqual(['topic-work']);
+    expect(ids((await json(['inbox', '--to', 'group:general:work', '--topic', 'alerts'])).value)).toEqual([]);
+    expect(ids((await json(['inbox', '--to', 'group:general:work', '--channel', 'general', '--topic', 'work'])).value)).toEqual(['topic-work']);
+    expect(ids((await json(['inbox', '--to', 'group:general:work', '--channel', 'alerts', '--topic', 'work'])).value)).toEqual([]);
+    // A bare room label, a deeper group label and a plain label carry no
+    // well-formed topic component, so --topic never matches them.
+    bus.send(envelope({ id: 'bare-room', to: 'group:general' }));
+    bus.send(envelope({ id: 'deep-label', to: 'group:general:work:extra' }));
+    bus.send(envelope({ id: 'plain', to: 'fleet' }));
+    for (const to of ['group:general', 'group:general:work:extra', 'fleet']) {
+      expect(ids((await json(['inbox', '--to', to, '--topic', 'work'])).value)).toEqual([]);
+    }
+  });
+
   it('keeps only the envelope whose own id is strictly equal', async () => {
     bus.send(envelope({ id: 'want-me' }));
     bus.send(envelope({ id: 'want-me-too' }));
@@ -334,6 +353,9 @@ describe('phm bus inbox read filters', () => {
       ['inbox', '--to', 'fleet', '--before', 'not-a-time'],
       ['inbox', '--to', 'fleet', '--contains', '   '],
       ['inbox', '--to', 'fleet', '--channel', 'Bad Channel'],
+      ['inbox', '--to', 'fleet', '--topic', 'Bad Topic'],
+      ['inbox', '--to', 'fleet', '--topic', ''],
+      ['inbox', '--to', 'fleet', '--topic='],
       ['inbox', '--to', 'fleet', '--job', 'two words'],
       ['inbox', '--to', 'fleet', '--from', ''],
       ['inbox', '--to', 'fleet', '--in-reply-to', 'has space'],

@@ -6,10 +6,12 @@ import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { appendBusInbox, type BusEnvelope } from '../src/core/fleet/bus-inbox.js';
+import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
 import { publishGroupPresence } from '../src/core/fleet/bus-group.js';
 import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import { postBusReply } from '../src/core/fleet/bus-reply-post.js';
+import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { listWorkBoard } from '../src/core/comms/work-board.js';
 import { cmdFleetWorkBoard } from '../src/cli/fleet-work-board.js';
 import { resolveFleetSubcommand } from '../src/cli/fleet-subcommand-resolve.js';
@@ -32,6 +34,30 @@ const busRequest = (id: string): BusEnvelope => ({
 });
 const post = (envelope: BusEnvelope) => {
   expect(appendBusInbox(envelope, { root, now: () => now }).status).toBe('posted');
+};
+/** Four requests that each isolate one shared filter dimension: req-alpha
+ * cites job fake-job-7 through a work.status jobId at P0, req-beta is a
+ * failed work.result receipt addressed to agent:lane-bot at P3, req-gamma
+ * cites the same job through a note's job: thread label at P1, and
+ * req-delta comes from the registered lane-bot identity at P2 carrying an
+ * unknown-kind body whose fallback summary holds the contains needle. */
+const filterRequest = (id: string, over: Partial<BusEnvelope>): BusEnvelope => ({
+  id, from: 'fake-sender', to: 'fake-lane', priority: 'P2', ttl: TTL, body: { kind: 'work' }, ...over,
+});
+const postFilterFixtures = () => {
+  post(filterRequest('req-alpha', { from: 'fake-alpha', priority: 'P0',
+    body: { kind: 'work.status', jobId: 'fake-job-7', detail: 'deploy step' } }));
+  now += 1_000;
+  post(filterRequest('req-beta', { from: 'fake-beta', to: 'agent:lane-bot', priority: 'P3',
+    body: { kind: 'work.result', outcome: 'failed' } }));
+  now += 1_000;
+  post(filterRequest('req-gamma', { from: 'fake-gamma', to: 'group:ops:deploy', priority: 'P1',
+    body: { kind: 'note', thread: 'job:fake-job-7', text: 'gamma note' } }));
+  now += 1_000;
+  post(filterRequest('req-delta', { from: 'lane-bot',
+    body: { kind: 'custom-thing', marker: 'zebra-quokka' } }));
+  now += 1_000;
+  expect(registerAgentIdentity({ handle: 'lane-bot', aliases: ['lb-alias'] }, { root }).status).toBe('created');
 };
 /** slack-a, slack-b then bus-c one second apart, a reply to slack-a, and a
  * live claim on slack-a. */
@@ -193,6 +219,88 @@ describe('listWorkBoard on real durable stores', { timeout: 60_000 }, () => {
     // A channelRef-only read keeps the unfiltered shape: no matched token.
     expect(listWorkBoard({ root, now, channelRef: REF_A }).matched).toBeUndefined();
   });
+
+  it('filters by the shared channel, topic and id address rules', () => {
+    const groupReq = (id: string, to: string): BusEnvelope => ({ ...busRequest(id), to });
+    post(groupReq('grp-ops-deploy', 'group:ops:deploy'));
+    now += 1_000;
+    post(groupReq('grp-ops-review', 'group:ops:review'));
+    now += 1_000;
+    post(groupReq('grp-eng-deploy', 'group:eng:deploy'));
+    now += 1_000;
+    post(busRequest('plain-lane'));
+
+    // --channel keeps the room's whole traffic under every topic, newest first.
+    expect(listWorkBoard({ root, now, channel: 'ops' }).items.map(i => i.id))
+      .toEqual(['grp-ops-review', 'grp-ops-deploy']);
+    // --topic keeps the exact topic component across every room.
+    const deploy = listWorkBoard({ root, now, topic: 'deploy' });
+    expect(deploy.items.map(i => i.id)).toEqual(['grp-eng-deploy', 'grp-ops-deploy']);
+    expect(deploy.matched).toBe(2);
+    // channel AND topic compose into one room and one topic.
+    expect(listWorkBoard({ root, now, channel: 'ops', topic: 'deploy' }).items.map(i => i.id))
+      .toEqual(['grp-ops-deploy']);
+    // --id keeps only the request whose own wire id is strictly equal.
+    expect(listWorkBoard({ root, now, id: 'grp-ops-review' }).items.map(i => i.id))
+      .toEqual(['grp-ops-review']);
+    // An agent address, a bare room and an absent room never match — unknown
+    // stays out, and matched reports the honest filtered total.
+    expect(listWorkBoard({ root, now, channel: 'nope' })).toMatchObject({ items: [], matched: 0 });
+    expect(listWorkBoard({ root, now, topic: 'deploy', id: 'plain-lane' }))
+      .toMatchObject({ items: [], matched: 0 });
+  });
+
+  it('filters by the shared sender, band and body rules with a true matched total', () => {
+    postFilterFixtures();
+    const ids = (result: ReturnType<typeof listWorkBoard>) => result.items.map(item => item.id);
+    // --to keeps requests addressed to the agent under the pending-address
+    // rule: the literal label and every label of the resolved identity.
+    expect(ids(listWorkBoard({ root, now, to: 'fake-lane' }))).toEqual(['req-delta', 'req-alpha']);
+    expect(listWorkBoard({ root, now, to: 'fake-lane' }).matched).toBe(2);
+    expect(ids(listWorkBoard({ root, now, to: 'lane-bot' }))).toEqual(['req-beta']);
+    expect(listWorkBoard({ root, now, to: 'lane-bot' }).matched).toBe(1);
+    // An unregistered ref keeps exact-label matching — agent:lane-bot is a
+    // label of the identity, the bare room label is not 'lane-bot'.
+    expect(listWorkBoard({ root, now, to: 'agent:lane-bot' }).matched).toBe(1);
+    expect(listWorkBoard({ root, now, to: 'unregistered-agent' })).toMatchObject({ items: [], matched: 0 });
+    // --from/--exclude-from apply the sender identity-label rule: the alias
+    // resolves to lane-bot's whole label set.
+    expect(ids(listWorkBoard({ root, now, from: 'lb-alias' }))).toEqual(['req-delta']);
+    expect(ids(listWorkBoard({ root, now, excludeFrom: 'lb-alias' })))
+      .toEqual(['req-gamma', 'req-beta', 'req-alpha']);
+    expect(listWorkBoard({ root, now, excludeFrom: 'lb-alias' }).matched).toBe(3);
+    expect(listWorkBoard({ root, now, from: 'fake-alpha', excludeFrom: 'fake-alpha' }))
+      .toMatchObject({ items: [], matched: 0 });
+    // --priority keeps one exact band.
+    for (const [band, id] of [['P0', 'req-alpha'], ['P1', 'req-gamma'], ['P2', 'req-delta'], ['P3', 'req-beta']] as const) {
+      const board = listWorkBoard({ root, now, priority: band });
+      expect(ids(board)).toEqual([id]);
+      expect(board.matched).toBe(1);
+    }
+    // --job keeps bodies naming the job through either citation: the
+    // work.status jobId and the note's job: thread label.
+    expect(ids(listWorkBoard({ root, now, job: 'fake-job-7' }))).toEqual(['req-gamma', 'req-alpha']);
+    expect(listWorkBoard({ root, now, job: 'fake-job-7' }).matched).toBe(2);
+    expect(listWorkBoard({ root, now, job: 'other-job' })).toMatchObject({ items: [], matched: 0 });
+    // --body-kind keeps the exact discriminator, case-sensitive.
+    expect(ids(listWorkBoard({ root, now, bodyKind: 'note' }))).toEqual(['req-gamma']);
+    expect(ids(listWorkBoard({ root, now, bodyKind: 'work.result' }))).toEqual(['req-beta']);
+    expect(ids(listWorkBoard({ root, now, bodyKind: 'custom-thing' }))).toEqual(['req-delta']);
+    expect(listWorkBoard({ root, now, bodyKind: 'Work.Result' })).toMatchObject({ items: [], matched: 0 });
+    // --result keeps work.result receipts reporting that one outcome.
+    expect(ids(listWorkBoard({ root, now, result: 'failed' }))).toEqual(['req-beta']);
+    expect(listWorkBoard({ root, now, result: 'complete' })).toMatchObject({ items: [], matched: 0 });
+    // --contains matches the scrubbed one-line summary case-insensitively.
+    expect(ids(listWorkBoard({ root, now, contains: 'ZEBRA-QUOKKA' }))).toEqual(['req-delta']);
+    expect(listWorkBoard({ root, now, contains: 'nothing-here' })).toMatchObject({ items: [], matched: 0 });
+    // The filters compose into one narrowed read, and state still applies
+    // on top of them.
+    expect(ids(listWorkBoard({ root, now, from: 'fake-beta', priority: 'P3' }))).toEqual(['req-beta']);
+    const scoped = listWorkBoard({ root, now, job: 'fake-job-7', state: 'RECEIVED' });
+    expect(ids(scoped)).toEqual(['req-gamma', 'req-alpha']);
+    expect(scoped.matched).toBe(2);
+    expect(scoped.state).toBe('RECEIVED');
+  });
 });
 
 describe('cmdFleetWorkBoard', { timeout: 60_000 }, () => {
@@ -280,6 +388,54 @@ describe('cmdFleetWorkBoard', { timeout: 60_000 }, () => {
     expect(parsed.items.map((i: { id: string }) => i.id)).toEqual(['slack-request-a']);
   });
 
+  it('--channel/--topic/--id filter requests and the footer reports matched', async () => {
+    const groupReq = (id: string, to: string): BusEnvelope => ({ ...busRequest(id), to });
+    post(groupReq('grp-ops-deploy', 'group:ops:deploy'));
+    now += 1_000;
+    post(groupReq('grp-ops-review', 'group:ops:review'));
+    now += 1_000;
+    post(groupReq('grp-eng-deploy', 'group:eng:deploy'));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await cmdFleetWorkBoard(['--root', root, '--channel', 'ops', '--topic', 'deploy'])).toBe(0);
+    let lines = log.mock.calls.map(call => String(call[0]));
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('grp-ops-deploy RECEIVED');
+    expect(lines[1]).toContain('items=1 matched=1 truncated=no inbox=ok');
+    expect(await cmdFleetWorkBoard(['--root', root, '--topic', 'deploy', '--json'])).toBe(0);
+    const parsed = JSON.parse(String(log.mock.calls.at(-1)![0]));
+    expect(parsed).toMatchObject({ matched: 2, inbox: 'ok' });
+    expect(parsed.items.map((i: { id: string }) => i.id)).toEqual(['grp-eng-deploy', 'grp-ops-deploy']);
+    expect(await cmdFleetWorkBoard(['--root', root, '--id', 'grp-ops-review'])).toBe(0);
+    lines = log.mock.calls.map(call => String(call[0]));
+    expect(lines.at(-2)).toContain('grp-ops-review');
+    expect(await cmdFleetWorkBoard(['--root', root, '--channel', 'BAD ROOM'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--root', root, '--topic', 'Upper'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--root', root, '--id', 'has space'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--root', root, '--channel', 'ops', '--channel', 'eng'])).toBe(2);
+  });
+
+  it('the shared sender, band and body flags filter requests and print matched', async () => {
+    postFilterFixtures();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await cmdFleetWorkBoard(['--root', root, '--from', 'lb-alias'])).toBe(0);
+    let lines = log.mock.calls.map(call => String(call[0]));
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('req-delta RECEIVED');
+    expect(lines[1]).toContain(`items=1 matched=1 truncated=no inbox=ok as-of=${iso(now)}`);
+    expect(await cmdFleetWorkBoard(['--root', root, '--exclude-from', 'fake-beta',
+      '--priority', 'P1', '--body-kind', 'note', '--job', 'fake-job-7', '--json'])).toBe(0);
+    const parsed = JSON.parse(String(log.mock.calls.at(-1)![0]));
+    expect(parsed).toMatchObject({ matched: 1, inbox: 'ok' });
+    expect(parsed.items.map((i: { id: string }) => i.id)).toEqual(['req-gamma']);
+    expect(await cmdFleetWorkBoard(['--root', root, '--result', 'failed', '--to', 'lane-bot'])).toBe(0);
+    lines = log.mock.calls.map(call => String(call[0]));
+    expect(lines.at(-2)).toContain('req-beta');
+    expect(await cmdFleetWorkBoard(['--root', root, '--contains', 'ZEBRA-quokka'])).toBe(0);
+    lines = log.mock.calls.map(call => String(call[0]));
+    expect(lines.at(-2)).toContain('req-delta');
+    expect(lines.at(-1)).toContain('matched=1');
+  });
+
   it('exits 2 on bad or duplicate flags and prints nothing on stdout', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -303,6 +459,21 @@ describe('cmdFleetWorkBoard', { timeout: 60_000 }, () => {
     expect(await cmdFleetWorkBoard(['--since', '1h', '--since', '2h'])).toBe(2);
     expect(await cmdFleetWorkBoard(['--before', '1h', '--before', '2h'])).toBe(2);
     expect(await cmdFleetWorkBoard(['--json', '--json'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--to', 'has space'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--from'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--exclude-from', 'x'.repeat(129)])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--priority', 'P9'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--priority', 'p1'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--job', ''])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--body-kind', 'has space'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--result', 'bogus'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--result', 'FAILED'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--contains', '   '])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--contains'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--to', 'a', '--to', 'b'])).toBe(2);
+    // --from and --exclude-from are independent flags, not mutually exclusive.
+    expect(await cmdFleetWorkBoard(['--from', 'a', '--exclude-from', 'a'])).toBe(0);
+    log.mockClear();
     expect(await cmdFleetWorkBoard(['--root', root, '--root', root])).toBe(2);
     expect(log).not.toHaveBeenCalled();
     expect(err).toHaveBeenCalled();

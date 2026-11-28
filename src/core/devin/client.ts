@@ -26,10 +26,14 @@
 import { redactKnownValues, scrubSecrets } from '../util/scrub.js';
 import {
   DEVIN_API_BASE_URL,
+  DEVIN_GITHUB_PR_URL_PATTERN,
   DEVIN_ORG_ID_PATTERN,
   DEVIN_PLAYBOOK_ID_PATTERN,
   isDevinOpaqueSelfId,
+  isDevinRecord as isRecord,
   isDevinSelfIdentity,
+  isValidDevinAcu,
+  redactDevinKeys,
   type DevinSelfIdentity,
   DEVIN_SESSION_ID_PATTERN,
   type DevinFailureCode,
@@ -92,15 +96,14 @@ export interface DevinDailyConsumption {
 
 /** https://docs.devin.ai/api-reference/v3/consumption/organizations-consumption-daily */
 export function parseDevinDailyConsumption(raw: unknown): DevinDailyConsumption | null {
-  const acu = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
-  if (!isRecord(raw) || !acu(raw['total_acus']) || !Array.isArray(raw['consumption_by_date'])) return null;
+  if (!isRecord(raw) || !isValidDevinAcu(raw['total_acus']) || !Array.isArray(raw['consumption_by_date'])) return null;
   // Only the documented unpaginated envelope establishes all available dates.
   // A future continuation/pagination protocol must be supported explicitly.
   if (Object.keys(raw).some(key => key !== 'total_acus' && key !== 'consumption_by_date')) return null;
   const days: DevinDailyConsumption['days'] = [];
   const dates = new Set<number>();
   for (const row of raw['consumption_by_date']) {
-    if (!isRecord(row) || !Number.isSafeInteger(row['date']) || !acu(row['acus']) || !isRecord(row['acus_by_product'])) return null;
+    if (!isRecord(row) || !Number.isSafeInteger(row['date']) || !isValidDevinAcu(row['acus']) || !isRecord(row['acus_by_product'])) return null;
     const date = row['date'] as number;
     if (dates.has(date)) return null;
     dates.add(date);
@@ -108,7 +111,7 @@ export function parseDevinDailyConsumption(raw: unknown): DevinDailyConsumption 
     for (const key of ['devin', 'cascade', 'terminal', 'automation', 'review'] as const) {
       const value = row['acus_by_product'][key];
       // Missing/nullable buckets stay unknown; a missing bucket is never inferred to be zero.
-      if (value !== undefined && value !== null && !acu(value)) return null;
+      if (value !== undefined && value !== null && !isValidDevinAcu(value)) return null;
       products[key] = value === undefined || value === null ? null : value;
     }
     days.push({ date, acus: row['acus'], products });
@@ -194,9 +197,6 @@ const MAX_PROMPT_CHARS = 60_000;
 
 const SESSION_STATUSES: readonly DevinSessionStatus[] = ['new', 'claimed', 'running', 'exit', 'error', 'suspended', 'resuming'];
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
-
 const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => {
   const t = setTimeout(resolve, ms);
   t.unref?.();
@@ -271,7 +271,7 @@ export function parseDevinSession(raw: unknown): DevinSession | null {
   const acus = raw['acus_consumed'];
   let acusConsumed: number | null = null;
   if (acus !== undefined && acus !== null) {
-    if (typeof acus !== 'number' || !Number.isFinite(acus) || acus < 0) return null;
+    if (!isValidDevinAcu(acus)) return null;
     acusConsumed = acus;
   }
   const createdAtMs = devinInstantMs(raw['created_at']);
@@ -308,9 +308,8 @@ export function parseDevinSession(raw: unknown): DevinSession | null {
   };
 }
 
-/** PaginatedResponse[SessionResponse] — https://docs.devin.ai/api-reference/concepts/pagination. Unparseable items are dropped. */
 /** Array of SessionAttachment; any malformed row fails the whole read closed. */
-export function parseDevinSessionAttachments(raw: unknown): DevinSessionAttachment[] | null {
+function parseDevinSessionAttachments(raw: unknown): DevinSessionAttachment[] | null {
   if (!Array.isArray(raw) || raw.length > 1000) return null;
   const out: DevinSessionAttachment[] = [];
   for (const row of raw) {
@@ -332,6 +331,7 @@ export interface DevinSessionPage {
   complete?: boolean;
 }
 
+/** PaginatedResponse[SessionResponse] — https://docs.devin.ai/api-reference/concepts/pagination. Unparseable items are dropped. */
 export function parseDevinSessionPage(raw: unknown): DevinSessionPage | null {
   if (!isRecord(raw) || !Array.isArray(raw['items'])) return null;
   const items: DevinSession[] = [];
@@ -358,7 +358,7 @@ const MAX_MESSAGE_CHARS = 100_000;
  * source or a string message is dropped (never guessed); a very long message
  * is clipped rather than refused, so one huge reply cannot wedge the stream.
  */
-export function parseDevinMessagePage(raw: unknown): { items: DevinSessionMessage[]; endCursor: string | null; hasNextPage: boolean } | null {
+function parseDevinMessagePage(raw: unknown): { items: DevinSessionMessage[]; endCursor: string | null; hasNextPage: boolean } | null {
   if (!isRecord(raw) || !Array.isArray(raw['items'])) return null;
   const items: DevinSessionMessage[] = [];
   for (const item of raw['items'].slice(0, 500)) {
@@ -423,7 +423,7 @@ function problemDetail(text: string, apiKey: string): string {
     return '';
   }
   if (!isRecord(body) || typeof body['detail'] !== 'string') return '';
-  const flat = scrubSecrets(redactKnownValues(body['detail'], [apiKey])).replace(/\bcog_[A-Za-z0-9_-]+/g, '[REDACTED]').replace(/\s+/g, ' ').trim();
+  const flat = redactDevinKeys(scrubSecrets(redactKnownValues(body['detail'], [apiKey]))).replace(/\s+/g, ' ').trim();
   return flat.length > MAX_DETAIL_CHARS ? `${flat.slice(0, MAX_DETAIL_CHARS - 1)}…` : flat;
 }
 
@@ -448,7 +448,6 @@ export function parseConsumptionRetryAfter(value: string | null, now = Date.now(
 
 type RetryPolicy = 'read' | 'create';
 
-const DEVIN_PR_URL = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+$/;
 export interface DevinPrReview {
   status: 'pending' | 'running' | 'completed' | 'errored' | 'cancelled' | 'skipped';
   repo_path: string;
@@ -543,7 +542,7 @@ export class DevinClient {
       try {
         const value: unknown = JSON.parse(text)?.error_code;
         if (typeof value === 'string') {
-          const clean = scrubSecrets(redactKnownValues(value, [this.apiKey])).replace(/\bcog_[A-Za-z0-9_-]+/g, '').slice(0, 64);
+          const clean = redactDevinKeys(scrubSecrets(redactKnownValues(value, [this.apiKey])), '').slice(0, 64);
           if (/^[A-Za-z0-9_.-]+$/.test(clean)) errorCode = clean;
         }
       } catch { /* Non-JSON errors have no provider code. */ }
@@ -568,14 +567,14 @@ export class DevinClient {
   }
 
   async triggerPrReview(orgId: string, prUrl: string): Promise<DevinPrReview> {
-    if (!DEVIN_PR_URL.test(prUrl)) throw new DevinApiError('invalid-request', 'Invalid GitHub PR URL.');
+    if (!DEVIN_GITHUB_PR_URL_PATTERN.test(prUrl)) throw new DevinApiError('invalid-request', 'Invalid GitHub PR URL.');
     const parsed = parseDevinPrReview(await this.request('POST', `/organizations/${checkOrg(orgId)}/pr-reviews`, { pr_url: prUrl }, 'create'));
     if (!parsed) throw new DevinApiError('unparsed', STATUS_SENTENCES.unparsed);
     return parsed;
   }
 
   async getPrReview(orgId: string, prUrl: string, commitSha?: string): Promise<DevinPrReview> {
-    if (!DEVIN_PR_URL.test(prUrl)) throw new DevinApiError('invalid-request', 'Invalid GitHub PR URL.');
+    if (!DEVIN_GITHUB_PR_URL_PATTERN.test(prUrl)) throw new DevinApiError('invalid-request', 'Invalid GitHub PR URL.');
     const query = new URLSearchParams({ pr_url: prUrl, ...(commitSha ? { commit_sha: commitSha } : {}) });
     const parsed = parseDevinPrReview(await this.request('GET', `/organizations/${checkOrg(orgId)}/pr-reviews?${query}`, undefined, 'read'));
     if (!parsed) throw new DevinApiError('unparsed', STATUS_SENTENCES.unparsed);

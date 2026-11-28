@@ -10,7 +10,7 @@ const dirs: string[] = [];
 const temp = (): string => { const dir = mkdtempSync(join(tmpdir(), 'order-notices-')); dirs.push(dir); return dir; };
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 const trace = (): OrderTraceV1 => ({ v: 1, generatedAt: '',
-  sources: { inbox: 'healthy', prompts: 'healthy', publishes: 'healthy' },
+  sources: { inbox: 'healthy', prompts: 'healthy', publishes: 'healthy', queue: 'healthy' },
   orders: [{ at: '', source: 'desktop (desk-fake)', key: '11-01 00:08', jobs:
     ['queued', 'launched', 'published', 'merged', 'merged'].map((state, i) => ({
       id: `RQ-FAKE${i}`, lane: null, state: state as 'merged', url: 'https://example.com/fake',
@@ -60,6 +60,15 @@ it('retries throwing senders and records unsupported channels as skipped', async
   const unsupported = [{ ...notices[0]!, key: 'email-fake:RQ-FAKE', channel: 'email' }];
   expect(await sendOrderMergeNotices(root, unsupported, {})).toEqual({ sent: 0, skipped: 1, failed: 0 });
   expect(readFileSync(join(root, 'queue', 'order-notices.jsonl'), 'utf8')).toContain('channel has no sender');
+  const rows = readFileSync(join(root, 'queue', 'order-notices.jsonl'), 'utf8').split('\n')
+    .filter(line => line.trim() !== '').map(line => JSON.parse(line) as Record<string, unknown>);
+  expect(rows.length).toBeGreaterThan(0);
+  for (const row of rows) {
+    expect(typeof row['at']).toBe('string');
+    expect(Number.isFinite(Date.parse(row['at'] as string))).toBe(true);
+    expect(typeof row['channel']).toBe('string');
+  }
+  expect(rows.map(row => row['channel'])).toContain('email');
   expect(await sendOrderMergeNotices(root, unsupported, {})).toEqual({ sent: 0, skipped: 0, failed: 0 });
 });
 it('sends nothing while the ledger lock is held', async () => {

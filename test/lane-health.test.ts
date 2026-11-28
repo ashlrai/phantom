@@ -19,9 +19,9 @@ afterEach(() => vi.restoreAllMocks());
 
 it('counts calls, error rate and latency over the window, unknown when unmeasured', () => {
   const h = computeLaneHealth(snap([
-    run({ id: '1', startedAt: at(60), endedAt: at(50), outcome: 'merged', phase: 'watching' }),
-    run({ id: '2', startedAt: at(40), endedAt: at(20), outcome: 'failed', phase: 'producing' }),
-    run({ id: '3', startedAt: at(30), endedAt: at(29), outcome: 'merged', phase: 'watching' }),
+    run({ id: '1', startedAt: at(60), phaseStartedAt: at(50), endedAt: at(50), outcome: 'merged', phase: 'watching' }),
+    run({ id: '2', startedAt: at(40), phaseStartedAt: at(40), endedAt: at(20), outcome: 'failed', phase: 'producing' }),
+    run({ id: '3', startedAt: at(30), phaseStartedAt: at(29), endedAt: at(29), outcome: 'merged', phase: 'watching' }),
     run({ id: '4', startedAt: at(13 * 60), endedAt: at(12.9 * 60), outcome: 'failed', phase: 'watching' }),
   ]));
   const codex = h.lanes.find((l) => l.lane === 'codex')!;
@@ -64,6 +64,24 @@ it('requires valid completion evidence for error rate and latency', () => {
   ];
   expect(computeLaneHealth(snap([...incomplete, ...finished])).lanes[0]).toMatchObject({
     calls: 7, errorRate: 0.5, latencyP50Ms: 0, latencyP95Ms: 300_000,
+  });
+});
+
+it('excludes an end before the current phase from completion metrics', () => {
+  const beforePhase = run({
+    id: 'before-phase', startedAt: at(65), phaseStartedAt: at(50), endedAt: at(60), outcome: 'failed',
+  });
+  expect(computeLaneHealth(snap([beforePhase])).lanes[0]).toMatchObject({
+    calls: 1, errorRate: null, latencyP50Ms: null, latencyP95Ms: null,
+    stuck: [{ runId: 'before-phase' }],
+  });
+
+  const finished = [
+    run({ id: 'at-phase-start', phaseStartedAt: at(2), endedAt: at(2), outcome: 'merged' }),
+    run({ id: 'no-phase-timing', phaseStartedAt: null, endedAt: at(1), outcome: 'merged' }),
+  ];
+  expect(computeLaneHealth(snap([beforePhase, ...finished])).lanes[0]).toMatchObject({
+    calls: 3, errorRate: 0, latencyP50Ms: 180_000, latencyP95Ms: 240_000,
   });
 });
 

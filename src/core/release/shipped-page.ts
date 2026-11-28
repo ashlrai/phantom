@@ -4,6 +4,7 @@
  * site/shipped.html, so the page is plain HTML with no script and no runtime
  * calls. Pure: the same report always gives the same page.
  */
+import { releaseCount } from './cadence.js';
 import { SHIPPED_SCHEMA, shippedSummary, type ShippedReport } from './shipped.js';
 
 export const SHIPPED_SITE_JSON = 'site/shipped.json';
@@ -51,7 +52,7 @@ export function shippedPage(report: ShippedReport): string {
 <p class="lead">${escape(headline!)}</p>
 ${rest.map(line => `<p class="muted">${escape(line)}</p>\n`).join('')}${list}
 </main>
-<footer class="muted">Updated ${escape(report.generatedAt.slice(0, 10))}, covering the last ${report.days} ${report.days === 1 ? 'day' : 'days'}. The same data as <a href="shipped.json">shipped.json</a> and <code>phm shipped --json</code>. <a href="/">Phantom home</a></footer>
+<footer class="muted">Updated ${escape(report.generatedAt.slice(0, 10))}, covering the last ${releaseCount(report.days, 'day')}. The same data as <a href="shipped.json">shipped.json</a> and <code>phm shipped --json</code>. <a href="/">Phantom home</a></footer>
 </body></html>
 `;
 }

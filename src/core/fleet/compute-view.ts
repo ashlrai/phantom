@@ -114,7 +114,7 @@ export async function readFleetCompute(options: {
       warnings: Array.isArray(admission.warnings) ? admission.warnings.filter((v): v is string => typeof v === 'string').slice(0, 32).map(clean) : null,
       observedAt: typeof admission.ts === 'string' ? admission.ts : null },
   };
-  const [launchVitals, awareness] = await Promise.all([readLaunchVitals(runs), readFleetAwareness({ home, runsDir: runs, now })]);
+  const [launchVitals, awareness] = await Promise.all([readLaunchVitals(runs, now), readFleetAwareness({ home, runsDir: runs, now })]);
   const all = [...nodes.values()], { hosts, totals } = summarizeHosts(all);
   return { launchVitals, awareness, schema: 'fleet.compute.v1', generatedAt: new Date(now).toISOString(), localNodeId, truncated,
     nodes: all, hosts, pool: totals, sources, operations, dispatcherAt: typeof tick === 'string' && Number.isFinite(tickMs) ? tick : null, lanes };

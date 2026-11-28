@@ -4,15 +4,19 @@
  * Scope: `~/.ashlr-runs/node-results/<jobId>.json` on THIS computer only. Other
  * nodes keep their own results; nothing here sees them. An artifact is local
  * evidence, not proof of completion (worker.complete is the fencing boundary,
- * see docs/NODES.md). Only job ids (taken from file names, never file bodies)
- * and timestamps leave this module: claim tokens, leader tokens and output
- * sizes are parsed away. Nothing is written.
+ * see docs/NODES.md). Two artifact shapes share the directory and both count:
+ * the reference runner's `phm-node-runner.v1` finish row and the pack result
+ * payload (`schemaVersion: 1`) that `contrib/mac/node-runner.mjs` and
+ * `runCodexFilePack` write. Only job ids (taken from file names, never file
+ * bodies) and timestamps leave this module: claim tokens, leader tokens,
+ * result bodies and output sizes are parsed away. Nothing is written.
  */
 import { lstatSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { assurePrivateStoragePath } from '../../util/private-storage.js';
 import { readStableRegularFile } from '../../util/stable-file-read.js';
+import { CODEX_OUTPUT_LIMIT } from './codex-pack.js';
 
 export interface NodeResultsSummary {
   v: 1;
@@ -31,10 +35,25 @@ export interface NodeResultsSummary {
   reason?: 'unsafe-dir' | 'unreadable-dir' | 'reader-failed';
 }
 
-const MAX_FILE_BYTES = 16 * 1024;
+/** Result payloads keep the pack's 48 KiB output tail; JSON string escaping
+ * expands it at most ~6x, so the read bound covers the largest artifact a
+ * shipped runner writes while still refusing floods. */
+const MAX_FILE_BYTES = CODEX_OUTPUT_LIMIT * 6 + 32 * 1024;
 const MAX_SCANNED = 5000; // bounds lstat work if the directory is flooded
 const SCHEMA = 'phm-node-runner.v1';
 const JOB_FILE = /^([A-Za-z0-9][A-Za-z0-9._-]{0,127})\.json$/;
+
+/** True for either shipped artifact shape naming this job id. The payload
+ * check requires the fields both writers always emit, so a bare
+ * `{schemaVersion: 1}` file cannot pass as a result. */
+function isRunnerArtifact(body: unknown, jobId: string): boolean {
+  if (typeof body !== 'object' || body === null) return false;
+  const row = body as Record<string, unknown>;
+  if (row['jobId'] !== jobId) return false;
+  if (row['schema'] === SCHEMA) return true;
+  return row['schemaVersion'] === 1 && typeof row['pack'] === 'string' && row['pack'].length > 0 &&
+    typeof row['completedAt'] === 'string';
+}
 
 export function readNodeResults(opts: { dir?: string; nowMs?: number; windowMs?: number; max?: number } = {}): NodeResultsSummary {
   const nowMs = opts.nowMs ?? Date.now();
@@ -76,11 +95,7 @@ export function readNodeResults(opts: { dir?: string; nowMs?: number; windowMs?:
     const read = readStableRegularFile(join(dir, file.name), { anchorPath: dir, maxFileBytes: MAX_FILE_BYTES, remainingBytes: MAX_FILE_BYTES });
     let valid = false;
     if (read.ok) {
-      try {
-        const body: unknown = JSON.parse(read.text);
-        valid = typeof body === 'object' && body !== null && (body as Record<string, unknown>)['schema'] === SCHEMA &&
-          (body as Record<string, unknown>)['jobId'] === jobId;
-      } catch { /* counted as unreadable below */ }
+      try { valid = isRunnerArtifact(JSON.parse(read.text), jobId); } catch { /* counted as unreadable below */ }
     }
     if (!valid) { unreadable++; continue; }
     newest ??= { jobId, at: new Date(file.mtimeMs).toISOString() };

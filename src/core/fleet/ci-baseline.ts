@@ -10,7 +10,7 @@ import { nextFixGeneration } from './ci-fix-generations.js';
 
 type Failure = { testId: string; file: string; names: string; excerpt: string };
 type Pr = { number: number; headRefOid: string; headRefName: string; files: { path: string }[] };
-type Run = { id: number; head_sha: string; workflow_id: number; status: string; conclusion?: string };
+type Run = { id: number; head_sha: string; workflow_id: number; status: string; conclusion?: string; path?: string };
 type Job = { id: number; conclusion: string; head_sha: string };
 type Observation = { pr: Pr; failure: Failure; touched: boolean | null; runId: number };
 
@@ -21,6 +21,32 @@ type Observation = { pr: Pr; failure: Failure; touched: boolean | null; runId: n
 // and `neutral` are deliberate non-verdicts (path filters, `if:` gates,
 // required-check-neutral), not incomplete checks, and stay ignored.
 const INCOMPLETE_CONCLUSIONS = new Set(['cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale']);
+
+// Master-tip workflow runs that automate releases and operations rather than
+// check the ref's code. They trigger on master pushes, schedules and
+// workflow_run completions, so one lands on nearly every tip; their jobs
+// check out unpinned refs (a release branch, a sparse script dir) that can
+// never satisfy the head-proof rule, and none of them runs a suite,
+// typecheck, lint or gate step the failure parsers recognize — a red run
+// here is release-pipeline evidence (its own ledgers and backlogs carry
+// it), never a `shared-baseline` group. Left in the evidence set each one
+// returns null from logs() and marks masterKnown false, so probable-flake
+// and update-branch readiness stay unreachable on every tip. Only basenames
+// of workflows with NO parsed failure surface belong here: a workflow that
+// can print a vitest/TAP/tsc/eslint/docs/build/audit/gate failure — or one
+// this list has never seen — still counts, so an unrecognized automation
+// workflow fails toward unknown, the safe direction.
+const NON_CHECK_MASTER_WORKFLOWS = new Set([
+  'release-please.yml',
+  'release-prep.yml',
+  'auto-tag.yml',
+  'release-train.yml',
+  'full-suite-fixforward.yml',
+  'ecosystem-stats.yml',
+  'attest-ci-build.yml',
+  'publish-canonical-npm.yml',
+]);
+const workflowBaseName = (path: string | undefined): string => path?.split('/').pop() ?? '';
 
 function completeActionsPage<T extends { id: number }>(rows: T[] | undefined, total: number | undefined): rows is T[] {
   return Array.isArray(rows) && rows.length === total && rows.length <= 100 &&
@@ -2027,6 +2053,54 @@ function parseTestRunnerFailures(log: string): Failure[] {
   return out;
 }
 
+// The scheduled companion-smoke workflow (.github/workflows/
+// companion-smoke.yml) builds the ref and runs
+// `node scripts/companion-workflow-smoke.mjs --published`, which prints
+// one `<mark> <check-id>: <detail>` row per companion seam -- `ok  `,
+// `warn`, `FAIL` or `skip` -- and closes with the tally
+// `N pass, N warn, N fail, N skip`. Only FAIL rows are failures: warn
+// and skip never fail the step. Each row groups under the smoke script
+// as `scripts/companion-workflow-smoke.mjs > (companion-smoke)
+// <check-id>` -- the check id is the unit a master fix restores (one
+// seam's published-contract compat, not the whole smoke), and because
+// the ids are script-generated (companion keys, MCP server ids,
+// protocol versions) the row shape, not an enum, decides what parses.
+// Rows count only inside a log carrying the smoke's own tally, and the
+// tally's fail count must equal the FAIL rows: a truncated or
+// interleaved log is not one verdict and stays unparsed. Like the
+// other non-test identities these groups can never resolve through a
+// vitest pass line: shared-baseline, pr-caused or unknown -- never
+// probable-flake.
+const COMPANION_SMOKE_FILE = 'scripts/companion-workflow-smoke.mjs';
+const COMPANION_SMOKE_PREFIX = '(companion-smoke)';
+const COMPANION_SMOKE_TALLY = /^(\d+) pass, (\d+) warn, (\d+) fail, (\d+) skip$/;
+const COMPANION_SMOKE_FAIL = /^FAIL ([a-z0-9][a-z0-9:._-]{0,127}): \S/;
+const COMPANION_SMOKE_MAX = 32;
+
+function parseCompanionSmokeFailures(log: string): Failure[] {
+  const output = lines(log);
+  let declaredFail = -1;
+  for (const line of output) {
+    const tally = COMPANION_SMOKE_TALLY.exec(line);
+    if (tally === null) continue;
+    declaredFail = Number(tally[3]);
+    break;
+  }
+  if (declaredFail < 0) return [];
+  const out: Failure[] = [];
+  for (const line of output) {
+    if (out.length >= COMPANION_SMOKE_MAX) break;
+    const match = COMPANION_SMOKE_FAIL.exec(line);
+    if (match === null) continue;
+    const names = `${COMPANION_SMOKE_PREFIX} ${match[1]}`;
+    out.push({ file: COMPANION_SMOKE_FILE, names, testId: `${COMPANION_SMOKE_FILE} > ${names}`, excerpt: clean(line) });
+  }
+  // The tally and the rows come from the same checks array; a log whose
+  // counts disagree (truncation, a second smoke run, interleaved output)
+  // is not one verdict and parses nothing.
+  return out.length === declaredFail ? out : [];
+}
+
 // The spawned Vitest run's direct repo inputs, shared by both runner
 // identities: the config that collects and times the suites, the
 // mock-compat config and setup files it loads, the lane-membership and
@@ -2047,6 +2121,16 @@ const TEST_RUNNER_COMMON_INPUTS = [
 const TEST_RUNNER_INPUTS: Record<string, readonly string[]> = {
   [TEST_CI_NAMES]: [TEST_CI_FILE, 'src/core/run/tool-path.ts', 'scripts/vitest-progress-reporter.mjs', ...TEST_RUNNER_COMMON_INPUTS],
   [TEST_CI_SHARDED_NAMES]: [TEST_CI_SHARDED_FILE, 'scripts/test-shard-plan.mjs', 'scripts/test-ci.mjs', 'test/helpers/test-durations.json', ...TEST_RUNNER_COMMON_INPUTS],
+};
+
+// The companion-smoke gate's failure file is the smoke script itself.
+// Its checks exercise published companions plus the ref's built
+// dist/core/integrations/locus.js -- a measured graph with no
+// enumerable closure, the same unattributed convention the perf and
+// memory gates use -- so the dependency set is a closed input list:
+// the script and the workflow step that invokes it.
+const COMPANION_SMOKE_INPUTS: Record<string, readonly string[]> = {
+  [COMPANION_SMOKE_FILE]: [COMPANION_SMOKE_FILE, '.github/workflows/companion-smoke.yml'],
 };
 
 export function parseBaselineFailures(log: string, repo?: string, auditExceptions: readonly DependencyAuditException[] | null = []): Failure[] {
@@ -2166,6 +2250,10 @@ export function parseBaselineFailures(log: string, repo?: string, auditException
     if (result.length >= 100) break;
     result.push(failure);
   }
+  for (const failure of parseCompanionSmokeFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
   return result;
 }
 
@@ -2178,11 +2266,13 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       return r.ok ? JSON.parse(r.stdout) as T : null;
     } catch { return null; }
   }
-  async function runs(ref: string): Promise<Run[] | null> {
-    const data = await json<{ workflow_runs: Run[]; total_count: number }>(`repos/${repo}/actions/runs?head_sha=${encodeURIComponent(ref)}&per_page=100`);
+  async function masterRunsAt(ref: string): Promise<Run[] | null> {
+    const data = await json<{ workflow_runs: Run[]; total_count: number }>(`repos/${repo}/actions/runs?head_sha=${encodeURIComponent(ref)}&branch=master&per_page=100`);
     if (!data || !completeActionsPage(data.workflow_runs, data.total_count)) return null;
     const seen = new Set<number>();
-    return data.workflow_runs.filter(r => { if (seen.has(r.workflow_id)) return false; seen.add(r.workflow_id); return true; });
+    return data.workflow_runs
+      .filter(r => !NON_CHECK_MASTER_WORKFLOWS.has(workflowBaseName(r.path)))
+      .filter(r => { if (seen.has(r.workflow_id)) return false; seen.add(r.workflow_id); return true; });
   }
   async function logs(run: Run, head: string): Promise<{ entries: { conclusion: string; text: string }[]; incomplete: boolean } | null> {
     const data = await json<{ jobs: Job[]; total_count: number }>(`repos/${repo}/actions/runs/${run.id}/jobs?per_page=100`);
@@ -2213,18 +2303,17 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
         return null;
       }
       const output = lines(r.stdout);
-      const checkout = output.findIndex(line => /(?:^|\/)git log -1 --format=%H$/.test(line));
-      if (checkout >= 0) {
-        if (output[checkout + 1] !== head) return null;
-        result.push({ conclusion: job.conclusion, text: r.stdout });
-        continue;
+      // Every direct checkout receipt must identify the analyzed head,
+      // including when a log reports both forms of proof.
+      let directProof = false;
+      for (const [index, line] of output.entries()) {
+        const bound = BOUND_LINE.exec(line);
+        const gitLog = /(?:^|\/)git log -1 --format=%H$/.test(line);
+        if (!bound && !gitLog) continue;
+        if ((bound ? bound[1] : output[index + 1]) !== head) return null;
+        directProof = true;
       }
-      // Bound CI jobs prove the checkout through the source-binding receipt
-      // instead of a raw `git log -1` echo; the bound revision must equal the
-      // analyzed head exactly like the marker's following line does.
-      const bound = output.find(line => BOUND_LINE.test(line));
-      if (bound !== undefined) {
-        if (BOUND_LINE.exec(bound)![1] !== head) return null;
+      if (directProof) {
         result.push({ conclusion: job.conclusion, text: r.stdout });
         continue;
       }
@@ -2242,12 +2331,13 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // the analyzer consumes; any recognizable failure or pass output in
       // an unverifiable log keeps the whole run unknown rather than letting
       // unattributed evidence pass as head-verified.
-      if (parseBaselineFailures(r.stdout, repo).length > 0 || output.some(line => PASS_LINE.test(line))) return null;
+      if (output.some(line => CHECKOUT_GROUP.test(line) || PASS_LINE.test(line)) ||
+          parseBaselineFailures(r.stdout, repo).length > 0) return null;
     }
     return { entries: result, incomplete };
   }
   const branch = await json<{ commit: { sha: string } }>(`repos/${repo}/branches/master`);
-  const masterRuns = branch?.commit?.sha ? await runs(branch.commit.sha) : null;
+  const masterRuns = branch?.commit?.sha ? await masterRunsAt(branch.commit.sha) : null;
   const masterLogs: { conclusion: string; text: string }[] = [];
   let masterKnown = !!branch?.commit?.sha && !!masterRuns?.length;
   for (const run of masterRuns ?? []) {
@@ -2275,7 +2365,14 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     if (fetched.absent) auditExceptions = [];
     else if (fetched.ok && fetched.source !== null) auditExceptions = parseAuditExceptions(fetched.source);
   }
-  const masterFailures = masterLogs.flatMap(l => parseBaselineFailures(l.text, repo, auditExceptions));
+  // A green job can log failed attempts before reporting its final pass.
+  const masterFailures = masterLogs
+    .filter(log => log.conclusion !== 'success')
+    .flatMap(log => {
+      const failures = parseBaselineFailures(log.text, repo, auditExceptions);
+      if (log.conclusion === 'failure' && failures.length === 0) masterKnown = false;
+      return failures;
+    });
   // Parenthesized identities are gate checks, not vitest tests: only
   // '(suite)' resolves through pass evidence, because the file loading is
   // what failed. '(lint)', '(typecheck)' and the other gate names can never
@@ -2603,7 +2700,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // the dependency manifests, and never read a file's imports, so the
       // dependency set is each gate's closed input list rather than the
       // import closure walk.
-      const flatInputs = LINT_GUARD_INPUTS[failure.names] ?? FIRST_PAINT_INPUTS[failure.names] ?? TEST_RUNNER_INPUTS[failure.names] ?? SECRET_GATE_INPUTS[failure.names] ?? INSTALL_STEP_INPUTS[failure.names] ?? INSTALL_SMOKE_INPUTS[failure.names] ?? BUILD_STEP_INPUTS[failure.file];
+      const flatInputs = LINT_GUARD_INPUTS[failure.names] ?? FIRST_PAINT_INPUTS[failure.names] ?? TEST_RUNNER_INPUTS[failure.names] ?? SECRET_GATE_INPUTS[failure.names] ?? INSTALL_STEP_INPUTS[failure.names] ?? INSTALL_SMOKE_INPUTS[failure.names] ?? BUILD_STEP_INPUTS[failure.file] ?? COMPANION_SMOKE_INPUTS[failure.file];
       const deps = flatInputs !== undefined ? new Set<string>(flatInputs) : await dependencies(failure.file);
       // Generated artifacts are produced by the clean-tree job, not the test
       // runner: the vitest harness ambient set cannot stale them, so only
@@ -2617,8 +2714,22 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // the harness, and the secret-shape/
       // secret-scan/version-provenance trust gates have no vitest harness
       // at all, so the ambient set cannot reach any of them.
-      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names === MEMORY_BENCHMARK_NAMES || failure.names === BUILD_STEP_NAMES || flatInputs !== undefined || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) || CI_SCRIPT_GATE_FILES.has(failure.file) ? new Set<string>() : await harnessAmbient(failure.file);
-      const touched = pr.files?.some(f => f.path === failure.file) ? true : deps && ambient && pr.files?.length < 100 ? pr.files.some(f => deps.has(f.path) || ambient.has(f.path)) : null;
+      const usesHarness = !(failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names === MEMORY_BENCHMARK_NAMES || failure.names === BUILD_STEP_NAMES || flatInputs !== undefined || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) || CI_SCRIPT_GATE_FILES.has(failure.file));
+      const ambient = usesHarness ? await harnessAmbient(failure.file) : new Set<string>();
+      let touched: boolean | null = null;
+      if (pr.files?.some(f => f.path === failure.file)) {
+        touched = true;
+      } else if (deps && ambient && pr.files?.length < 100) {
+        touched = pr.files.some(f => deps.has(f.path) || ambient.has(f.path));
+        if (!touched && usesHarness) {
+          const changedConfigs = pr.files.filter(f => VITEST_CONFIG_NAME.test(f.path));
+          if (changedConfigs.length > 0) {
+            const configs = await discoverHarnessConfigs();
+            // A config absent on master has no observed collection scope.
+            if (!configs || changedConfigs.some(f => !configs.some(cfg => cfg.path === f.path))) touched = null;
+          }
+        }
+      }
       observations.push({ pr, failure, touched, runId: failure.runId });
     }
   }
@@ -2639,6 +2750,28 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     const brief = `Reproduce ${testId} on latest master in ${repo}; verify the intentional production contract before changing anything. Fix only the stale baseline or report if not reproducible; never weaken tests or edit Security GATES v3 files. Run affected tests. Include ${jobId} in the fix PR body. Blocked PRs: ${unaffected.join(', ')}. After merge, re-analyze and plan update-branch for unchanged heads.`;
     return { ...evidence, prs: prNumbers, unaffectedPrs: unaffected, classification, action, master: passes(failure) ? 'pass' : masterFailures.some(f => f.testId === testId) ? 'fail' : 'unknown', jobId, ...(action === 'queue-master-fix' ? { brief: clean(brief).replace(/[\r\n]/g, ' ') } : {}) };
   });
+  // Master-observed failures no open PR reproduced. The groups above
+  // come only from PR-run observations, but master evidence also
+  // carries scheduled and master-push workflows that never run on PR
+  // heads -- the companion smoke, custody, the daily perf-budget drift
+  // run -- plus master-only suite breaks no open PR happens to hit.
+  // Each parsed master failure is still real baseline evidence: emit
+  // it as a shared-baseline group so the fix queue sees master red
+  // rather than only PR red. A testId an open PR did observe keeps its
+  // observation group -- the richer evidence wins -- and each testId
+  // emits once. `master` is 'fail' by construction: the testId is in
+  // masterFailures, so passes() can never resolve it.
+  const observedIds = new Set(ids);
+  const emitted = new Set<string>();
+  for (const failure of masterFailures) {
+    if (observedIds.has(failure.testId) || emitted.has(failure.testId)) continue;
+    emitted.add(failure.testId);
+    const { file, names, testId: id, excerpt } = failure;
+    const jobId = `RQ-CIBASE-${createHash('sha256').update(repo + ':' + id).digest('hex').slice(0, 16).toUpperCase()}`;
+    const brief = `Reproduce ${id} on latest master in ${repo}; this failure was observed on a master run no open pull request reproduced (scheduled or master-push workflow evidence). Verify the intentional production contract before changing anything. Fix only the stale baseline or report if not reproducible; never weaken tests or edit Security GATES v3 files. Run affected tests. Include ${jobId} in the fix PR body.`;
+    groups.push({ file, names, testId: id, excerpt, runs: [], prs: [], unaffectedPrs: [], classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', jobId, brief: clean(brief).replace(/[\r\n]/g, ' ') });
+  }
+  groups.sort((a, b) => (a.testId < b.testId ? -1 : a.testId > b.testId ? 1 : 0));
   const updates = groups.filter(g => g.classification === 'shared-baseline').flatMap(g => g.unaffectedPrs.map(pr => ({ pr, testId: g.testId, ready: g.master === 'pass', reason: g.master === 'pass' ? 'master-test-passes; merge provenance requires verification' : 'master-fix-not-verified', args: ['api', '-X', 'PUT', `repos/${repo}/pulls/${pr}/update-branch`, '-f', `expected_head_sha=${prs.find(p => p.number === pr)!.headRefOid}`] })));
   return { v: 1, repo, groups, freshness, master: { head: branch?.commit?.sha ?? null, known: masterKnown }, updates, errors };
 }

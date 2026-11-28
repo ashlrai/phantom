@@ -34,6 +34,14 @@ export interface GoldenTaskScoringView {
   maxChangedLines: number;
 }
 
+/** Validate that every eval lane carries a non-empty unique (lane, model) pair. */
+export function assertValidEvalLanes(lanes: readonly EvalLane[]): void {
+  if (lanes.some((l) => !l.lane || !l.model)
+    || new Set(lanes.map((l) => JSON.stringify([l.lane, l.model]))).size !== lanes.length) {
+    throw new Error('invalid or duplicate lane/model');
+  }
+}
+
 /** Score one golden-task attempt across the three output dimensions. Shared
  * by evaluateOutputs (one attempt per task) and the pass^k suite (N trials). */
 export function scoreGoldenOutput(task: GoldenTaskScoringView, diff: string, resolved: boolean, error?: string): OutputScore {
@@ -41,9 +49,9 @@ export function scoreGoldenOutput(task: GoldenTaskScoringView, diff: string, res
   const valid = !error && changedLines > 0;
   return {
     taskId: task.id,
-    tests: resolved && !!valid,
-    diffQuality: !!valid && changedLines <= task.maxChangedLines,
-    instructions: !!valid && task.required.every(s => diff.includes(s)) && task.forbidden.every(s => !diff.includes(s)),
+    tests: resolved && valid,
+    diffQuality: valid && changedLines <= task.maxChangedLines,
+    instructions: valid && task.required.every(s => diff.includes(s)) && task.forbidden.every(s => !diff.includes(s)),
     ...(error ? { error } : {}),
   };
 }
@@ -52,7 +60,7 @@ export function scoreGoldenOutput(task: GoldenTaskScoringView, diff: string, res
 export async function evaluateOutputs(tasks: GoldenTask[], lanes: EvalLane[]): Promise<OutputReport> {
   if (!tasks.length || !lanes.length) throw new Error('at least one task and lane are required');
   if (new Set(tasks.map(t => t.id)).size !== tasks.length || tasks.some(t => !t.id || !Number.isInteger(t.maxChangedLines) || t.maxChangedLines < 1 || !t.required.length || t.required.some(s => !s) || t.forbidden.some(s => !s))) throw new Error('invalid or duplicate golden task');
-  if (lanes.some(l => !l.lane || !l.model) || new Set(lanes.map(l => JSON.stringify([l.lane, l.model]))).size !== lanes.length) throw new Error('invalid or duplicate lane/model');
+  assertValidEvalLanes(lanes);
   const entries: LeaderboardEntry[] = [];
   for (const lane of lanes) {
     const report = await runBenchmark(tasks, { engine: lane.model, engineRunner: lane.runner });

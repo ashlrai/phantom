@@ -22,6 +22,14 @@ describe('lane truth fixtures', () => {
   it('detects a reset moving later without a percent drop', async () => {
     expect(await verdict({}, [sample, { ...sample, resetAt: '2026-11-01T11:00:00Z', sampledAt: '2026-10-31T11:55:00Z' }])).toBe('reset_detected');
   });
+  it.each([
+    ['2026-10-31T11:54:59Z', 'idle_with_work'],
+    ['2026-10-31T11:55:00Z', 'idle_with_work'],
+    ['2026-10-31T11:55:01Z', 'reset_detected'],
+  ])('qualifies a previous window ending at %s against its observation time', async (resetAt, expected) => {
+    const previous = { ...sample, resetAt, sampledAt: '2026-10-31T11:55:00Z' };
+    expect(await verdict({ running: 0 }, [previous, sample])).toBe(expected);
+  });
   it('detects idle work and ordinary activity', async () => {
     expect(await verdict({ running: 0 })).toBe('idle_with_work');
     expect(await verdict()).toBe('ok');
@@ -45,6 +53,17 @@ describe('lane truth fixtures', () => {
   it('does not infer reset from equal timestamps or stale history', async () => {
     expect(await verdict({}, [sample, { ...sample, usedPercent: 90 }])).toBe('ok');
     expect(await verdict({}, [sample, { ...sample, usedPercent: 90, sampledAt: '2026-10-31T10:00:00Z' }])).toBe('ok');
+  });
+  it('compares against the latest usable prior reading when an invalid sample intervenes', async () => {
+    const beforeReset = {
+      ...sample, sampledAt: '2026-10-31T11:55:00Z', resetAt: '2026-10-31T11:56:00Z', usedPercent: 100,
+    };
+    const afterExpiry = { ...beforeReset, sampledAt: '2026-10-31T11:57:00Z' };
+    expect(await verdict({ running: 0 }, [afterExpiry, sample, beforeReset])).toBe('reset_detected');
+    expect(await verdict({ running: 0 }, [beforeReset, afterExpiry])).toBe('unknown');
+    expect(await verdict({ running: 0 }, [
+      { ...beforeReset, sampledAt: '2026-10-31T11:00:00Z' }, afterExpiry, sample,
+    ])).toBe('idle_with_work');
   });
   it('uses dated observations when an unreadable timestamp interrupts the journal', async () => {
     const older = { ...sample, usedPercent: 85, sampledAt: '2026-10-31T11:55:00Z' };
@@ -167,4 +186,30 @@ it('refuses a personal-home symlink into the company home', async () => {
   await mkdir(join(home, '.codex/sessions'), { recursive: true });
   await symlink(join(home, '.codex'), join(home, '.codex-2'));
   expect(await defaultLaneTruthReaders(home, now).meters()).toEqual([]);
+});
+
+it('the default lanes reader honors ASHLR_RUNS_DIR under the real home only', async () => {
+  const runs = await mkdtemp(join(tmpdir(), 'lane-truth-runs-')); dirs.push(runs);
+  const relocated = await mkdtemp(join(tmpdir(), 'lane-truth-fixture-')); dirs.push(relocated);
+  const queue = join(runs, 'queue');
+  await mkdir(queue, { recursive: true });
+  const slots = JSON.stringify({ 'codex-personal': { target: 2, running: 1, queued: 3, held: false } });
+  const path = join(queue, 'slots.json');
+  await writeFile(path, slots);
+  const mtime = new Date(now);
+  await utimes(path, mtime, mtime);
+  const previous = process.env.ASHLR_RUNS_DIR;
+  process.env.ASHLR_RUNS_DIR = runs;
+  try {
+    // No-arg readers resolve the process home, so the override applies.
+    expect(await defaultLaneTruthReaders(undefined, now).lanes()).toEqual([
+      { lane: 'codex-personal', target: 2, running: 1, queued: 3, held: false },
+    ]);
+    // A relocated home keeps its own .ashlr-runs; the override cannot leak in.
+    expect(await defaultLaneTruthReaders(relocated, now).lanes()).toEqual([]);
+  } finally {
+    if (previous === undefined) delete process.env.ASHLR_RUNS_DIR;
+    else process.env.ASHLR_RUNS_DIR = previous;
+  }
+  expect(await readFile(path, 'utf8')).toBe(slots);
 });

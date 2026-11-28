@@ -68,7 +68,7 @@ const row = (
 ): OutsidePrOutcomeJournalRow => ({
   v: 1, kind: OUTSIDE_PR_OUTCOME_SCHEMA, at: AT,
   repo, number, title: `fix ${number}`, author: 'ext-dev', agent: null, model: null,
-  mergedAt, reverted: verdict, ...over,
+  mergedAt, createdAt: null, reviews: null, ci: null, diff: null, reverted: verdict, ...over,
 });
 
 describe('foldOutsidePrCells', () => {
@@ -131,6 +131,59 @@ describe('foldOutsidePrCells', () => {
     ], opts);
     expect(cells).toHaveLength(1);
     expect(cells[0]!.merged).toBe(3);
+  });
+
+  it('tallies reverted merges\' open→merge latency and review evidence only', () => {
+    const cells = foldOutsidePrCells([
+      row('acme/widgets', 1, 'yes', daysAgo(2), {
+        createdAt: new Date(NOW - 2 * DAY - 120 * MIN).toISOString(),
+        reviews: { decision: 'APPROVED', latest: 2 },
+      }),
+      row('acme/widgets', 2, 'yes', daysAgo(3), {
+        createdAt: new Date(NOW - 3 * DAY - 60 * MIN).toISOString(),
+        reviews: { decision: null, latest: 0 },
+      }),
+      // Reverted but pre-fields: counts toward prs, neither evidence denominator.
+      row('acme/widgets', 3, 'yes', daysAgo(4)),
+      // Kept/unknown rows' evidence is denominator context only — never tallied here.
+      row('acme/widgets', 4, 'no', daysAgo(5), {
+        createdAt: new Date(NOW - 5 * DAY - 30 * MIN).toISOString(),
+        reviews: { decision: 'CHANGES_REQUESTED', latest: 3 },
+      }),
+      row('acme/widgets', 5, 'unknown', daysAgo(6), {
+        createdAt: new Date(NOW - 6 * DAY - 10 * MIN).toISOString(),
+        reviews: { decision: 'REVIEW_REQUIRED', latest: 1 },
+      }),
+    ], opts);
+    expect(cells).toHaveLength(1);
+    expect(cells[0]).toMatchObject({
+      merged: 5, reverted: 3, kept: 1, unknown: 1,
+      ttm_known: 2, ttm_minutes_mean: 90,
+      reviews_known: 2, unreviewed: 1, changes_requested: 0,
+      diff_known: 0, diff_lines_mean: null, diff_files_mean: null,
+    });
+  });
+
+  it('tallies reverted merges\' journaled diff size with an honest denominator', () => {
+    const cells = foldOutsidePrCells([
+      row('acme/widgets', 1, 'yes', daysAgo(2), {
+        diff: { additions: 100, deletions: 20, changedFiles: 5 },
+      }),
+      row('acme/widgets', 2, 'yes', daysAgo(3), {
+        diff: { additions: 40, deletions: 10, changedFiles: 3 },
+      }),
+      // Reverted but pre-fields: counts toward prs, not the diff denominator.
+      row('acme/widgets', 3, 'yes', daysAgo(4)),
+      // Kept rows' diff evidence is denominator context only — never tallied here.
+      row('acme/widgets', 4, 'no', daysAgo(5), {
+        diff: { additions: 999, deletions: 0, changedFiles: 9 },
+      }),
+    ], opts);
+    expect(cells).toHaveLength(1);
+    expect(cells[0]).toMatchObject({
+      merged: 4, reverted: 3, kept: 1,
+      diff_known: 2, diff_lines_mean: 85, diff_files_mean: 4,
+    });
   });
 
   it('never counts merges stamped past the evaluation-time future skew', () => {
@@ -224,6 +277,55 @@ describe('outsidePrBacklogItems', () => {
     expect(item!.prompt).not.toContain('Coverage:');
   });
 
+  it('quotes reverted merges\' review and merge-speed evidence in the prompt', async () => {
+    const dir = await runsDir('runs-review', [
+      outcomeLine('acme/widgets', 11, 'yes', 2, {
+        createdAt: new Date(NOW - 2 * DAY - 120 * MIN).toISOString(),
+        reviews: { decision: 'APPROVED', latest: 2 },
+      }),
+      outcomeLine('acme/widgets', 12, 'yes', 4, {
+        createdAt: new Date(NOW - 4 * DAY - 60 * MIN).toISOString(),
+        reviews: { decision: null, latest: 0 },
+      }),
+      // Reviews recorded but no usable open stamp — reviews_known only.
+      outcomeLine('acme/widgets', 13, 'yes', 6, {
+        reviews: { decision: 'CHANGES_REQUESTED', latest: 1 },
+      }),
+      outcomeLine('acme/widgets', 14, 'no', 8),
+      scanLine(),
+    ]);
+    const items = await outsidePrBacklogItems({ runsDir: dir, now: new Date(NOW) });
+    expect(items).toHaveLength(1);
+    const prompt = items[0]!.prompt;
+    expect(prompt).toContain('Review and merge-speed evidence');
+    expect(prompt).toContain('2 of the reverted merges carry a usable open→merge time (mean 90 minutes)');
+    expect(prompt).toContain('3 of the reverted merges carry journaled review evidence');
+    expect(prompt).toContain('1 of those gh returned with zero reviewers — merged without a recorded review');
+    expect(prompt).toContain('1 still stood CHANGES_REQUESTED when the sync read them');
+    expect(prompt).toContain('rows written before these fields existed count in no denominator');
+  });
+
+  it('quotes reverted merges\' journaled diff size in the prompt', async () => {
+    const dir = await runsDir('runs-diff', [
+      outcomeLine('acme/widgets', 11, 'yes', 2, {
+        diff: { additions: 100, deletions: 20, changedFiles: 5 },
+      }),
+      outcomeLine('acme/widgets', 12, 'yes', 4, {
+        diff: { additions: 40, deletions: 10, changedFiles: 3 },
+      }),
+      // Pre-fields reverted row: counts toward prs, not the diff denominator.
+      outcomeLine('acme/widgets', 13, 'yes', 6),
+      outcomeLine('acme/widgets', 14, 'no', 8),
+      scanLine(),
+    ]);
+    const items = await outsidePrBacklogItems({ runsDir: dir, now: new Date(NOW) });
+    expect(items).toHaveLength(1);
+    const prompt = items[0]!.prompt;
+    expect(prompt).toContain('Diff-size evidence');
+    expect(prompt).toContain('2 of the reverted merges carry journaled diff size (mean 85 lines changed across 4 files)');
+    expect(prompt).toContain('rows written before the field existed count in no denominator');
+  });
+
   it('emits nothing below the bar, for a missing journal, or an unreadable one', async () => {
     expect(OUTSIDE_PR_REVERTED_RECURRING).toBe(3);
     const quiet = await runsDir('runs-quiet', [
@@ -294,6 +396,21 @@ describe('outsidePrBacklogItems', () => {
     expect(items[0]!.prompt).toContain("revert ledger read as 'unreadable'");
     expect(items[0]!.prompt).toContain('repo reads were partial: acme/widgets (degraded, gh result limit hit)');
     expect(items[0]!.prompt).toContain('recorded floor');
+  });
+
+  it('waits for future revert evidence before surfacing a recurring failure', async () => {
+    const later = new Date(NOW + 1);
+    const dir = await runsDir('runs-future', [
+      outcomeLine('acme/widgets', 41, 'no', 2),
+      outcomeLine('acme/widgets', 42, 'yes', 3),
+      outcomeLine('acme/widgets', 43, 'yes', 4),
+      outcomeLine('acme/widgets', 44, 'no', 5),
+      outcomeLine('acme/widgets', 41, 'yes', 2, { at: later.toISOString() }),
+    ]);
+    expect(await outsidePrBacklogItems({ runsDir: dir, now: new Date(NOW) })).toEqual([]);
+    const items = await outsidePrBacklogItems({ runsDir: dir, now: later });
+    expect(items).toHaveLength(1);
+    expect(items[0]!.prompt).toContain('3 of the recorded 4 outside merges');
   });
 
   it('derives stable ids per repo so a refresh re-adds nothing', async () => {

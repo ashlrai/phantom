@@ -64,6 +64,14 @@ export interface ConversationMessage {
    * filter — the same "unknown stays out" rule every other own-field filter
    * keeps. */
   result?: string;
+  /** The topic component of the raw `to` routing label when it parses as a
+   * well-formed `group:<room>:<topic>` address — computed by the bus read on
+   * the raw envelope label through the shared `groupAddressTopicOf`, never
+   * re-parsed from the projected `to` name. Absent for agent addresses, a
+   * bare `group:<room>` label, a malformed topic and any message built
+   * without the bus read, so it never matches a `topic` filter — the same
+   * "unknown stays out" rule every other own-field filter keeps. */
+  topic?: string;
 }
 
 export interface ConversationAgent { name: string; label: string; known: boolean; node: string | null }
@@ -80,6 +88,8 @@ export interface ConversationItem {
   bodyKind?: string;
   /** The member's `work.result` outcome, verbatim — the same `busBodyResultOutcome` field the thread-level `result` filter reads; absent when the body is no `work.result` receipt or carries no outcome. */
   result?: string;
+  /** The member's parsed `group:<room>:<topic>` topic component, verbatim — the same field the thread-level `topic` filter reads; absent when the member's `to` label parses to no topic. */
+  topic?: string;
 }
 /** Two agents that exchanged messages in this thread, for the map's line. */
 export interface ConversationLink { a: string; b: string; count: number; lastAt: string }
@@ -177,6 +187,15 @@ export interface ConversationQuery {
    * "which threads touch channel X" is one filtered read. Whole threads,
    * never partial message lists. */
   channel?: string;
+  /** Keep only threads where at least one member message is addressed to a
+   * well-formed `group:<room>:<topic>` label carrying this exact topic
+   * component — the same `groupAddressTopicOf` match every bus read's
+   * `--topic` applies, decided on the topic the read parsed off the raw
+   * `to` label, so it composes with `channel` into one room AND one topic
+   * while an agent address, a bare `group:<room>` or a malformed topic
+   * never matches — so "which threads touch channel X topic Y" is one
+   * filtered read. Whole threads, never partial message lists. */
+  topic?: string;
   /** Keep only threads where at least one member message carries this exact
    * P0..P3 band — the same match every other bus read's `--priority`
    * applies; a member message with no recorded band names no provable band
@@ -322,7 +341,8 @@ export function groupConversations(messages: readonly ConversationMessage[], now
         ...(m.inReplyTo === undefined ? {} : { inReplyTo: m.inReplyTo }),
         ...(m.thread === null || m.thread === undefined ? {} : { thread: m.thread }),
         ...(m.bodyKind === undefined ? {} : { bodyKind: m.bodyKind }),
-        ...(m.result === undefined ? {} : { result: m.result }) })),
+        ...(m.result === undefined ? {} : { result: m.result }),
+        ...(m.topic === undefined ? {} : { topic: m.topic }) })),
     });
   }
   return out.sort((a, b) => (b.waiting?.ms ?? -1) - (a.waiting?.ms ?? -1) || (a.lastAt < b.lastAt ? 1 : a.lastAt > b.lastAt ? -1 : a.id < b.id ? -1 : 1));
@@ -370,7 +390,14 @@ export function groupConversations(messages: readonly ConversationMessage[], now
  * `phm messages --id` reports only the row. `channel` keeps only the
  * threads where at least one member
  * message is addressed to `group:<channel>:*` — the same raw `to`-prefix
- * rule every bus read's `--channel` matches. `priority` keeps only the
+ * rule every bus read's `--channel` matches. `topic` keeps only the
+ * threads where at least one member message carries that exact topic
+ * component — the topic the bus read parsed off the raw `to` label
+ * through the same `groupAddressTopicOf` match every bus read's
+ * `--topic` applies, carried on the member item so this pure model
+ * needs no group grammar of its own — composing with `channel` into one
+ * room AND one topic while a member whose `to` parses to no topic never
+ * matches. `priority` keeps only the
  * threads where at least one member message carries that exact P0..P3 band
  * — a member with no recorded band never matches. `from` keeps only the
  * threads where at least one member message was sent under the ref's
@@ -461,6 +488,7 @@ export function filterConversations(list: readonly Conversation[], query: Conver
     && (query.result === undefined || c.messages.some(m => m.result === query.result))
     && (query.kind === undefined || c.messages.some(m => m.kind === query.kind))
     && (channelPrefix === undefined || c.messages.some(m => m.to.startsWith(channelPrefix)))
+    && (query.topic === undefined || c.messages.some(m => m.topic === query.topic))
     && (query.to === undefined || c.messages.some(m => toMatch?.(m.to) === true))
     && (query.priority === undefined || c.messages.some(m => m.priority === query.priority))
     && (fromMatch === undefined || c.messages.some(m => fromMatch(m.from)))

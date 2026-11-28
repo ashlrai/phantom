@@ -169,6 +169,20 @@ describe('phm node route --outcomes-ledger', () => {
     expect(out.outcomes_ledger).toMatchObject({ state: 'read', truncated: false, providers: 2 });
   });
 
+  it('shows unknown rates when the ledger has no outcomes', async () => {
+    const { cmdNodeRoute } = await import('../src/cli/node-capacity.js');
+    const { cap, costs, jobs, runsDir } = setup(null);
+    const args = ['--capacity', cap, '--costs', costs, '--jobs', jobs, '--outcomes-ledger', '--runs-dir', runsDir];
+    const json = await capture(() => cmdNodeRoute([...args, '--json']));
+    expect(json.code).toBe(0);
+    expect(JSON.parse(json.lines[0]!).plan[0]).toMatchObject({
+      nodeId: 'mbp', mergeRate: null, mergesPerMTok: null, mergesPerHour: null,
+    });
+    const plain = await capture(() => cmdNodeRoute(args));
+    expect(plain.code).toBe(0);
+    expect(plain.lines[2]).toContain('(merge unknown, unknown/Mtok, unknown/h)');
+  });
+
   it('lets an explicit --outcomes file win per provider over the ledger', async () => {
     const { cmdNodeRoute } = await import('../src/cli/node-capacity.js');
     const rows = [
@@ -182,6 +196,25 @@ describe('phm node route --outcomes-ledger', () => {
       ['--capacity', cap, '--costs', costs, '--jobs', jobs, '--outcomes', outcomesFile, '--outcomes-ledger', '--runs-dir', runsDir, '--json']));
     expect(code).toBe(0);
     expect(JSON.parse(lines[0]!).plan[0]).toMatchObject({ provider: 'bad' });
+  });
+
+  it.each([
+    { attempts: 0, merged: 0 },
+    { attempts: 1, merged: 2 },
+    { attempts: 3 },
+    null,
+  ])('keeps ledger routing evidence when a provider override is unusable (%j)', async override => {
+    const { cmdNodeRoute } = await import('../src/cli/node-capacity.js');
+    const { dir, cap, costs, jobs, runsDir } = setup([
+      { job: 'g1', lane: 'good', state: 'MERGED' },
+      { job: 'g2', lane: 'good', state: 'MERGED' },
+    ]);
+    const outcomesFile = join(dir, 'outcomes.json');
+    writeFileSync(outcomesFile, JSON.stringify({ good: override }));
+    const { code, lines } = await capture(() => cmdNodeRoute(
+      ['--capacity', cap, '--costs', costs, '--jobs', jobs, '--outcomes', outcomesFile, '--outcomes-ledger', '--runs-dir', runsDir, '--json']));
+    expect(code).toBe(0);
+    expect(JSON.parse(lines[0]!).plan[0]).toMatchObject({ provider: 'good', mergeRate: 0.75 });
   });
 
   it('refuses an unreadable ledger and rejects --runs-dir without --outcomes-ledger', async () => {

@@ -46,7 +46,7 @@ import {
   IconSliders,
   IconX,
 } from '../../../components/primitives/icons.js';
-import { useQuery } from '../../../data/hooks.js';
+import { useQuery, useRefresh } from '../../../data/hooks.js';
 import { ApiError, readFailureReason } from '../../../data/client.js';
 import { verseBootstrapQuery } from '../verse-bootstrap-query.js';
 import { SECTION_ICON } from '../verse-icons.js';
@@ -167,11 +167,15 @@ function WelcomeStep() {
  */
 function AccountsStep() {
   const read = useQuery(verseBootstrapQuery);
+  const retry = useRefresh(verseBootstrapQuery);
   const unavailable = read.error instanceof ApiError && read.error.status === 404;
   return (
     <StepBody>
       {read.data === undefined && read.status === 'error' ? (
-        <p role="status">{unavailable ? 'Account information is unavailable in this build.' : `Could not read accounts. ${readFailureReason(read.error)}`}</p>
+        <>
+          <p role="status">{unavailable ? 'Account information is unavailable in this build.' : `Could not read accounts. ${readFailureReason(read.error)}`}</p>
+          {!unavailable && <Button variant="ghost" size="sm" onClick={retry}>Retry accounts</Button>}
+        </>
       ) : <LiveCapacityStrip
         density="compact"
         headline

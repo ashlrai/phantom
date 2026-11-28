@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { CADENCE_REPOS } from './cadence.js';
+import { CADENCE_REPOS, RELEASE_DAY_MS, asReleaseRecord, gitReleaseState, isNonNegativeInt, isValidReleaseDate } from './cadence.js';
 import { readLocalGitRelease, type GitReleaseRow } from './git-backlog.js';
 import { readRemoteGitRelease } from './remote-git-backlog.js';
 
@@ -19,8 +19,8 @@ export interface BacklogOptions {
   now?: number; stateDir?: string; cacheOnly?: boolean;
   get?: (path: string, signal: AbortSignal) => Promise<unknown>;
 }
-const validDate = (v: unknown): v is string => typeof v === 'string' && Number.isFinite(Date.parse(v));
-const record = (v: unknown): Record<string, unknown> => v !== null && typeof v === 'object' ? v as Record<string, unknown> : {};
+const record = (v: unknown): Record<string, unknown> => asReleaseRecord(v) ?? {};
+const backlogStateDir = (opts: BacklogOptions): string => join(opts.stateDir ?? join(homedir(), '.ashlr', 'state'), 'release-backlog');
 const gh = (path: string, signal: AbortSignal): Promise<unknown> => new Promise((resolve, reject) => {
   execFile('gh', ['api', '--method', 'GET', path, '--jq', path.includes('/compare/') ? '{status,total_commits,commits:[.commits[]|{sha,parents,commit:{committer:{date:.commit.committer.date}}}]}' : '{tag_name,published_at,default_branch,sha}'], { signal, timeout: 5000, maxBuffer: 1024 * 1024 }, (error, stdout) => {
     if (error) return reject(new Error('GitHub unavailable'));
@@ -29,13 +29,13 @@ const gh = (path: string, signal: AbortSignal): Promise<unknown> => new Promise(
 });
 function facts(v: unknown): Facts {
   const r = record(v);
-  if (typeof r.latestTag !== 'string' || !r.latestTag || !validDate(r.releasedAt) ||
-    !Number.isSafeInteger(r.mergedCommits) || Number(r.mergedCommits) < 0 ||
-    (r.mergedCommits !== 0 && !validDate(r.oldestUnreleasedAt))) throw new Error('Unknown release');
-  return { latestTag: r.latestTag, releasedAt: r.releasedAt, mergedCommits: Number(r.mergedCommits), oldestUnreleasedAt: r.mergedCommits === 0 ? null : r.oldestUnreleasedAt as string };
+  if (typeof r.latestTag !== 'string' || !r.latestTag || !isValidReleaseDate(r.releasedAt) ||
+    !isNonNegativeInt(r.mergedCommits) ||
+    (r.mergedCommits !== 0 && !isValidReleaseDate(r.oldestUnreleasedAt))) throw new Error('Unknown release');
+  return { latestTag: r.latestTag, releasedAt: r.releasedAt, mergedCommits: r.mergedCommits, oldestUnreleasedAt: r.mergedCommits === 0 ? null : r.oldestUnreleasedAt as string };
 }
 async function readRepo(repo: string, opts: BacklogOptions, now: number): Promise<BacklogRow> {
-  const file = join(opts.stateDir ?? join(homedir(), '.ashlr', 'state'), 'release-backlog', `${repo}.json`);
+  const file = join(backlogStateDir(opts), `${repo}.json`);
   const unknown: BacklogRow = { repo, latestTag: null, releasedAt: null, mergedCommits: null, oldestUnreleasedAt: null, oldestUnreleasedAgeDays: null, verdict: 'unknown' };
   let data: Facts;
   try {
@@ -44,12 +44,12 @@ async function readRepo(repo: string, opts: BacklogOptions, now: number): Promis
       if (cached.repo !== repo || typeof cached.at !== 'number' || now < cached.at || now - cached.at >= BACKLOG_TTL) throw new Error('Expired');
       const git = record(cached.git);
       if (cached.schema === 2 && git.repo === repo && git.source === 'remote git' &&
-        (git.latestTag === null || typeof git.latestTag === 'string') && (git.tagDate === null || validDate(git.tagDate)) &&
-        (git.commitsSinceTag === null || Number.isSafeInteger(git.commitsSinceTag) && Number(git.commitsSinceTag) >= 0) &&
+        (git.latestTag === null || typeof git.latestTag === 'string') && (git.tagDate === null || isValidReleaseDate(git.tagDate)) &&
+        (git.commitsSinceTag === null || isNonNegativeInt(git.commitsSinceTag)) &&
         (typeof git.reason === 'string' || git.reason === null) &&
-        (git.state === 'unknown' || (git.state === 'ok' || git.state === 'due') && typeof git.latestTag === 'string' && git.latestTag.length > 0 && validDate(git.tagDate) && git.commitsSinceTag !== null && git.reason === null)) {
+        (git.state === 'unknown' || (git.state === 'ok' || git.state === 'due') && typeof git.latestTag === 'string' && git.latestTag.length > 0 && isValidReleaseDate(git.tagDate) && git.commitsSinceTag !== null && git.reason === null)) {
         const evidence = git as unknown as GitReleaseRow;
-        const verdict = evidence.state === 'unknown' ? 'unknown' : evidence.commitsSinceTag! > 20 || now - Date.parse(evidence.tagDate!) > 7 * 86_400_000 ? 'due' : 'ok';
+        const verdict = evidence.state === 'unknown' ? 'unknown' : gitReleaseState(evidence.commitsSinceTag!, evidence.tagDate!, now);
         return { ...unknown, latestTag: evidence.latestTag, releasedAt: evidence.tagDate, mergedCommits: evidence.commitsSinceTag, verdict, git: { ...evidence, state: verdict } };
       }
       if (cached.schema !== 1) throw new Error('Invalid cache');
@@ -71,8 +71,8 @@ async function readRepo(repo: string, opts: BacklogOptions, now: number): Promis
           if (!['ahead', 'identical'].includes(String(compare.status))) throw new Error('Release is not an ancestor');
           const commits = Array.isArray(compare.commits) ? compare.commits.map(record) : [];
           const total = compare.total_commits;
-          if (!Number.isSafeInteger(total) || Number(total) < 0) throw new Error('Unknown count');
-          for (let page = 2; commits.length < Number(total); page++) {
+          if (!isNonNegativeInt(total)) throw new Error('Unknown count');
+          for (let page = 2; commits.length < total; page++) {
             const next = record(await get(`${path}&page=${page}`));
             if (!Array.isArray(next.commits) || !next.commits.length) throw new Error('Incomplete comparison');
             commits.push(...next.commits.map(record));
@@ -83,7 +83,7 @@ async function readRepo(repo: string, opts: BacklogOptions, now: number): Promis
           // Mainline dates measure merge age; old branch commits may only have merged today.
           while (cursor) {
             const at = record(record(cursor.commit).committer).date;
-            if (typeof cursor.sha !== 'string' || seen.has(cursor.sha) || !validDate(at) || !Array.isArray(cursor.parents)) throw new Error('Incomplete mainline');
+            if (typeof cursor.sha !== 'string' || seen.has(cursor.sha) || !isValidReleaseDate(at) || !Array.isArray(cursor.parents)) throw new Error('Incomplete mainline');
             seen.add(cursor.sha);
             if (date === null || Date.parse(at) < Date.parse(date)) date = at;
             cursor = bySha.get(record(cursor.parents[0]).sha);
@@ -96,7 +96,7 @@ async function readRepo(repo: string, opts: BacklogOptions, now: number): Promis
         await writeFile(file, JSON.stringify({ schema: 1, repo, at: now, data }), { mode: 0o600 });
       } catch { /* Cache availability never changes the reading. */ }
     }
-    const age = data.oldestUnreleasedAt === null ? null : Math.max(0, (now - Date.parse(data.oldestUnreleasedAt)) / 86_400_000);
+    const age = data.oldestUnreleasedAt === null ? null : Math.max(0, (now - Date.parse(data.oldestUnreleasedAt)) / RELEASE_DAY_MS);
     const verdict = data.mergedCommits === 0 ? 'ok' : age !== null && age >= 7 ? 'stale' : data.mergedCommits! >= 20 || (age !== null && age >= 3) ? 'due' : 'ok';
     return { repo, ...data, oldestUnreleasedAgeDays: age, verdict };
   } catch { return unknown; }
@@ -110,7 +110,7 @@ export async function readReleaseBacklog(opts: BacklogOptions = {}) {
     if (!opts.cacheOnly && ['shallow local clone', 'no reachable tags'].includes(git.reason ?? '')) {
       git = await readRemoteGitRelease(git, now, opts.get);
       try {
-        const dir = join(opts.stateDir ?? join(homedir(), '.ashlr', 'state'), 'release-backlog');
+        const dir = backlogStateDir(opts);
         await mkdir(dir, { recursive: true, mode: 0o700 });
         await writeFile(join(dir, `${repo}.json`), JSON.stringify({ schema: 2, repo, at: now, git }), { mode: 0o600 });
       } catch { /* Remote evidence remains usable without a cache. */ }

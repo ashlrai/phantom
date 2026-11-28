@@ -18,7 +18,7 @@ export interface PulseLanesV1 {
   schema: typeof PULSE_LANES_SCHEMA; v: 1; as_of: string; window_h: number;
   headline: string;
   lanes: PulseLaneV1[];
-  /** Sums run over the lanes that report a figure; null when none does. `series` has no running/capacity history, so it is not kept. */
+  /** Each slot total is null when the lane list is empty or any lane is missing that measurement. Series contain ledger metrics only. */
   totals: { running: number | null; capacity: number | null; merged_per_h: number | null; median_open_to_merge_s: number | null; empty_rate: number | null;
     merged: number | null; finished: number | null; series: PulseSeriesV1 };
 }

@@ -1,5 +1,5 @@
 /**
- * Inventory pane: everything this install can use (channels, connectors,
+ * Inventory pane: everything this install can discover (channels, connectors,
  * plugins, skills, tools), each with its state and one next step. Built only
  * on GET /api/verse/fleet/runs/inventory, the same list as
  * `phm inventory --json`. One fetch for the whole inventory; the kind chips
@@ -72,7 +72,7 @@ function LaneGap({ parity, names }: { parity: InventoryParity; names: ReadonlyMa
       {parity.lanes.map(l => <li key={l.lane} className={styles.item}>
         <div className={styles.line}>
           <strong className={styles.name}>{l.lane}</strong>
-          <span>can use {l.has.length}</span>
+          <span>reported {l.has.length}</span>
           <span className={l.gap > 0 ? styles.lacks : undefined}>lacks {l.gap}</span>
           <span className={styles.quiet}>unknown {l.unknown}</span>
         </div>
@@ -127,7 +127,7 @@ export function InventoryPane({ visible }: PaneProps) {
       <h3 className={styles.title}>Inventory</h3>
       <button type="button" onClick={() => refresh()}>Refresh</button>
     </div>
-    <p className={styles.note}>Everything this install can use. Agents read the same list with <code>phm inventory --json</code>.</p>
+    <p className={styles.note}>What this install can discover. A listing does not grant access. Agents read the same list with <code>phm inventory --json</code>.</p>
     {inventory ? <Loaded inventory={inventory} />
       : read.status === 'error' || read.data !== undefined
         ? <p role="alert">Inventory: unknown (could not load). Refresh to try again.</p>

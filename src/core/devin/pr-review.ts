@@ -118,7 +118,8 @@ export async function readDevinReviewFindings(repo: string, number: number, head
 export interface DevinReviewSignal { state: 'planned' | 'triggered' | 'refused'; reason?: DevinPrReviewReason; findings?: DevinReviewFindings | null }
 export async function fleetDevinReview(input: { repo: string; number: number; headSha: string }, host: HostMergeDeps): Promise<DevinReviewSignal> {
   const result = await triggerDevinPrReviewOnce({ ...input, origin: 'fleet' });
-  const triggered = result.ok || (result.reason === 'duplicate' && journalRows(join(devinHome(), 'pr-reviews.jsonl')).some(r => r.key === result.key && r.outcome === 'triggered'));
-  if (triggered) return { state: 'triggered', findings: await readDevinReviewFindings(input.repo, input.number, input.headSha, host) };
-  return { state: 'refused', reason: result.ok ? undefined : result.reason };
+  if (result.ok || (result.reason === 'duplicate' && journalRows(join(devinHome(), 'pr-reviews.jsonl')).some(r => r.key === result.key && r.outcome === 'triggered'))) {
+    return { state: 'triggered', findings: await readDevinReviewFindings(input.repo, input.number, input.headSha, host) };
+  }
+  return { state: 'refused', reason: result.reason };
 }

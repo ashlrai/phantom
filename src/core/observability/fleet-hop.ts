@@ -21,15 +21,16 @@ import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fetchWithTimeout, isNonNegativeFinite, isObservabilityRecord } from './hop-events.js';
 
 export const FLEET_HOP_EVENT = 'fleet_hop';
-export const FLEET_HOP_SCHEMA = 'queue.v1';
-export const FLEET_HOP_KEY_ENV = 'POSTHOG_AGENT_FLEET_TOKEN';
-export const FLEET_HOP_HOST_ENV = 'POSTHOG_HOST';
+const FLEET_HOP_SCHEMA = 'queue.v1';
+const FLEET_HOP_KEY_ENV = 'POSTHOG_AGENT_FLEET_TOKEN';
+const FLEET_HOP_HOST_ENV = 'POSTHOG_HOST';
 const DEFAULT_HOST = 'https://us.i.posthog.com';
 const FETCH_TIMEOUT_MS = 3_000;
 
-const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,119}$/;
+export const FLEET_HOP_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,119}$/;
 const TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 const STRING_FIELDS = ['job_id', 'station', 'pool', 'tier', 'node', 'engine', 'job', 'agent', 'repo'] as const;
 const NUMBER_FIELDS = ['tokens', 'usd'] as const;
@@ -66,7 +67,7 @@ export function fleetHopSpoolPath(): string {
 }
 
 function idOrNull(v: unknown): string | null {
-  return typeof v === 'string' && ID_RE.test(v) ? v : null;
+  return typeof v === 'string' && FLEET_HOP_ID_RE.test(v) ? v : null;
 }
 
 function tsOrNull(v: unknown): string | null {
@@ -75,7 +76,7 @@ function tsOrNull(v: unknown): string | null {
 
 function numOrNull(v: unknown): number | null {
   const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v;
-  return typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : null;
+  return isNonNegativeFinite(n) ? n : null;
 }
 
 export function fleetHopInsertId(jobId: string | null, pr: number | null, station: string, enterTs: string): string {
@@ -128,20 +129,15 @@ function spool(event: FleetHopEvent, path: string): boolean {
 }
 
 async function post(event: FleetHopEvent, key: string, host: string, fetchImpl: typeof fetch): Promise<string | null> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetchImpl(`${host.replace(/\/+$/, '')}/i/v0/e/`, {
+    const res = await fetchWithTimeout(`${host.replace(/\/+$/, '')}/i/v0/e/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ api_key: key, ...event }),
-      signal: controller.signal,
-    });
+    }, FETCH_TIMEOUT_MS, fetchImpl);
     return res.ok ? null : `HTTP ${res.status}`;
   } catch (err) {
     return err instanceof Error && err.name === 'AbortError' ? 'timeout' : 'network error';
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -222,8 +218,8 @@ export async function runFleetHopCli(argv: string[], stdinText: string, opts: Fl
       await replayFleetHopSpool(opts);
       return 0;
     }
-    const input = JSON.parse(stdinText) as FleetHopInput;
-    if (input && typeof input === 'object') await emitFleetHop(input, opts);
+    const input: unknown = JSON.parse(stdinText);
+    if (isObservabilityRecord(input)) await emitFleetHop(input as FleetHopInput, opts);
   } catch {
     /* telemetry never fails the caller */
   }

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { cmdCommsBus, type CommsBusDependencies } from '../src/cli/comms-bus.js';
-import { listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
+import { BUS_INBOX_MAX_BYTES, listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 import { MAX_BUS_BATCH_BYTES, type BusBatchReceipt } from '../src/core/fleet/bus-batch-post.js';
 
 const roots: string[] = [];
@@ -62,14 +62,27 @@ it('stops at the first capacity failure and permits retrying the unaccepted suff
   const f = fixture();
   const directory = join(f.root, 'bus-inbox');
   mkdirSync(directory, { mode: 0o700 });
-  // Seed a real valid snapshot near retained-message capacity without 1023 writes.
-  writeFileSync(join(directory, 'messages.json'), JSON.stringify(Array.from({ length: 1023 }, (_, i) =>
-    ({ cursor: i + 1, receivedAt: 100, envelope: envelope(`seed-${i}`) }))), { mode: 0o600 });
+  // Ordinary traffic gets 90% of the byte ceiling. Size a v2 snapshot so
+  // the first new row fits exactly, rather than assuming a 1024-row cap.
+  const count = 16, cursor = count + 1;
+  const row = (i: number, message: ReturnType<typeof envelope>) => ({ cursor: i, receivedAt: 100, envelope: message });
+  const seed = Array.from({ length: count }, (_, i) => row(i + 1, {
+    ...envelope(`seed-${i}`), body: { text: '' },
+  }));
+  const v2 = (highWater: number, rows: typeof seed) => JSON.stringify({ version: 2, highWater, rows });
+  const ordinaryBytes = Math.floor(BUS_INBOX_MAX_BYTES * 0.9);
+  const first = row(cursor, envelope('a'));
+  const padding = ordinaryBytes - Buffer.byteLength(v2(cursor, [...seed, first]));
+  for (const [i, receipt] of seed.entries()) {
+    receipt.envelope.body.text = 'x'.repeat(Math.floor(padding / count) + Number(i < padding % count));
+  }
+  expect(Buffer.byteLength(v2(cursor, [...seed, first]))).toBe(ordinaryBytes);
+  writeFileSync(join(directory, 'messages.json'), v2(count, seed), { mode: 0o600 });
   const result = await f.run(JSON.stringify(['a', 'b', 'c'].map(envelope)));
   expect(result.code).toBe(1);
-  expect(result.receipt).toMatchObject({ accepted: [{ id: 'fake-a', cursor: 1024, status: 'posted' }],
+  expect(result.receipt).toMatchObject({ accepted: [{ id: 'fake-a', cursor, status: 'posted' }],
     failure: { index: 1, status: 'full' }, unattempted: ['fake-c'], complete: false });
-  expect(listBusInboxAfter(1023, 100, f.options)).toMatchObject({ status: 'ok', nextCursor: 1024,
+  expect(listBusInboxAfter(count, 100, f.options)).toMatchObject({ status: 'ok', nextCursor: cursor,
     messages: [{ envelope: envelope('a') }] });
   const suffix = await f.run(JSON.stringify(['b', 'c'].map(envelope)));
   expect(suffix.receipt).toMatchObject({ accepted: [], failure: { index: 0, status: 'full' }, unattempted: ['fake-c'] });

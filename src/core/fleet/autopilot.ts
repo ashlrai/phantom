@@ -32,6 +32,7 @@ import { clampLocalTarget, LOCAL_LANE } from './local-capacity.js';
 import { laneLaunchTarget } from './lane-launch-target.js';
 import { readLaneTargets, type LaneTargetsV1 } from './runs-lane-targets.js';
 import { readRebaseStatus } from './rebase-status.js';
+import { LOCAL_LANES } from './unfed-market.js';
 
 const DISPATCHER_MAX_AGE_MS = 60_000; // Two 30-second dispatcher ticks.
 const MAX_HOLD_BYTES = 64 * 1024;
@@ -82,6 +83,12 @@ export interface AutopilotReadDeps {
   now?: () => Date;
 }
 
+function hasAdmissionDecision(admit: unknown, decision: unknown): boolean {
+  if (admit === undefined) return decision === 'admit' || decision === 'stop';
+  if (typeof admit !== 'boolean') return false;
+  return decision === undefined || decision === (admit ? 'admit' : 'stop');
+}
+
 /** Assemble every local input; each source degrades independently, never throws. */
 export async function readFleetAutopilotState(
   opts: { runsDir?: string; repos?: string[] } & AutopilotReadDeps = {},
@@ -94,8 +101,9 @@ export async function readFleetAutopilotState(
         const text = await (opts.statusText ?? ((path) => readFile(path, 'utf8')))(join(runsDir, 'queue', 'status.json'));
         const snapshot = JSON.parse(text);
         const tick = typeof snapshot?.last_tick === 'string' ? Date.parse(snapshot.last_tick) : NaN;
-        const admissionTick = snapshot?.admission?.ts;
-        if (admissionTick !== undefined && admissionTick !== snapshot.last_tick) {
+        const admission = snapshot?.admission;
+        if (!hasAdmissionDecision(admission?.admit, admission?.decision) ||
+            (admission.ts !== undefined && admission.ts !== snapshot.last_tick)) {
           return { source: 'degraded', report: null };
         }
         return { source: 'healthy', report: explainFleetAdmission(snapshot), tick };
@@ -341,13 +349,11 @@ export function planFleetAutopilot(state: FleetAutopilotState): AutopilotReport 
     });
   }
 
-  // missing-restock: free slots with no launchable supply at all. Lane-open
-  // READY rows are open supply the market may place on any lane, so a
-  // positive unhinted count keeps a free lane from reading as missing restock.
+  // The shared market requires an explicit hint for local executors.
   const openSupply = state.queue?.unhinted ?? 0;
   for (const lane of lanes) {
-    const waiting = lane.ready;
-    if (lane.held || lane.freeSlots === null || lane.freeSlots <= 0 || waiting !== 0 || openSupply > 0) continue;
+    if (lane.held || lane.freeSlots === null || lane.freeSlots <= 0 || lane.ready !== 0) continue;
+    if (openSupply > 0 && !LOCAL_LANES.has(lane.lane)) continue;
     gaps.push({
       kind: 'missing-restock', lane: lane.lane,
       severity: 50 + Math.min(lane.freeSlots * 2, 20),

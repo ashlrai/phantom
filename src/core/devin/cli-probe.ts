@@ -25,9 +25,9 @@ import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
 /** The fixing command for a logged-out CLI (`devin auth --help` on 3000.11.3: login | logout | status). */
-export const DEVIN_CLI_LOGIN_COMMAND = 'devin auth login';
+const DEVIN_CLI_LOGIN_COMMAND = 'devin auth login';
 /** The fixing command for a missing CLI (the Homebrew cask the install paths below come from). */
-export const DEVIN_CLI_INSTALL_COMMAND = 'brew install --cask devin-cli';
+const DEVIN_CLI_INSTALL_COMMAND = 'brew install --cask devin-cli';
 
 /** The seat picker's short disabled reason. */
 export const DEVIN_CLI_LOGIN_HINT = `Log in: \`${DEVIN_CLI_LOGIN_COMMAND}\``;
@@ -35,7 +35,7 @@ export const DEVIN_CLI_LOGIN_HINT = `Log in: \`${DEVIN_CLI_LOGIN_COMMAND}\``;
 /** How long an answer is reused by default (the turns route; discovery asks fresh). */
 export const DEVIN_CLI_PROBE_TTL_MS = 5_000;
 /** How old an answer the synchronous engine gate still trusts (queued turns that bypass the route). */
-export const DEVIN_CLI_PROBE_TRUST_MS = 60_000;
+const DEVIN_CLI_PROBE_TRUST_MS = 60_000;
 
 export type DevinCliProbeState = 'ready' | 'missing' | 'logged-out';
 
@@ -70,7 +70,7 @@ export function devinCliCredentialsPath(env: NodeJS.ProcessEnv = process.env, ho
 }
 
 /** The sentence a refused turn shows. Pure. */
-export function devinCliRefusal(state: Exclude<DevinCliProbeState, 'ready'>): string {
+function devinCliRefusal(state: Exclude<DevinCliProbeState, 'ready'>): string {
   return state === 'missing'
     ? `The Devin CLI is not installed on this Mac. Install it with \`${DEVIN_CLI_INSTALL_COMMAND}\`, run \`${DEVIN_CLI_LOGIN_COMMAND}\`, then send again.`
     : `The Devin CLI is logged out. Run \`${DEVIN_CLI_LOGIN_COMMAND}\` in a terminal, then send again.`;

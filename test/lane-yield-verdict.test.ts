@@ -32,6 +32,22 @@ describe('laneYield', () => {
 });
 
 describe('parseLaneJobs', () => {
+  it('keeps the original position of reserialized timestamped launches', () => {
+    const ts = '2026-11-20T10:00:00Z';
+    const ledger = ['replayed', 'retried', 'undated'].flatMap(job => {
+      const launch = { event: 'launch', job, lane: 'zai', ts: job === 'undated' ? undefined : ts };
+      return [
+        launch,
+        { event: 'finish', job, empty: true, ts },
+        { ts: launch.ts, lane: job === 'retried' ? 'claude' : launch.lane, job, event: 'launch' },
+      ];
+    }).map(record => JSON.stringify(record)).join('\n');
+
+    expect(parseLaneJobs(ledger)).toEqual([
+      { job: 'replayed', lane: 'zai', at: Date.parse(ts), empty: true, merged: false },
+    ]);
+  });
+
   it('attributes finish evidence only after the latest launch', () => {
     const ledger = ['stale', 'pending', 'same-time', 'undated'].flatMap(job => {
       const first = '2026-11-20T10:00:00Z';
@@ -150,6 +166,27 @@ describe('parseLaneJobs', () => {
       ['c', 'zai', false, true],
     ]);
     expect(out.find(j => j.job === 'a')!.at).toBe(Date.parse('2026-11-20T12:00:00Z'));
+  });
+
+  it('skips RQ-BATCH session infrastructure rows like every sibling reader', () => {
+    const lines = [
+      // The session's own launch/finish are aggregate machinery rows; the
+      // bundle publishes nothing itself and members keep their own ids.
+      JSON.stringify({ event: 'launch', job: 'RQ-BATCH-abc123', lane: 'zai', ts: '2026-11-20T10:00:00Z', batch_size: 3 }),
+      JSON.stringify({ event: 'finish', job: 'RQ-BATCH-abc123', lane: 'zai', ts: '2026-11-20T11:00:00Z', batch_size: 3, wall_s: 3600 }),
+      // Members arrive through batch_claim/task_outcome, never a launch row.
+      JSON.stringify({ event: 'batch_claim', job: 'MEMBER-1', batch: 'RQ-BATCH-abc123', lane: 'zai', ts: '2026-11-20T10:01:00Z' }),
+      JSON.stringify({ event: 'task_outcome', job: 'MEMBER-1', batch: 'RQ-BATCH-abc123', lane: 'zai', outcome: 'done', ts: '2026-11-20T10:30:00Z' }),
+      // A real solo launch still counts, with its own empty finish.
+      JSON.stringify({ event: 'launch', job: 'solo-1', lane: 'zai', ts: '2026-11-20T12:00:00Z' }),
+      JSON.stringify({ event: 'finish', job: 'solo-1', empty: true, ts: '2026-11-20T12:30:00Z' }),
+    ].join('\n');
+    expect(parseLaneJobs(lines)).toEqual([
+      { job: 'solo-1', lane: 'zai', at: Date.parse('2026-11-20T12:30:00Z'), empty: true, merged: false },
+    ]);
+    expect(computeLaneYield(lines).rows.filter(r => r.size === 'all')).toMatchObject([
+      { lane: 'zai', launches: 1, merged: 0, reverted: 0, empty: 1 },
+    ]);
   });
 
   it('reads arm lanes and phase/result/conclusion outcome spellings', () => {

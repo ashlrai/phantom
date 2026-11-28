@@ -9,7 +9,10 @@ export function diskReading(root: string): DiskReading {
     freeInodes: Number(s.ffree), totalInodes: Number(s.files) };
 }
 
+const usage = 'usage: phm resources autopilot [--json] [--input FILE] [--root PATH] [--overrides budget-overrides.json]\n';
+
 export async function cmdResourceAutopilot(args: string[]): Promise<number> {
+  if (args.includes('--help') || args.includes('-h')) { process.stdout.write(usage); return 0; }
   let input: string | null = null; let root = '/'; let json = false; let overridesPath: string | null = null;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -17,7 +20,7 @@ export async function cmdResourceAutopilot(args: string[]): Promise<number> {
     else if (a === '--input' && args[i + 1]) input = args[++i]!;
     else if (a === '--root' && args[i + 1]) root = args[++i]!;
     else if (a === '--overrides' && args[i + 1]) overridesPath = args[++i]!;
-    else { process.stderr.write('usage: phm resources autopilot [--json] [--input FILE] [--root PATH] [--overrides budget-overrides.json]\n'); return 2; }
+    else { process.stderr.write(usage); return 2; }
   }
   let lanes: LaneInput[] = [];
   if (input) {

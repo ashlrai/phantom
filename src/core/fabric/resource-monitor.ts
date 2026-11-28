@@ -46,6 +46,7 @@ import { resolveEngineRegistry } from '../run/engine-registry.js';
 import { pinLoopbackHost, validateLocalBaseUrl } from '../run/local-inference.js';
 import { readClaudeUsage } from './claude-usage.js';
 import { fetchClaudeUsageApi } from './usage-api.js';
+import { positiveIntOrNull } from './production-velocity-pending.js';
 import {
   onClaudeRateLimitEventRecorded,
   readLatestClaudeRateLimitEvent,
@@ -1018,12 +1019,6 @@ function senseCodexState(): BackendResourceState {
   }
 }
 
-function positiveConcurrentCap(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0
-    ? Math.max(1, Math.floor(value))
-    : null;
-}
-
 function senseReactiveApiState(
   backend: EngineId,
   cfg: { costPerMTokenOut?: number; maxConcurrent?: number } | undefined,
@@ -1032,7 +1027,7 @@ function senseReactiveApiState(
   const now = new Date().toISOString();
   const backoff = backoffStore.get(backend);
   const costPerMTokenOut = cfg?.costPerMTokenOut ?? defaults.costPerMTokenOut;
-  const maxConcurrent = positiveConcurrentCap(cfg?.maxConcurrent);
+  const maxConcurrent = positiveIntOrNull(cfg?.maxConcurrent);
 
   if (backoff && backoff.until > Date.now()) {
     return {
@@ -1088,7 +1083,7 @@ function senseCredentialedApiState(backend: 'nim' | 'kimi', cfg: unknown, rcfg: 
     const { credentialName, credentialAvailable } = apiCredentialReadiness(backend, typedCfg);
 
     if (!credentialAvailable) {
-      const maxConcurrent = positiveConcurrentCap(resourceCfg?.maxConcurrent);
+      const maxConcurrent = positiveIntOrNull(resourceCfg?.maxConcurrent);
       return {
         backend,
         availability: 'unreachable',
@@ -1108,7 +1103,7 @@ function senseCredentialedApiState(backend: 'nim' | 'kimi', cfg: unknown, rcfg: 
     const override = overrideState(backend, rcfg.overrides?.[backend]);
     if (override) return override;
   } catch {
-    const maxConcurrent = positiveConcurrentCap(resourceCfg?.maxConcurrent);
+    const maxConcurrent = positiveIntOrNull(resourceCfg?.maxConcurrent);
     return {
       backend,
       availability: 'unreachable',

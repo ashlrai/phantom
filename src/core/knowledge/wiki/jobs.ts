@@ -127,16 +127,15 @@ export function startWikiJob(repo: string, opts: StartJobOptions = {}): StartJob
  * One auto-refresh pass: refresh the first existing wiki that is behind HEAD
  * or has pending pages. Returns the repo it started, or null.
  */
-export async function autoRefreshOnce(cfg: AshlrConfig, deps: { start?: typeof startWikiJob } = {}): Promise<string | null> {
+async function autoRefreshOnce(cfg: AshlrConfig): Promise<string | null> {
   if (!wikiConfig(cfg).autoRefresh) return null;
-  const start = deps.start ?? startWikiJob;
   for (const repo of wikiCandidateRepos()) {
     const manifest = await readManifest(wikiKey(repo));
     if (!manifest) continue;
     const head = await readHead(repo);
     const behind = head !== null && head !== manifest.commit;
     if (!behind && manifest.pending.length === 0) continue;
-    const res = start(repo, { cfg, trigger: 'auto', pageBudget: AUTO_PAGE_BUDGET });
+    const res = startWikiJob(repo, { cfg, trigger: 'auto', pageBudget: AUTO_PAGE_BUDGET });
     if (res.ok) return repo;
   }
   return null;

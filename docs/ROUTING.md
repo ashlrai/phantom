@@ -369,6 +369,10 @@ the feed uses the single distinct repository observed at the latest dispatch
 timestamp at or before the outcome. Repository names are case-insensitive.
 Missing or conflicting dispatch repository evidence leaves the reward's
 repository null when the verdict supplies none.
+If the latest dispatch receipts identify multiple distinct PRs, the reward
+stays unwritten even when the verdict supplies only a repository or job ID.
+These receipts may disagree across URL fields or across rows at the same
+dispatch timestamp. Equivalent GitHub PR URLs count as one identity.
 For pool attribution, each receipt at that latest dispatch timestamp supplies
 its first valid `lane`, `pool` or `arm`, skipping case-insensitive `unknown`
 placeholders. The reward records a pool when there is exactly one distinct
@@ -389,6 +393,8 @@ reports one
 `router.outcome.v1` record per job in that window, newest
 first. Jobs receipts with a recognized ledger timestamp after report start
 are excluded before outcome folding, PR attribution and handoff comparison.
+An explicit merge, close or revert timestamp after report start also
+withholds that verdict when the row's general timestamp is in range.
 Receipts at the boundary and legacy receipts without a parseable timestamp
 remain eligible. A lane on a receipt marked `launched: false` serves as a
 fallback for queue diagnostics when no other receipt for the job records a lane.
@@ -588,7 +594,9 @@ job's lane measured zero quota, carrying the market's chosen lane as
 `foldMarketHandoffAdvisories` read under the `market_state` health:
 each job's newest recorded advisory supersedes the jobs-ledger
 triple only when its recorded `ts` is strictly newer than the
-standing jobs-ledger advisory's parseable timestamp — no jobs
+standing jobs-ledger advisory's parseable timestamp. The comparison uses
+the same timestamp parser as the report cutoff, including fallback fields
+when an earlier field cannot be parsed. No jobs
 advisory means the market verdict fills the triple, an unorderable
 jobs advisory leaves the jobs verdict standing, and market rows
 naming jobs outside the jobs window join nothing. This fold keeps
@@ -693,8 +701,11 @@ it is the fleet's post-hoc triage of the job's final output, distinct
 from the finish row's own `empty`/`empty_class` measures — and rows
 naming jobs outside the jobs window never create outcomes. Only rows
 with the exact schema, a bounded job id and an in-vocabulary tag join;
-malformed rows, other schemas and unrecognized tags are skipped, never
-recorded raw. The tags read degrades independently like the market and
+malformed rows, other schemas and unrecognized tags are skipped. The recorder
+also ignores these rows and invalid timestamps when deciding whether a job
+already has a tag. A later sync can append a valid receipt while preserving
+the original ledger bytes, including an unterminated final line. The tags read
+degrades independently like the market and
 spend joins: the report's `empty_tag_state` mirrors the jobs `state`
 vocabulary and `empty_tag_truncated` marks a cut tags tail, in which case
 joined tags cover only the newest bytes; anything but `read` leaves
@@ -735,10 +746,13 @@ inclusive report-start cutoff for job and merge-queue receipts, including
 merge-queue receipts used to infer first-pass CI. The evidence is post-publish
 queue-side context — it never replaces the jobs ledger's merge
 verdict and never feeds routing by itself. The same joined check
-record also resolves `ci_first_pass` when no jobs row recorded a boolean
-verdict. Conflicting boolean verdicts leave the job's first-pass CI unknown
-(`null`) even when a later receipt repeats one of them or the queue has check
-observations. When the jobs ledger has no verdict, any recorded check
+record also resolves `ci_first_pass` when the jobs ledger supplies no
+attributable boolean verdict. PR-scoped verdicts must match the standing PR
+and require a unique job claim. Job-only verdicts remain usable with no PR
+claim or one unambiguous standing PR. Conflicting attributable verdicts
+leave first-pass CI unknown (`null`) even when a later receipt repeats one
+of them or the queue has check observations. When there is no attributable
+jobs-ledger verdict, any recorded check
 failure — required or unrelated — reads `false` even beside a later
 `checks_passed` boundary or a merge (a rerun or a new head got it
 green, which is not a first pass). A `checks_passed` boundary reads
@@ -776,12 +790,19 @@ marks a cut spend tail. Phantom withholds spend-derived costs when earlier
 calls may be missing. Explicit jobs-ledger costs and the reward-signal
 fallback still apply.
 The spend join includes calls at the report start time and excludes calls
-dated after it, including future calls with missing prices. Calls without
-a parseable `ts`, `at`, or `timestamp` retain their existing eligibility.
+dated after it, including future calls with missing prices. Legacy calls
+with no timestamp fields remain eligible. When a call names a job and
+carries `ts`, `at`, or `timestamp` but none can be parsed, the spend join
+and reward sync leave that job's spend-derived total unknown.
+Both consumers also withhold the job's spend total when one call has a
+parseable timestamp at or before the cutoff and another after it.
 Both the router outcomes and the daemon's reward feed withhold a job's
 spend-derived total if any call attributed to that job lacks a usable USD
 price or the sum is non-finite. Spend totals for other jobs can still be
-measured. The reward feed uses its sync start as the inclusive spend cutoff,
+measured when every nonblank line decodes as a JSON object. A malformed line
+has no reliable job identity or timestamp, so both consumers withhold all
+totals derived from that spend read. `spend_state` still reports whether the
+file was readable. The reward feed uses its sync start as the inclusive spend cutoff,
 the same cutoff it uses for jobs evidence. Future-dated calls affect neither
 the sum nor price coverage. Undated calls remain eligible.
 The reward-signal ledger joins under the ASHLR home root — the same
@@ -795,11 +816,17 @@ pool readings). The router uses the first usable receipt per job in the
 retained ledger, so duplicate receipts cannot replace its verdict or
 measurements. The quota delta requires a pool reading at or before dispatch
 and another after dispatch and at or before recording, both in the same
-quota reset window. A missing endpoint leaves the delta unknown. Equal
-readings across both endpoints record a measured zero.
+quota reset window. Each endpoint uses the latest eligible timestamp. If
+readings at that timestamp disagree on usage or the reset time, the endpoint
+and delta stay unknown. A missing endpoint or an unparseable reset time also
+leaves the delta unknown. Equal usage at both endpoints in the same observed
+reset window records a measured zero.
 The daemon excludes batch session wrappers (`RQ-BATCH-*`)
 and node-pool attempt telemetry from the reward fold. Receipts marked
 `launched: false` supply no dispatch, PR claim, verdict or timing evidence.
+Claims marked `launch_dedupe: true` are pre-spawn reservations. They cannot
+supply a dispatch timestamp or lane, supersede an observed launch, or make
+dispatch timing ambiguous when the reservation has no timestamp.
 Batch members still
 use their own `batch_claim` rows and PR verdicts. The daemon records
 `ciWallMs` when the rewarded dispatch
@@ -820,6 +847,9 @@ CI receipts outside that window are ignored when
 checking for ambiguity, so earlier attempts can coexist with a measured
 retry. A merge uses its recorded merge time even if its ledger receipt
 arrived later. The latest effective merge time selects the rewarded attempt.
+A merge, close, or standalone revert that identifies only a repository
+can resolve a dispatch with PR links only when each link belongs to that
+repository. Conflicts leave the reward unwritten.
 When the verdict has no repository evidence, the reward uses the repository
 from the latest dispatch timestamp. Conflicting repository claims at that
 timestamp, including different repository URLs on a single receipt, leave
@@ -841,7 +871,10 @@ identity on the merge receipt and, for a ledger revert, on the revert receipt.
 Every valid PR reference counts when checking for competing standing revert
 claims. A ledger revert with a repository label and no PR reference discounts
 a merge only when the reward resolves to that repository, ignoring case.
-Ledger reverts without either identity retain job-level attribution.
+Ledger reverts with no PR reference and an omitted, null or blank repository
+label retain job-level attribution. A supplied but unusable repository label
+without a valid PR reference can neither discount a merge nor resolve a
+standalone reward.
 The fold uses the recorded revert time when available and the receipt
 timestamp otherwise.
 Receipts for the same effective merge or close time retain all observed PR
@@ -929,8 +962,15 @@ for the same job. Timestamp spellings for the same instant are equivalent.
 An older recorded start cannot supersede a newer start for the same job
 when its probe arrives late. Distinct receipts with the same start time and
 receipts without a recorded start retain their append order. The join skips
-receipts whose recorded start is after the report began. Starts exactly at
-report time and receipts with no recorded start remain eligible. Rows resolving
+receipts whose recorded start is after the report began. A measured probe
+becomes eligible 60 seconds after launch. For a partial probe, the recorded
+sampling duration sets the earliest possible completion because attachment
+can occur after launch. Probes that could only complete after the report
+began leave earlier eligible evidence available. The cutoff is inclusive,
+and receipts with no recorded start remain eligible. When the selected
+probe's lane differs from the outcome's recorded lane, all launch-cost
+fields stay null, even if an older probe matches. An outcome with no
+recorded lane can still display its probe without lane attribution. Rows resolving
 outside the jobs window join nothing and
 never create outcomes. The report's `launch_cost_state` mirrors the
 jobs `state` vocabulary and `launch_cost_truncated` marks a cut
@@ -960,9 +1000,10 @@ are skipped, never counted, and the reviewer's pool/family, reasons
 and semantic detail stay audit-side rather than joining. The join
 resolves each outcome's `cross_review` through the same PR identity as
 `merge_queue`. Cross-review rows never create outcomes. For a dated standing merge or close,
-the latest review must have a recorded time at or before the verdict.
-A later or undated latest review leaves the join unknown without falling
-back to an earlier review. The evidence is
+the join selects the latest dated review at or before the verdict. Reviews
+recorded later and undated reviews are excluded before selection. The
+review stays unknown when the eligible set is empty or its latest timestamp
+has conflicting evidence. The evidence is
 review-gate context like `merge_queue`: a `reject` is the recorded
 reason the PR may never merge, but a review verdict is not a merge
 verdict — the join never feeds routing, ranking, admission or weight
@@ -972,6 +1013,20 @@ vocabulary and `cross_review_truncated` marks a cut tail, in which
 case joined verdicts cover only the newest bytes; anything but
 `read` leaves every `cross_review` `null` — unknown, never a guessed
 verdict — while an empty readable ledger means zero recorded joins.
+
+Jobs-ledger `review_findings` counts follow the standing PR. The winning
+merge or close verdict selects the PR, and an unresolved job uses its latest
+unambiguous canonical PR claim. A terminal verdict without a URL can use a
+sole canonical claim. The newest eligible timestamped count stands.
+For a dated merge or close in the jobs ledger, only counts dated at or
+before that resolution are eligible.
+Conflicting counts at that timestamp stay unknown, while identical counts
+agree. When no eligible count has a parseable timestamp, the last eligible
+count in ledger order stands.
+Legacy job-only counts remain eligible for jobs with no PR claim or one
+uncontested canonical claim. Counts stay unknown when the available receipts
+cannot establish which PR the counts describe.
+
 `reverted`
 folds explicit revert evidence — a `reverted` boolean, a revert event name
 or terminal REVERT/REVERTED state, or a parseable `reverted_at`/`revertedAt`
@@ -983,7 +1038,8 @@ a URL can use the job's sole PR claim in the retained ledger. This keeps
 reverts of superseded PRs from discounting a replacement merge. The
 index join reads `ledgerSnapshot('cached')` lazily, contributes only
 hash-verified rows — a broken chain still marks only its verified prefix —
-and degrades to no join on any read failure. A second, independent revert
+and degrades to no join on any read failure. Both authority landings must
+have been recorded at or before report start. A second, independent revert
 source joins under the same claim rule:
 `$ASHLR_HOME/improve/revert-outcomes.jsonl`, the bounded append-only
 ledger `phm fleet reverts --record` writes from its 72h-window
@@ -1216,13 +1272,30 @@ per-agent tallies — each recorded `agent` attribution (the
 branch/login convention the sync records, `null` rendered as
 `unattributed`, `model` always `null` because the journal never
 records one) with its PR count, `reverted`/`kept`/`unknown` revert
-verdict counts, and the distinct repo count — and
+verdict counts, the distinct repo count, and the journaled merge
+evidence: `ttm_known`/`ttm_minutes_mean` (open→merge latency over the
+rows whose `createdAt` stamp parses at or before `mergedAt`),
+`reviews_known`/`reviewed`/`unreviewed`/`approved`/
+`changes_requested`/`review_required` (gh's recorded review evidence)
+and `ci_known`/`ci_passed`/`ci_failed`/`ci_pending`/`ci_none` (the
+check-rollup verdict the sync's bounded per-PR `gh pr view` read
+recorded — `success`/`failure`/`pending`/`none`, where `none` is a real
+empty rollup, never missing evidence) and
+`diff_known`/`diff_lines_mean`/`diff_files_mean` (gh's recorded merge
+size — additions plus deletions lines and changed files, frozen at
+merge — as means over the rows carrying the journaled triple) — rows
+journaled before the fields existed, or gh rows missing them, count in
+no denominator and read as unknown, never as zero reviews, zero CI,
+zero latency or empty diffs — and
 `community_seats_coverage` carries the newest scan row's recorded
 `source_state`/`revert_ledger` plus the degraded repo list so a
 partial community picture reads as partial. `community_seats_truncated`
 marks a journal exceeding the retained tail and
 `community_seats_ignored` counts rows that failed the recorded
-contract. Outside PRs carry no lane or work_class, so these tallies
+contract. Community-seat reports and outside-PR improvement discovery
+select the last appended verdict and scan visible at their report time.
+They skip receipts whose `at` is later than that time and count
+unparseable receipt timestamps as ignored rows. Outside PRs carry no lane or work_class, so these tallies
 are advisory context only: they never enter a `(work_class, lane)`
 proposal group and the weight math is unchanged by them. Each
 proposal also carries an `evidence` block folded
@@ -1248,8 +1321,10 @@ recorded `ci_start`/`ci_complete` boundary pair. The reward feed reads
 the same boundary events within the rewarded dispatch's window. The router
 can fill timing from a reward when the retained jobs ledger is missing a
 boundary. Multiple distinct starts or completions, a completion before its
-start, or an undated CI boundary block reward fallback. Replayed timestamps
-count once per boundary. Conflicting PR identities on
+start, or an undated CI boundary block reward fallback. When parseable
+event-time aliases (`ts`, `timestamp`, `at`, `time`) on one CI boundary
+disagree, the router withholds the duration and blocks reward fallback.
+Replayed timestamps count once per boundary. Conflicting PR identities on
 CI boundary receipts also make the duration ambiguous and block reward
 fallback, even when the receipts share a timestamp. When CI names a PR and
 the standing merge or close verdict includes a PR URL, the router requires
@@ -1257,10 +1332,11 @@ that URL to resolve to the same PR for CI timing or reward fallback), mean
 recorded `publish_wait_s` (the job's publish-station wait from its
 single recorded `finish`/`publish` boundary pair — the same pair
 job-latency's publish_wait phase and visit-sync's publish station
-read. Queue, CI and publish timing use the first parseable jobs-ledger
+read. Queue, CI and publish timing start with the first parseable jobs-ledger
 timestamp alias on each boundary or claim. A missing, repeated or reversed pair, or any boundary with a
 missing or invalid timestamp, leaves the duration unknown. Publish timing is
-also unknown when its boundary receipts name conflicting PRs, even at the
+also unknown when parseable event-time aliases on a single finish or publish
+receipt disagree, or when its boundary receipts name conflicting PRs, even at the
 same timestamp, or when a named boundary PR cannot be matched to the URL on
 the standing merge or close verdict. Both durations
 exclude pairs with a `launch` or `batch_claim` at or between their boundaries

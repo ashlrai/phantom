@@ -7,10 +7,9 @@
  * "unknown", never zero: an unknown slot count is left out of the total and the total says so.
  * The offload setting lives on each Mac's own disk, so only this Mac's is known here.
  */
-import { aliasMatches } from './pool-reach.js';
 import { readOffloadEnabled } from './nodes-offload.js';
 import { planNode } from './nodes-plan.js';
-import { readNodesView, type NodeRow, type NodesRegistry, type NodesView, type NodesViewDeps } from './nodes-view.js';
+import { readNodesView, registryDiskFree, type NodeRow, type NodesView, type NodesViewDeps } from './nodes-view.js';
 import { UNKNOWN } from './runtime-identity.js';
 import { NODES_POOL_SCHEMA, seenWords, type NodesPool, type PoolNode, type PoolStatus } from './nodes-pool-types.js';
 
@@ -41,26 +40,13 @@ export function buildNodesPool(view: NodesView, extra: { disk?: ReadonlyMap<stri
   const freeSlots = online.reduce((sum, n) => sum + (typeof n.freeSlots === 'number' ? n.freeSlots : 0), 0);
   const slotsUnknown = online.filter(n => n.freeSlots === UNKNOWN).length;
   const jobsRunning = nodes.reduce((sum, n) => sum + (n.jobsRunning === UNKNOWN ? 0 : n.jobsRunning.length), 0);
+  // Same rule as slotsUnknown: an online Mac whose running count the registry
+  // cannot say stays out of the sum, and the total says how many were skipped
+  // instead of letting the remainder read as the whole pool's count.
+  const jobsUnknown = online.filter(n => n.jobsRunning === UNKNOWN).length;
   const line = `${plural(nodes.length, 'Mac')}, ${plural(freeSlots, 'free slot')}${slotsUnknown ? ` (${slotsUnknown} not measured)` : ''}`;
   return { schema: NODES_POOL_SCHEMA, schemaVersion: 1, asOf: view.asOf, nodes,
-    total: { macs: nodes.length, online: online.length, freeSlots, slotsUnknown, jobsRunning, line }, reasons: view.reasons };
-}
-
-/** Free disk per Mac from the registry's host stats (remote) and this Mac's own sample; never throws. */
-function diskFreeByName(view: NodesView, registry: NodesRegistry | null, localDisk: number | null): Map<string, number | null> {
-  const out = new Map<string, number | null>();
-  for (const row of view.nodes) {
-    if (row.isSelf) { out.set(row.name, localDisk); continue; }
-    if (row.reachable === false) continue;
-    // The standalone registry is single-host: its records are this computer's
-    // sessions, so a peer whose name matches a local node id must not inherit
-    // this machine's disk measurement.
-    const record = registry?.source === 'local' ? undefined
-      : registry?.state?.nodes.filter(r => [r.nodeId, r.capacity?.hostId].some(id => typeof id === 'string' && aliasMatches(id, row.name)))
-        .sort((a, b) => b.heartbeatAt - a.heartbeatAt)[0];
-    out.set(row.name, record?.hostStats?.diskFree ?? null);
-  }
-  return out;
+    total: { macs: nodes.length, online: online.length, freeSlots, slotsUnknown, jobsRunning, jobsUnknown, line }, reasons: view.reasons };
 }
 
 /** Read every source through its seam and join; never throws. */
@@ -69,7 +55,9 @@ export function readNodesPool(deps: NodesPoolDeps): NodesPool {
   const view = readNodesView(deps.view);
   const registry = attempt(() => deps.view.readRegistry());
   const localDisk = attempt(() => deps.view.localStats().diskFree) ?? null;
-  return buildNodesPool(view, { disk: diskFreeByName(view, registry, localDisk), selfOffload: attempt(deps.readOffload ?? readOffloadEnabled) });
+  const now = Date.parse(view.asOf);
+  const disk = new Map(view.nodes.map(row => [row.name, row.isSelf ? localDisk : registryDiskFree(registry, row, now)]));
+  return buildNodesPool(view, { disk, selfOffload: attempt(deps.readOffload ?? readOffloadEnabled) });
 }
 
 const MARK: Record<PoolStatus, string> = { online: '●', offline: '○', unknown: '?' };

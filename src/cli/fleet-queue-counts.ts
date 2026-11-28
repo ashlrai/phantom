@@ -2,11 +2,11 @@ import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { getLaneQueueCounts } from '../core/fleet/queue-counts.js';
 
-const usage = 'Usage: phm fleet queue-counts [--root <abs>] [--json]\nPer lane: ready, parked (blocked, with reasons), running, oldest wait and merges in the last hour. Stale = parked on gates that are already merged. Wait includes ready and parked jobs and restarts at each re-arrival; unknown means missing evidence, such as a silent requeue. Reads <root>/queue and <root>/metrics/jobs.jsonl (default ~/.ashlr-runs). Read-only.';
+const usage = 'Usage: phm fleet queue-counts [--root <abs>] [--json]\nPer lane: ready, parked (blocked, with reasons), running, oldest wait and merges in the last hour. Stale = parked on gates that are already merged. Wait includes ready and parked jobs and restarts at each re-arrival; unknown means missing evidence, such as a silent requeue. Reads <root>/queue and <root>/metrics/jobs.jsonl (default ASHLR_RUNS_DIR or ~/.ashlr-runs). Read-only.';
 
 export async function cmdFleetQueueCounts(args: string[]): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(usage); return 0; }
-  let root = join(homedir(), '.ashlr-runs'), json = false;
+  let root = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), json = false;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--json' && !json) json = true;
     else if (args[i] === '--root' && args[i + 1] && isAbsolute(args[i + 1]!)) root = args[++i]!;

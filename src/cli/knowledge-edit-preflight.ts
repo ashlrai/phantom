@@ -5,6 +5,7 @@ import {
   type FleetFileEdit,
 } from '../core/fleet/collision-free-edits.js';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
+import { isPlainRecord } from '../core/knowledge/wiki/store.js';
 
 const MAX_INPUT_BYTES = 16 * 1024 * 1024;
 const HELP = `Usage: phm knowledge edit-preflight --file <edits.json> [--json]
@@ -27,16 +28,12 @@ input. This is advisory, writes nothing, grants no merge permission, and does
 not replace the owner lane.
 `;
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
 function inputShape(value: unknown): value is { edits: FleetFileEdit[]; changelog?: ChangelogFragmentSpec | null } {
-  if (!isObject(value) || !Array.isArray(value.edits) ||
+  if (!isPlainRecord(value) || !Array.isArray(value.edits) ||
       Object.keys(value).some(key => key !== 'edits' && key !== 'changelog')) return false;
   const spec = value.changelog;
   if (spec === undefined || spec === null) return true;
-  return isObject(spec) && typeof spec.id === 'string' && typeof spec.kind === 'string' &&
+  return isPlainRecord(spec) && typeof spec.id === 'string' && typeof spec.kind === 'string' &&
     Array.isArray(spec.entries) && spec.entries.every(entry => typeof entry === 'string') &&
     Object.keys(spec).every(key => ['id', 'kind', 'entries'].includes(key));
 }

@@ -20,8 +20,8 @@
  * unknown keys, caller roots, paths and working directories are refused
  * the same way. The optional filters are the shared bus-read set every
  * sibling tool already takes — `to`/`from`/`excludeFrom` resolved through
- * the server-side registry with exact-label fallback, `channel`, `job`,
- * `priority`, `thread`, `inReplyTo`, `bodyKind`, `result`, the
+ * the server-side registry with exact-label fallback, `channel`, `topic`,
+ * `job`, `priority`, `thread`, `inReplyTo`, `bodyKind`, `result`, the
  * `[since, before)` receivedAt window and `contains` — and they narrow the
  * listed chain members only: the `inReplyTo` walk, `rootFound` and the
  * `scannedThrough`/`complete`/`sourceFailure` honesty fields still
@@ -53,7 +53,7 @@ const BUS_ID = /^[\x21-\x7e]{1,128}$/;
 /** The printable-label rule the shared filter refs take — the same grammar fleet_agent_messages applies. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
-const THREAD_KEYS = new Set(['id', 'to', 'from', 'excludeFrom', 'channel', 'job', 'priority',
+const THREAD_KEYS = new Set(['id', 'to', 'from', 'excludeFrom', 'channel', 'topic', 'job', 'priority',
   'thread', 'inReplyTo', 'bodyKind', 'result', 'since', 'before', 'contains']);
 const LABEL_KEYS = ['to', 'from', 'excludeFrom', 'job', 'thread', 'inReplyTo', 'bodyKind'] as const;
 
@@ -70,8 +70,8 @@ export interface FleetBusThreadArgs {
  * required — the thread read has no meaningful default — and takes the
  * same printable routing-label rule every bus read shares; every filter
  * takes the same value rule the sibling bus tools enforce — the label
- * keys the printable-label grammar, `channel` the strict channel-name
- * schema, `priority`/`result` their enums, `since`/`before` the shared
+ * keys the printable-label grammar, `channel` and `topic` the strict
+ * channel-name schema, `priority`/`result` their enums, `since`/`before` the shared
  * 15m/2h/1d/epoch-ms/ISO grammar resolved through `parseSince` to a safe
  * non-negative epoch-ms integer and `contains` the bounded
  * `busReadContains` needle. Unknown keys, wrong types, caller roots and
@@ -94,6 +94,12 @@ export function parseFleetBusThreadArgs(args: Record<string, unknown>): FleetBus
   if (channel !== undefined) {
     if (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success) return null;
     filters.channel = channel;
+    any = true;
+  }
+  const topic = args.topic;
+  if (topic !== undefined) {
+    if (typeof topic !== 'string' || !agentChannelNameSchema.safeParse(topic).success) return null;
+    filters.topic = topic;
     any = true;
   }
   const priority = args.priority;

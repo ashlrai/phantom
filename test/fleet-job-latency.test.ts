@@ -85,6 +85,25 @@ it('reads the production ledger dialects: enqueue arrival, PUBLISHED/published p
   expect(merge.phases.find(p => p.phase === 'open_to_merge')).toMatchObject({ total_seconds: 150, measured_jobs: 1, missing_jobs: 1 });
 });
 
+it('excludes non-execution receipts without losing recorded timings for the same job', () => {
+  const rows = [
+    { job: 'RQ-SKIPPED', event: 'outcome', state: 'DONE-NOOP', launched: false, ts: '2026-01-01T00:00:00Z' },
+    { job: 'RQ-A', event: 'launch', ts: '2026-01-01T00:00:10Z' },
+    { job: 'RQ-A', event: 'finish', ts: '2026-01-01T00:00:20Z' },
+    { job: 'RQ-A', event: 'publish', ts: '2026-01-01T00:00:30Z' },
+    { job: 'RQ-A', event: 'claim', launched: false, ts: '2026-01-01T00:00:40Z' },
+    { job: 'RQ-A', event: 'merged', ts: '2026-01-01T00:00:50Z' },
+  ];
+  const ledger = rows.map(row => JSON.stringify(row)).join('\n');
+  const jobs = jobLatency(ledger);
+  const merges = mergeQueueLatency(ledger);
+  for (const report of [jobs, merges]) expect(report).toMatchObject({ jobs: 1, ignored_events: 0 });
+  expect(jobs.phases.find(p => p.phase === 'worker'))
+    .toMatchObject({ total_seconds: 10, measured_jobs: 1, missing_jobs: 0 });
+  expect(merges.phases.find(p => p.phase === 'open_to_merge'))
+    .toMatchObject({ total_seconds: 20, measured_jobs: 1, missing_jobs: 0 });
+});
+
 it('uses terminal verdicts even when earlier fields carry publish or unknown states', () => {
   const text = [
     { job: 'RQ-M', event: 'publish', ts: '2026-01-01T00:01:00Z' },
@@ -175,15 +194,26 @@ it('reports measured local Git operations and exact cross-lane overlaps only', a
 });
 
 const event = (event: string, ts: string | null) => ({ job: 'attempt-1', event, ts });
-it('counts exact dated Git-operation replays once in the contention report', async () => {
+it('counts dated Git-operation replays once even when JSON serialization changes', async () => {
   const lockFailure = JSON.stringify({ event: 'git_operation', machine: 'mac-a', lane: 'work',
     operation: 'index.lock', ts: '2026-01-01T00:00:01Z', elapsed_ms: 110, failed: true });
   const original = [(await readFile(gitFixture, 'utf8')).trimEnd(), lockFailure].join('\n');
   const datedReceipts = original.split('\n').filter(line => line.includes('"git_operation"') && line.includes('"ts"'));
   expect(datedReceipts).toHaveLength(6);
 
-  const replayed = [original, ...datedReceipts.map(line => `  ${line}  `)].join('\n');
+  const reordered = datedReceipts.map(line =>
+    JSON.stringify(Object.fromEntries(Object.entries(JSON.parse(line)).reverse())));
+  const replayed = [original, ...datedReceipts.map(line => `  ${line}  `), ...reordered].join('\n');
   expect(jobLatency(replayed)).toEqual(jobLatency(original));
+});
+
+it('preserves repeated Git-operation measurements without a timestamp', () => {
+  const receipt = JSON.stringify({ event: 'git_operation', machine: 'mac-a', lane: 'work',
+    operation: 'fetch', elapsed_ms: 900, retries: 2 });
+  const operations = jobLatency([receipt, receipt].join('\n')).git_contention?.machines?.[0]?.lanes[0]?.operations;
+  expect(operations?.find(op => op.operation === 'fetch')).toMatchObject({
+    timed_samples: 2, retries: { samples: 2, total: 4 }, concurrent_retries: { samples: null, total: null },
+  });
 });
 
 const start = '2026-01-01T00:00:00Z', end = '2026-01-01T00:01:00Z';
@@ -257,6 +287,96 @@ it('uses batch claims to separate attempts while requiring a launch for worker t
   }
   expect(mergeQueueLatency(text).phases.find(phase => phase.phase === 'open_to_merge'))
     .toMatchObject({ total_seconds: 60, measured_jobs: 1, missing_jobs: 0 });
+});
+
+it('withholds latency across a solo re-claim inside a measured span', () => {
+  const text = [
+    event('launch', start),
+    event('finish', '2026-01-01T00:01:30Z'),
+    event('claim', '2026-01-01T00:01:45Z'),
+    event('publish', '2026-01-01T00:02:00Z'),
+    event('merged', '2026-01-01T00:03:00Z'),
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  const report = jobLatency(text);
+  // worker ended before the re-claim: still one clean attempt.
+  expect(report.phases.find(p => p.phase === 'worker'))
+    .toMatchObject({ total_seconds: 90, measured_jobs: 1, missing_jobs: 0 });
+  // publish_wait contains the re-claim: the publish may belong to attempt two.
+  expect(report.phases.find(p => p.phase === 'publish_wait'))
+    .toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
+  // The re-claim precedes the PR span, so open_to_merge stays measured.
+  expect(mergeQueueLatency(text).phases.find(p => p.phase === 'open_to_merge'))
+    .toMatchObject({ total_seconds: 60, measured_jobs: 1, missing_jobs: 0 });
+});
+
+it('withholds timings when a solo re-claim ties a non-launch start boundary', () => {
+  const text = [
+    event('launch', start),
+    event('checkout_complete', end),
+    event('claim', end),
+    event('finish', '2026-01-01T00:01:30Z'),
+    event('publish', '2026-01-01T00:02:00Z'),
+    event('claim', '2026-01-01T00:02:00Z'),
+    event('merged', '2026-01-01T00:03:00Z'),
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  expect(jobLatency(text).phases.find(phase => phase.phase === 'model'))
+    .toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
+  expect(mergeQueueLatency(text).phases.find(phase => phase.phase === 'open_to_merge'))
+    .toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
+});
+
+it('keeps a claim stamped with its own launch inside post-queue spans', () => {
+  const text = [
+    event('claim', start),
+    event('launch', start),
+    event('checkout_complete', '2026-01-01T00:00:30Z'),
+    event('finish', '2026-01-01T00:01:30Z'),
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  const report = jobLatency(text);
+  expect(report.phases.find(p => p.phase === 'checkout'))
+    .toMatchObject({ total_seconds: 30, measured_jobs: 1, missing_jobs: 0 });
+  expect(report.phases.find(p => p.phase === 'worker'))
+    .toMatchObject({ total_seconds: 90, measured_jobs: 1, missing_jobs: 0 });
+});
+
+it('keeps queue wait measured across claims inside the admission span', () => {
+  const text = [
+    event('enqueue', start),
+    event('claim', '2026-01-01T00:00:05Z'),
+    event('claim', '2026-01-01T00:00:10Z'),
+    event('launch', '2026-01-01T00:00:20Z'),
+    event('finish', '2026-01-01T00:01:00Z'),
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  const report = jobLatency(text);
+  expect(report.phases.find(p => p.phase === 'queue_wait'))
+    .toMatchObject({ total_seconds: 20, measured_jobs: 1, missing_jobs: 0 });
+  expect(report.phases.find(p => p.phase === 'worker'))
+    .toMatchObject({ total_seconds: 40, measured_jobs: 1, missing_jobs: 0 });
+});
+
+it.each([null, 'bad-date'])('withholds post-queue phase timings when a claim timestamp is %s', timestamp => {
+  const text = [
+    event('enqueue', start),
+    event('claim', timestamp),
+    event('launch', '2026-01-01T00:00:20Z'),
+    event('finish', '2026-01-01T00:01:00Z'),
+    event('publish', '2026-01-01T00:02:00Z'),
+    event('merged', '2026-01-01T00:03:00Z'),
+  ].map(row => JSON.stringify(row)).join('\n');
+
+  const report = jobLatency(text);
+  expect(report.phases.find(p => p.phase === 'queue_wait'))
+    .toMatchObject({ total_seconds: 20, measured_jobs: 1, missing_jobs: 0 });
+  for (const name of ['worker', 'publish_wait']) {
+    expect(report.phases.find(p => p.phase === name))
+      .toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
+  }
+  expect(mergeQueueLatency(text).phases.find(p => p.phase === 'open_to_merge'))
+    .toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
 });
 
 it.each([null, 'bad-date'])('withholds phase timings when a launch timestamp is %s', timestamp => {

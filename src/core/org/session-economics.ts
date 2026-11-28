@@ -22,7 +22,6 @@ const vitals = z.object({
   fresh: z.array(sample).max(32),
 }).strict();
 
-export type SessionSample = z.infer<typeof sample>;
 export type SessionAction = 'keep' | 'spawn' | 'drain' | 'retire' | 'hold';
 export interface SessionSizing {
   action: SessionAction;

@@ -1,7 +1,6 @@
-import { auditAutonomy, formatAutonomy } from '../core/release/autonomy-audit.js';
+import { auditAutonomy, formatAutonomy, releaseRepo } from '../core/release/autonomy-audit.js';
 
-export const RELEASE_AUTONOMY_USAGE = 'Usage: phm release autonomy [--json | --md] [--repo <name>]';
-const REPOS = new Set(['phantom', 'phantom-secrets', 'locus', 'lexicon', 'ashlr-plugin', 'ashlr-stack', 'ashlr-md']);
+const RELEASE_AUTONOMY_USAGE = 'Usage: phm release autonomy [--json | --md] [--repo <name>]';
 
 /** Inspect release gates without changing GitHub settings or local switches. */
 export async function cmdReleaseAutonomy(args: string[], deps: {
@@ -34,7 +33,7 @@ export async function cmdReleaseAutonomy(args: string[], deps: {
       return 2;
     }
   }
-  if (repo !== undefined && !REPOS.has(repo.startsWith('ashlrai/') ? repo.slice('ashlrai/'.length) : repo)) {
+  if (repo !== undefined && !releaseRepo(repo)) {
     process.stderr.write(`release autonomy: unknown enrolled repository\n${RELEASE_AUTONOMY_USAGE}\n`);
     return 2;
   }

@@ -29,6 +29,14 @@ const MAX_PAGE_BYTES = 512 * 1024;
 const PAGE_ID_RE = /^[a-z0-9][a-z0-9-]{0,95}$/;
 const KEY_RE = /^[a-z0-9][a-z0-9._-]{0,80}-[0-9a-f]{12}$/;
 
+export function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function sha256Hex(text: string): string {
+  return createHash('sha256').update(text).digest('hex');
+}
+
 export function wikiRoot(): string {
   return path.join(homedir(), '.ashlr', 'knowledge', 'wiki');
 }
@@ -37,7 +45,7 @@ export function wikiRoot(): string {
 export function wikiKey(repo: string): string {
   const abs = path.resolve(repo);
   const slug = path.basename(abs).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[-.]+/, '').slice(0, 60) || 'repo';
-  return `${slug}-${createHash('sha256').update(abs).digest('hex').slice(0, 12)}`;
+  return `${slug}-${sha256Hex(abs).slice(0, 12)}`;
 }
 
 export function isWikiKey(key: string): boolean {
@@ -80,9 +88,8 @@ async function readCapped(file: string, max: number): Promise<string | null> {
 }
 
 function isManifest(v: unknown): v is WikiManifest {
-  if (typeof v !== 'object' || v === null) return false;
-  const o = v as Record<string, unknown>;
-  return o['version'] === 1 && typeof o['repo'] === 'string' && typeof o['key'] === 'string' && Array.isArray(o['pages']);
+  if (!isPlainRecord(v)) return false;
+  return v['version'] === 1 && typeof v['repo'] === 'string' && typeof v['key'] === 'string' && Array.isArray(v['pages']);
 }
 
 export async function readManifest(key: string): Promise<WikiManifest | null> {
@@ -122,9 +129,9 @@ export async function readFileIndex(key: string): Promise<WikiFileIndex> {
   if (raw === null) return {};
   try {
     const parsed = JSON.parse(raw) as unknown;
-    if (typeof parsed !== 'object' || parsed === null) return {};
+    if (!isPlainRecord(parsed)) return {};
     const out: WikiFileIndex = {};
-    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) if (typeof v === 'number') out[k] = v;
+    for (const [k, v] of Object.entries(parsed)) if (typeof v === 'number') out[k] = v;
     return out;
   } catch {
     return {};
@@ -142,7 +149,7 @@ export async function readGenomeSnapshot(key: string): Promise<WikiGenomeNote[]>
   try {
     const parsed = JSON.parse(raw) as unknown;
     return Array.isArray(parsed)
-      ? parsed.filter((n): n is WikiGenomeNote => typeof n === 'object' && n !== null && typeof (n as WikiGenomeNote).title === 'string' && typeof (n as WikiGenomeNote).text === 'string')
+      ? parsed.filter((n): n is WikiGenomeNote => isPlainRecord(n) && typeof n['title'] === 'string' && typeof n['text'] === 'string')
       : [];
   } catch {
     return [];

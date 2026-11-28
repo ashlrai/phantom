@@ -12,6 +12,8 @@ import { checkCapsBundle, findRepoRoot, pinStageRoot, writeCapsBundle, type Drif
 import {
   CapsRegistryError,
   DEFAULT_CAPS_REGISTRY_PATH,
+  activeSensitivityFlags,
+  hostsForSurface,
   readCapsRegistryFile,
   surfaceModelPairs,
   validateCapsRegistry,
@@ -20,8 +22,8 @@ import {
 } from './registry.js';
 import type { CapsRegistry } from './schema.js';
 
-export const REGISTRY_REL_PATH = join('capabilities', 'registry.v1.json');
-export const GENERATED_REL_PATH = join('capabilities', 'generated');
+const REGISTRY_REL_PATH = join('capabilities', 'registry.v1.json');
+const GENERATED_REL_PATH = join('capabilities', 'generated');
 
 export interface CapsEnv {
   cwd?: string;
@@ -40,16 +42,23 @@ export type CapsValidateResult =
   | { ok: true; registryPath: string; counts: Record<string, number> }
   | { ok: false; registryPath: string; issues: CapsIssue[] };
 
-async function load(registryPath: string): Promise<{ ok: true; registry: CapsRegistry } | { ok: false; issues: CapsIssue[] }> {
+async function loadResolvedRegistry(opts: { registry?: string } & CapsEnv): Promise<
+  { ok: true; registryPath: string; registry: CapsRegistry } | { ok: false; registryPath: string; issues: CapsIssue[] }
+> {
+  const registryPath = resolveRegistryPath(opts.registry, opts);
   let value: unknown;
   try {
     ({ value } = await readCapsRegistryFile(registryPath));
   } catch (error) {
-    if (error instanceof CapsRegistryError) return { ok: false, issues: error.issues };
-    return { ok: false, issues: [{ path: '(file)', message: 'Registry file could not be read. Run inside a Phantom checkout or pass --registry <path>.' }] };
+    if (error instanceof CapsRegistryError) return { ok: false, registryPath, issues: error.issues };
+    return {
+      ok: false,
+      registryPath,
+      issues: [{ path: '(file)', message: 'Registry file could not be read. Run inside a Phantom checkout or pass --registry <path>.' }],
+    };
   }
   const result = validateCapsRegistry(value);
-  return result.ok ? { ok: true, registry: result.registry } : { ok: false, issues: result.issues };
+  return result.ok ? { ok: true, registryPath, registry: result.registry } : { ok: false, registryPath, issues: result.issues };
 }
 
 function counts(reg: CapsRegistry): Record<string, number> {
@@ -65,9 +74,10 @@ function counts(reg: CapsRegistry): Record<string, number> {
 }
 
 export async function capsValidate(opts: { registry?: string } & CapsEnv = {}): Promise<CapsValidateResult> {
-  const registryPath = resolveRegistryPath(opts.registry, opts);
-  const loaded = await load(registryPath);
-  return loaded.ok ? { ok: true, registryPath, counts: counts(loaded.registry) } : { ok: false, registryPath, issues: loaded.issues };
+  const loaded = await loadResolvedRegistry(opts);
+  return loaded.ok
+    ? { ok: true, registryPath: loaded.registryPath, counts: counts(loaded.registry) }
+    : { ok: false, registryPath: loaded.registryPath, issues: loaded.issues };
 }
 
 export interface CapsListView {
@@ -82,14 +92,13 @@ export interface CapsListView {
 }
 
 export async function capsList(opts: { registry?: string } & CapsEnv = {}): Promise<CapsListView | { ok: false; registryPath: string; issues: CapsIssue[] }> {
-  const registryPath = resolveRegistryPath(opts.registry, opts);
-  const loaded = await load(registryPath);
-  if (!loaded.ok) return { ok: false, registryPath, issues: loaded.issues };
+  const loaded = await loadResolvedRegistry(opts);
+  if (!loaded.ok) return { ok: false, registryPath: loaded.registryPath, issues: loaded.issues };
   const reg = loaded.registry;
   return {
     ok: true,
-    registryPath,
-    surfaces: reg.surfaces.map((s) => ({ id: s.id, kind: s.kind, lane: s.lane, adapter: s.adapter, hostedOnly: s.hostedOnly, hosts: reg.hosting.filter((e) => e.guest === s.id).map((e) => e.host).sort() })),
+    registryPath: loaded.registryPath,
+    surfaces: reg.surfaces.map((s) => ({ id: s.id, kind: s.kind, lane: s.lane, adapter: s.adapter, hostedOnly: s.hostedOnly, hosts: hostsForSurface(reg, s.id) })),
     models: reg.models.map((m) => ({ id: m.id, lane: m.lane, catalogId: m.catalogId, allowance: m.allowance ?? null })),
     pairs: surfaceModelPairs(reg),
     sessions: reg.sessions.map((s) => ({ id: s.id, surface: s.surface, model: s.model, role: s.role })),
@@ -98,7 +107,7 @@ export async function capsList(opts: { registry?: string } & CapsEnv = {}): Prom
       id: c.id,
       kind: c.kind,
       surfaces: c.surfaces,
-      flags: (['external_send', 'spend', 'delete'] as const).filter((f) => c.sensitivity[f]),
+      flags: activeSensitivityFlags(c),
       hardLimitGates: c.hardLimitGates,
     })),
   };
@@ -119,9 +128,9 @@ export interface CapsGenerateOptions extends CapsEnv {
 
 export async function capsGenerate(opts: CapsGenerateOptions = {}): Promise<CapsGenerateResult> {
   const mode = opts.check ? 'check' : 'write';
-  const registryPath = resolveRegistryPath(opts.registry, opts);
-  const loaded = await load(registryPath);
-  if (!loaded.ok) return { ok: false, mode, registryPath, issues: loaded.issues };
+  const loaded = await loadResolvedRegistry(opts);
+  if (!loaded.ok) return { ok: false, mode, registryPath: loaded.registryPath, issues: loaded.issues };
+  const { registryPath } = loaded;
   const bundle = generateCapsAdapters(loaded.registry);
   const home = opts.home ?? homedir();
   const repoRoot = findRepoRoot(opts.cwd ?? process.cwd());

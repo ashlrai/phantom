@@ -2,7 +2,15 @@
 import { abortableSleep } from '../util/await-support.js';
 import { laneBreakers, type LaneBreaker } from './lane-breaker.js';
 import { claudeApiHealth, type LaneHealth } from './lane-health.js';
-import { drivePoolAllowed, isPoolDayShare, pacedShareRemaining, type PoolDayShare } from './pool-routing.js';
+import {
+  drivePoolAllowed,
+  isBoundedDriveCount,
+  isDriveRecord,
+  isNonNegativeSafeInt,
+  isPoolDayShare,
+  pacedShareRemaining,
+  type PoolDayShare,
+} from './pool-routing.js';
 
 export type DriveJobState = 'READY' | 'HELD' | 'STARTING' | 'RUNNING' | 'FINISHED' | 'FAILED' | 'PUBLISHING' | 'PUBLISHED' | 'PUBLISH_UNKNOWN';
 export interface DriveJob {
@@ -114,27 +122,23 @@ export interface DriveDependencies {
 }
 
 const states = new Set<DriveJobState>(['READY', 'HELD', 'STARTING', 'RUNNING', 'FINISHED', 'FAILED', 'PUBLISHING', 'PUBLISHED', 'PUBLISH_UNKNOWN']);
+const ADMISSION_STATES = new Set(['open', 'closed', 'unknown']);
+const TERMINAL_STATES = new Set(['FINISHED', 'FAILED', 'PUBLISHED', 'PUBLISHING', 'PUBLISH_UNKNOWN']);
 const identifier = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,159}$/;
-function object(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function count(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= 100_000;
-}
 function id(value: unknown): value is string { return typeof value === 'string' && identifier.test(value); }
 
 /** Never interpret a corrupt or incomplete snapshot as an empty fleet. */
 export function parseDriveSnapshot(value: unknown): DriveSnapshot {
   const invalid = (): never => { throw new Error('Invalid drive bridge snapshot'); };
-  if (!object(value) || value.version !== 1 || !count(value.maxRunning) ||
-      typeof value.paused !== 'boolean' || typeof value.admission !== 'string' || !['open', 'closed', 'unknown'].includes(value.admission) ||
+  if (!isDriveRecord(value) || value.version !== 1 || !isBoundedDriveCount(value.maxRunning) ||
+      typeof value.paused !== 'boolean' || typeof value.admission !== 'string' || !ADMISSION_STATES.has(value.admission) ||
       !Array.isArray(value.pools) || !Array.isArray(value.jobs) || value.jobs.length > 100_000) return invalid();
   const pools = new Map<string, DrivePool>();
   for (const pool of value.pools) {
-    if (!object(pool) || !id(pool.id) || pools.has(pool.id) || !count(pool.floor) ||
-        !count(pool.ceiling) || pool.floor > pool.ceiling) return invalid();
+    if (!isDriveRecord(pool) || !id(pool.id) || pools.has(pool.id) || !isBoundedDriveCount(pool.floor) ||
+        !isBoundedDriveCount(pool.ceiling) || pool.floor > pool.ceiling) return invalid();
     if ((pool.paused !== undefined && typeof pool.paused !== 'boolean') ||
-        (pool.admission !== undefined && !['open', 'closed', 'unknown'].includes(pool.admission as string))) return invalid();
+        (pool.admission !== undefined && (typeof pool.admission !== 'string' || !ADMISSION_STATES.has(pool.admission)))) return invalid();
     // A malformed share must never read as an unpaced pool.
     if (pool.daily !== undefined && !isPoolDayShare(pool.daily)) return invalid();
     pools.set(pool.id, { id: pool.id, floor: pool.floor, ceiling: pool.ceiling,
@@ -146,12 +150,12 @@ export function parseDriveSnapshot(value: unknown): DriveSnapshot {
   const jobs: DriveJob[] = [];
   const ids = new Set<string>();
   for (const job of value.jobs) {
-    if (!object(job) || !id(job.id) || ids.has(job.id) || typeof job.pool !== 'string' || !pools.has(job.pool) ||
+    if (!isDriveRecord(job) || !id(job.id) || ids.has(job.id) || typeof job.pool !== 'string' || !pools.has(job.pool) ||
         !states.has(job.state as DriveJobState) || !Number.isSafeInteger(job.priority) ||
         (job.exitCode !== undefined && !Number.isSafeInteger(job.exitCode)) ||
-        (job.completedAtMs !== undefined && (!Number.isSafeInteger(job.completedAtMs) || (job.completedAtMs as number) < 0 || job.exitCode === undefined || !['FINISHED', 'FAILED', 'PUBLISHED', 'PUBLISHING', 'PUBLISH_UNKNOWN'].includes(job.state as string))) ||
+        (job.completedAtMs !== undefined && (!isNonNegativeSafeInt(job.completedAtMs) || job.exitCode === undefined || !TERMINAL_STATES.has(job.state as string))) ||
         (job.emptyFinish !== undefined && (typeof job.emptyFinish !== 'boolean' || job.completedAtMs === undefined)) ||
-        (job.pool === 'claude-api' && ['FINISHED', 'FAILED', 'PUBLISHED', 'PUBLISHING', 'PUBLISH_UNKNOWN'].includes(job.state as string) &&
+        (job.pool === 'claude-api' && TERMINAL_STATES.has(job.state as string) &&
           (job.completedAtMs === undefined || job.emptyFinish === undefined)) ||
         (job.state === 'FINISHED' && job.exitCode === undefined)) return invalid();
     ids.add(job.id);
@@ -244,7 +248,7 @@ export function pressurePauseOrder(workers: readonly DrivePressureWorker[], valu
   const age = (worker: DrivePressureWorker): number =>
     typeof worker.ageSeconds === 'number' && Number.isFinite(worker.ageSeconds) && worker.ageSeconds >= 0 ? worker.ageSeconds : Number.MAX_SAFE_INTEGER;
   return [...workers]
-    .filter(worker => object(worker) && id(worker.job) && !seen.has(worker.job) && seen.add(worker.job))
+    .filter(worker => isDriveRecord(worker) && id(worker.job) && !seen.has(worker.job) && seen.add(worker.job))
     .sort((a, b) => age(a) - age(b) || valueOf(a.job) - valueOf(b.job) || a.job.localeCompare(b.job))
     .map(worker => worker.job);
 }
@@ -334,7 +338,7 @@ export async function driveTick(deps: DriveDependencies, options: { dryRun?: boo
         const running = new Set(state.jobs.filter(active).map(job => job.id));
         const priority = new Map(state.jobs.map(job => [job.id, job.priority]));
         report.pauseWorkers = pressurePauseOrder(
-          (await liveWorkers(deps)).filter(worker => object(worker) && id(worker.job) && running.has(worker.job)),
+          (await liveWorkers(deps)).filter(worker => isDriveRecord(worker) && id(worker.job) && running.has(worker.job)),
           job => priority.get(job) ?? Number.MAX_SAFE_INTEGER);
       }
     }

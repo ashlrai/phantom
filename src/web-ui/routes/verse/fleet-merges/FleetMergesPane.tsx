@@ -84,8 +84,9 @@ export function FleetMergesPane({ visible, host }: PaneProps) {
     <section aria-label="Backlog"><h3 className={styles.heading}>Backlog</h3>
       {backlog.data?.source === 'gh-failed' ? <p>GitHub read failed: {backlog.data.reason}</p> : backlog.status === 'error' ? <p>GitHub read failed: unavailable</p> : !backlogData ? <p role="status">Reading merge backlog…</p> : <>
         <p>{counts.superseded > 0 ? <>{backlogData.countsLine.replace(`${backlog.data!.counts.mergeState.DIRTY ?? 0} DIRTY`, `${counts.liveDirty} DIRTY`).split(' · ').map((part, index) => <span key={index}>{index > 0 && ' · '}{part}{index === 1 && <> · <span className={styles.ciChip}>{counts.superseded} superseded</span></>}</span>)}</> : backlogData.countsLine}</p>
+        {backlogData.coverageLine && <p role="status">{backlogData.coverageLine}</p>}
         {backlogData.hotFilesLine && <p data-tone={backlogData.danger ? 'danger' : undefined} className={backlogData.danger ? styles.danger : undefined}>{backlogData.hotFilesLine}</p>}
-        {backlogData.rows.length === 0 ? <p>No open fleet PRs</p> : <ul className={styles.list} aria-label="Merge backlog">{backlogData.rows.slice(0, 12).map(row => <li className={styles.row} key={row.number}>
+        {backlogData.rows.length === 0 ? <p>{backlogData.complete ? 'No open fleet PRs' : 'No usable PR rows in this reading'}</p> : <ul className={styles.list} aria-label="Merge backlog">{backlogData.rows.slice(0, 12).map(row => <li className={styles.row} key={row.number}>
           <a href={`https://github.com/${backlog.data!.repo}/pull/${row.number}`} target="_blank" rel="noopener noreferrer">#{row.number}</a>
           {row.job && <JobRefs text={row.job} onOpenJob={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} />}
           <span>· {row.state} {row.ageText} · {row.action}{row.hotFile && ` · ${row.hotFile}`}</span>

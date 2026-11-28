@@ -59,12 +59,33 @@ export interface ModelProfile {
 // Name-pattern vocabulary (kept in sync with provider-client / router)
 // ---------------------------------------------------------------------------
 
-/** Parse a parameter count in billions from a model name ("3b" / "7b" / "72b"). */
-function sizeOf(name: string): number {
+/** Parse a parameter count in billions from a model name ("3b" / "7b" / "72b"), or null when unknown. */
+export function parseModelParamSizeB(name: string): number | null {
   const b = name.match(/(\d+(?:\.\d+)?)\s*b\b/i);
   if (b) return parseFloat(b[1]);
   if (/mini|small|tiny|nano|phi/i.test(name)) return 3; // unlabeled small models
-  return -1; // unknown size
+  return null;
+}
+
+/**
+ * Pick the smallest/fastest local chat model from `models` (skipping
+ * embedding-only models, slight bias toward coder models among equal sizes).
+ * Returns 'default' for an empty list.
+ */
+export function pickBestLocalModel(models: readonly string[]): string {
+  if (models.length === 0) return 'default';
+  const isEmbed = (m: string) => /embed|bge|e5|nomic/i.test(m);
+  const pool = models.filter((m) => !isEmbed(m));
+  const ranked = (pool.length ? pool : models).slice();
+  const score = (m: string): number =>
+    (parseModelParamSizeB(m) ?? 999) - (/coder|code/i.test(m) ? 0.5 : 0);
+  ranked.sort((a, b) => score(a) - score(b));
+  return ranked[0];
+}
+
+/** Parse a parameter count in billions from a model name ("3b" / "7b" / "72b"). */
+function sizeOf(name: string): number {
+  return parseModelParamSizeB(name) ?? -1;
 }
 
 /** Coder/code-specialized models that reward richer engineering discipline. */
@@ -143,7 +164,7 @@ const CODER: ModelProfile = {
 };
 
 /** Fallback when the model name is unknown — behaves like GENERAL. */
-export const DEFAULT_PROFILE: ModelProfile = { ...GENERAL, id: 'default' };
+const DEFAULT_PROFILE: ModelProfile = { ...GENERAL, id: 'default' };
 
 // ---------------------------------------------------------------------------
 // Resolution

@@ -71,7 +71,10 @@ async function scanEvents(path: string, tally: ReturnType<typeof stuckEventTally
   for await (const line of lines) tally.add(line);
 }
 
-export async function readStuckQueue(root = join(homedir(), '.ashlr-runs'), now = Date.now()): Promise<StuckQueue> {
+export async function readStuckQueue(
+  root = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'),
+  now = Date.now(),
+): Promise<StuckQueue> {
   const queue = await readFile(join(root, 'queue', 'router-queue.md'), 'utf8');
   const tally = stuckEventTally(now);
   let eventsAvailable = true;

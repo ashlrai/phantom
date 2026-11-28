@@ -1,6 +1,8 @@
 import { parse } from 'smol-toml';
 import { isMap, isScalar, isSeq, LineCounter, parseDocument } from 'yaml';
 import { nameWithOwnerFromRemote } from '../../fleet/repo-identity.js';
+import { lineOfIndex } from './facts.js';
+import { isPlainRecord } from './store.js';
 
 export type Anchor = { commit: string; file: string; line: number };
 export type Declaration = {
@@ -9,8 +11,7 @@ export type Declaration = {
   anchor: Anchor;
 };
 
-const record = (value: unknown): Record<string, unknown> =>
-  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+const record = (value: unknown): Record<string, unknown> => (isPlainRecord(value) ? value : {});
 const named = (value: unknown) => typeof value === 'string' && /^[a-z0-9][a-z0-9_.-]*$/i.test(value) ? value : null;
 const cargo = (name: string) => 'cargo:' + name.toLowerCase();
 const python = (name: string) => 'python:' + name.toLowerCase().replace(/[-_.]+/g, '-');
@@ -21,7 +22,6 @@ const githubSource = (value: unknown) => {
   const repo = match ? nameWithOwnerFromRemote('https://github.com/' + match[1]) : nameWithOwnerFromRemote(value);
   return repo ? github(repo) : null;
 };
-const lineOf = (source: string, offset: number) => source.slice(0, offset).split('\n').length;
 const tomlDependencySections = ['dependencies', 'dev-dependencies', 'build-dependencies'] as const;
 
 export function ecosystemDeclarations(repo: string, commit: string, contents: ReadonlyMap<string, string>) {
@@ -66,7 +66,7 @@ export function ecosystemDeclarations(repo: string, commit: string, contents: Re
               const name = /^([\w.-]+)(?=\s|[<>=!~;[@]|$)/.exec(spec)?.[1];
               if (!token[0].startsWith('#') && name && deps.has(spec)) {
                 const direct = /^\S+\s*@\s*(\S+)/.exec(spec)?.[1];
-                add('python-dependency', direct ? githubSource(direct) : python(name), lineOf(source, offset + token.index));
+                add('python-dependency', direct ? githubSource(direct) : python(name), lineOfIndex(source, offset + token.index));
               }
             }
           }
@@ -101,7 +101,7 @@ export function ecosystemDeclarations(repo: string, commit: string, contents: Re
       }
     } else {
       for (const match of source.matchAll(/^[ \t]*(?:url|head)\s+["'](https:\/\/github\.com\/[^"']+)["']/gm)) {
-        add('brew-formula', githubSource(match[1]), lineOf(source, match.index));
+        add('brew-formula', githubSource(match[1]), lineOfIndex(source, match.index));
       }
     }
   }

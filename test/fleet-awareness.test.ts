@@ -33,7 +33,7 @@ test('pool dispatch prefers measured free slots and shares one host budget acros
   f.add('mbp-w1', { hostId: 'mbp', slots: 3 }); f.add('mbp-w2', { hostId: 'mbp', slots: 3 });
   f.add('air', { slots: 1 }); f.add('held', { slots: 0, held: 'memory-pressure' });
   for (let i = 0; i < 6; i++) f.enqueue(`j${i}`);
-  expect(f.plan().map(r => r.nodeId)).toEqual(['mbp-w1', 'mbp-w1', 'air', 'mbp-w1', null, null]);
+  expect(f.plan().map(r => r.nodeId)).toEqual(['mbp-w1', 'mbp-w2', 'air', 'mbp-w1', null, null]);
   const node = f.state.nodes[0]!;
   expect(f.run('pull', ['--node', node.nodeId, '--session', String(node.session)]).pulled).toBe(true);
   const report = projectFleetAwareness(f.state, f.now(), { schema: 'dispatchd.status.v1', last_tick: new Date(f.now()).toISOString(), paused: null,
@@ -42,6 +42,11 @@ test('pool dispatch prefers measured free slots and shares one host budget acros
   expect(report.lanes[0]).toMatchObject({ running: 2, target: 5, effectiveTarget: 4, floor: 1, queued: 6, available: 2 });
   expect(report.queue).toEqual({ nodePending: 5, laneQueued: 6 });
   expect(f.plan().filter(r => r.nodeId)).toHaveLength(3);
+  expect(f.plan()[0]).toMatchObject({ nodeId: 'mbp-w2', jobId: 'j1' });
+  const sibling = f.state.nodes.find(n => n.nodeId === 'mbp-w2')!;
+  expect(f.run('pull', ['--node', sibling.nodeId, '--session', String(sibling.session)])).toMatchObject({
+    pulled: true, job: { id: 'j1' },
+  });
 });
 
 test('unknown, stale, future and expired reports never become pool capacity; exact two-interval boundary is fresh', () => {
@@ -56,6 +61,28 @@ test('unknown, stale, future and expired reports never become pool capacity; exa
   const legacy = fixture(); legacy.run('join', ['--node', 'legacy', '--slots', '64']); legacy.enqueue();
   expect(legacy.plan()[0]?.nodeId).toBeNull();
   expect(projectFleetAwareness(legacy.state, legacy.now()).hosts[0]?.freeSlots).toBeNull();
+});
+
+test('late capacity reports cannot undo a host hold or hide its recovery', () => {
+  const f = fixture();
+  const worker = f.add('worker', { slots: 2 });
+  f.enqueue();
+  f.advance(1000);
+  f.beat('worker', { slots: 0, held: 'memory-pressure' });
+  f.advance(1000);
+  f.run('beat', ['--node', worker.nodeId, '--session', String(worker.session), '--slots', '2',
+    '--capacity', JSON.stringify({ ...worker.capacity, sampledAtMs: f.now() - 2000, held: null, slots: 2 })]);
+  expect(worker.heartbeatAt).toBe(f.now());
+  expect(worker.slots).toBe(0);
+  expect(f.plan()[0]?.nodeId).toBeNull();
+  const pull = () => f.run('pull', ['--node', worker.nodeId, '--session', String(worker.session)]);
+  expect(pull().pulled).toBe(false);
+
+  f.beat('worker', { slots: 2 });
+  f.beat('worker', { sampledAtMs: f.now() - 1000, slots: 0, held: 'memory-pressure' });
+  f.beat('worker', { sampledAtMs: f.now() + 1, slots: 0, held: 'disk-pressure' });
+  expect(projectFleetAwareness(f.state, f.now()).hosts[0]).toMatchObject({ freeSlots: 2, held: null });
+  expect(pull().pulled).toBe(true);
 });
 
 test.each([
@@ -89,6 +116,23 @@ test('a fresh lane hold establishes zero availability with missing counts', () =
   expect(open).toMatchObject({ running: null, target: null, available: null });
   expect(projectFleetAwareness(null, now + 60_001, status).lanes[0]?.available).toBeNull();
   expect(projectFleetAwareness(null, now - 1, status).lanes[0]?.available).toBeNull();
+});
+
+test.each([
+  { admit: true, decision: 'stop' },
+  { admit: false, decision: 'admit' },
+  { admit: 'false', decision: 'stop' },
+  { admit: false, decision: null },
+])('fleet availability ignores a malformed embedded admission record (%j)', verdict => {
+  const now = 100_000;
+  const lastTick = new Date(now).toISOString();
+  const status = {
+    schema: 'dispatchd.status.v1', last_tick: lastTick, paused: null,
+    lanes: { codex: { running: 1, target: 4, held: false } },
+    admission: { ts: lastTick, cap: 2, running: 2, ...verdict },
+  };
+  expect(projectFleetAwareness(null, now, status).lanes[0]?.available).toBe(3);
+  expect(projectFleetAwareness(null, now, { ...status, paused: true }).lanes[0]?.available).toBe(0);
 });
 
 test('a claim fenced by a rejoined session frees its host slots at once', () => {
@@ -127,6 +171,21 @@ test('accepted witness boundaries weight observed latency and discard expired or
   expect(projectFleetAwareness(f.state, f.now()).hosts.map(h => h.latency.medianMs)).toEqual([4000, 1000]);
   delete f.state.jobs[1]!.startedAt; expect(projectFleetAwareness(f.state, f.now()).hosts[1]!.latency.medianMs).toBeNull();
   f.advance(86_400_001); expect(projectFleetAwareness(f.state, f.now()).hosts.every(h => h.latency.samples === 0)).toBe(true);
+});
+
+test('legacy completions without a recorded execution host do not affect host ranking', () => {
+  const f = fixture();
+  const worker = f.add('a-worker', { hostId: 'old-mac', slots: 1 });
+  const nodes = new DriveNodes(f.store, { now: f.now });
+  f.enqueue('legacy');
+  const { claim } = nodes.pull(worker)!;
+  f.advance(1000);
+  expect(nodes.complete(claim, 'result:legacy')).toBe(true);
+  delete f.state.jobs[0]!.executionHostId;
+  expect(nodes.leave(worker)).toBe(true);
+  f.add('a-worker', { hostId: 'new-mac', slots: 1 });
+  expect(projectFleetAwareness(f.state, f.now()).hosts[0]?.latency)
+    .toMatchObject({ samples: 0, medianMs: null });
 });
 
 test('a producer withdrawal is a fence, not latency evidence; accepted completions still count', () => {

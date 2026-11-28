@@ -10,8 +10,9 @@
  * they match a conservative model-name charset.
  */
 import { parseLocalInferenceConfig, type LocalInferenceProvider, type LocalInferenceRole } from './local-inference.js';
+import { isRecord } from './tool-calls.js';
 
-export const LOCAL_INFERENCE_PROBE_TIMEOUT_MS = 3_000;
+const LOCAL_INFERENCE_PROBE_TIMEOUT_MS = 3_000;
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_MODELS = 20;
 const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$/;
@@ -48,7 +49,7 @@ function base(status: LocalInferenceProbeStatus, provider: LocalInferenceProvide
  * Stream the body and stop as soon as it passes `max` bytes, so a huge or
  * endless reply never buffers past the cap. Null when over the cap or unreadable.
  */
-export async function readCappedBody(res: Response, max: number, controller?: AbortController): Promise<string | null> {
+async function readCappedBody(res: Response, max: number, controller?: AbortController): Promise<string | null> {
   const declared = Number(res.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > max) { await res.body?.cancel().catch(() => {}); controller?.abort(); return null; }
   if (!res.body) return '';
@@ -67,15 +68,13 @@ export async function readCappedBody(res: Response, max: number, controller?: Ab
 
 /** Pure. Model ids from an OpenAI `{data:[{id}]}` or Ollama `{models:[{name}]}` body. */
 export function modelIdsFromBody(body: unknown): string[] | null {
-  if (!body || typeof body !== 'object') return null;
-  const b = body as Record<string, unknown>;
-  const list = Array.isArray(b['data']) ? b['data'] : Array.isArray(b['models']) ? b['models'] : null;
+  if (!isRecord(body)) return null;
+  const list = Array.isArray(body['data']) ? body['data'] : Array.isArray(body['models']) ? body['models'] : null;
   if (!list) return null;
   const ids: string[] = [];
   for (const m of list) {
-    if (!m || typeof m !== 'object') continue;
-    const r = m as Record<string, unknown>;
-    const id = typeof r['id'] === 'string' ? r['id'] : typeof r['name'] === 'string' ? r['name'] : null;
+    if (!isRecord(m)) continue;
+    const id = typeof m['id'] === 'string' ? m['id'] : typeof m['name'] === 'string' ? m['name'] : null;
     if (id) ids.push(id);
   }
   return ids;

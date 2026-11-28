@@ -10,16 +10,20 @@ export interface PendingProposalBlockingOptions {
   now?: Date | number | string;
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
+export function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
 }
 
-function positiveInt(value: unknown, fallback: number): number {
+export function positiveIntOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
     ? Math.max(1, Math.floor(value))
-    : fallback;
+    : null;
+}
+
+export function positiveInt(value: unknown, fallback: number): number {
+  return positiveIntOrNull(value) ?? fallback;
 }
 
 export function productionVelocityRaw(cfg: AshlrConfig): ProductionVelocityRaw {

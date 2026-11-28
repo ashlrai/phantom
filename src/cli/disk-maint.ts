@@ -20,10 +20,11 @@ import { isAbsolute } from 'node:path';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 import {
   ALL_CLASSES, GATED_CLASSES, planDiskMaint,
-  resolveMaintRoots, type DiskMaintPlan, type MaintClassId, type MaintDeps, type MaintPolicy,
-  type MaintRoots,
+  type DiskMaintPlan, type MaintClassId, type MaintDeps, type MaintPolicy,
 } from '../core/disk-maint/plan.js';
 import { applyDiskMaint, type ApplyDeps } from '../core/disk-maint/apply.js';
+import { resolveMaintRoots, type MaintRoots } from '../core/disk-maint/protect.js';
+import { bytesToGb } from '../core/disk-maint/removal-plan.js';
 import { diskMaintSchedule } from '../core/disk-maint/schedule.js';
 import { isWorktreeJobId } from '../core/disk-maint/worktrees.js';
 import { installScheduleUnits } from './steward.js';
@@ -46,7 +47,7 @@ export interface DiskMaintCliDeps extends ApplyDeps {
   deadlineMs?: number;
 }
 
-const gb = (bytes: number): string => `${Math.round((bytes / 1e9) * 10) / 10} GB`;
+const gb = (bytes: number): string => `${bytesToGb(bytes)} GB`;
 
 function schedule(argv: string[], deps: DiskMaintCliDeps): number {
   const out = deps.output ?? { log: console.log, error: console.error };

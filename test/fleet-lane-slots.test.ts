@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { STALE_STANDING_TICK_REASON } from '../src/core/fleet/fleet-types.js';
 const read = vi.hoisted(() => vi.fn());
 vi.mock('../src/core/verse/fleet-live-api.js', () => ({ buildFleetLiveSnapshot: read }));
 import { cmdFleetLaneSlots } from '../src/cli/fleet-lane-slots.js';
@@ -7,7 +8,7 @@ afterEach(() => vi.restoreAllMocks());
 it('prints the API lane slots in JSON and unknown for expired observations', async () => {
   read.mockResolvedValue({ snapshot: { lanes: [
     { lane: 'local', slots: 4, busy: 1, capReason: null },
-    { lane: 'codex', slots: 0, busy: 2, capReason: 'No standing tick has reported lanes in the last 10 minutes.' },
+    { lane: 'codex', slots: 0, busy: 2, capReason: STALE_STANDING_TICK_REASON },
   ] } });
   const output = vi.spyOn(console, 'log').mockImplementation(() => undefined);
   expect(await cmdFleetLaneSlots(['--json'])).toBe(0);

@@ -20,9 +20,14 @@
  *     non-file journal skips the whole pass rather than risk appending
  *     duplicate verdict rows. 'missing' is a clean empty ledger.
  *   - VERDICT CHANGE APPENDS. A PR gets a new outcome row when it is
- *     first seen or its revert verdict flips ('unknown' -> 'yes' when
- *     the revert ledger recovers counts); an unchanged verdict appends
- *     nothing, so steady state costs one scan row per pass.
+ *     first seen or its recorded evidence changes — the revert verdict
+ *     flipping ('unknown' -> 'yes' when the revert ledger recovers
+ *     counts), or the merge's open timestamp / review evidence / CI
+ *     verdict / recorded diff size changing as gh reports them (a
+ *     review landing after merge, a bounded CI read arriving late, or
+ *     a row journaled before the fields existed being rewritten once).
+ *     An unchanged evidence tuple appends nothing, so steady state
+ *     costs one scan row per pass.
  *   - SCAN ROW IS THE RECEIPT. Every pass that got a real gh read
  *     (sourceState 'healthy' or 'degraded') appends one
  *     fleet.outside-pr-scan.v1 row recording source state, window and
@@ -42,6 +47,7 @@ import {
   type ListOutsidePrOutcomesOptions,
   type OutsidePrOutcomeV1,
   type OutsidePrOutcomesV1,
+  type OutsidePrReviewEvidence,
 } from './outside-pr-outcomes.js';
 import {
   OUTSIDE_PR_OUTCOME_SCHEMA,
@@ -91,8 +97,31 @@ function skipped(
   return { state, journalPath, sourceState, appended: 0, scanAppended: false, seen: 0, truncated: false };
 }
 
-function outcomeJournalRow(at: string, repo: string, pr: OutsidePrOutcomeV1): string {
-  const row: OutsidePrOutcomeJournalRow = {
+/**
+ * The mutable evidence one outcome row records, as the dedup compares it:
+ * the revert verdict plus the merge's open timestamp, review evidence, CI
+ * verdict and recorded diff size. gh's fields are frozen at merge except
+ * reviews (a review can land after merge), ci (the bounded per-PR rollup
+ * read can fail or arrive after the row was first journaled) and diff
+ * (a row journaled before the fields existed gets its first recorded
+ * triple once), so any change here is a real evidence change worth a new
+ * row — last-line-wins keeps the newest.
+ */
+function outcomeEvidence(row: {
+  reverted: OutsidePrOutcomeJournalRow['reverted'];
+  createdAt: string | null;
+  reviews: OutsidePrReviewEvidence | null;
+  ci: OutsidePrOutcomeJournalRow['ci'];
+  diff: OutsidePrOutcomeJournalRow['diff'];
+}): string {
+  return JSON.stringify([
+    row.reverted, row.createdAt, row.reviews?.decision ?? null, row.reviews?.latest ?? null, row.ci ?? null,
+    row.diff === null ? null : [row.diff.additions, row.diff.deletions, row.diff.changedFiles],
+  ]);
+}
+
+function outcomeJournalRow(at: string, repo: string, pr: OutsidePrOutcomeV1): OutsidePrOutcomeJournalRow {
+  return {
     v: 1,
     kind: OUTSIDE_PR_OUTCOME_SCHEMA,
     at,
@@ -106,9 +135,12 @@ function outcomeJournalRow(at: string, repo: string, pr: OutsidePrOutcomeV1): st
     agent: pr.agent,
     model: null,
     mergedAt: pr.mergedAt,
+    createdAt: pr.createdAt,
+    reviews: pr.reviews,
+    ci: pr.ci,
+    diff: pr.diff,
     reverted: pr.reverted,
   };
-  return JSON.stringify(row);
 }
 
 function scanJournalRow(at: string, outcomes: OutsidePrOutcomesV1): string {
@@ -167,12 +199,19 @@ export async function syncOutsidePrOutcomes(
     const at = (listOpts.now ?? (() => new Date()))().toISOString();
     const lines: string[] = [];
     let appended = 0;
+    // Newest journaled row per PR: the dedup compares the full recorded
+    // evidence (verdict + open stamp + review/CI/diff evidence), so a
+    // review landing after merge, a late CI read or a pre-fields row
+    // being rewritten appends once, then goes quiet.
+    const latestByKey = new Map(parsed.outcomes.map((row) => [outsidePrJournalKey(row.repo, row.number), row]));
     for (const repo of outcomes.repos) {
       for (const pr of repo.prs) {
         const key = outsidePrJournalKey(repo.repo, pr.number);
-        if (parsed.verdicts.get(key) === pr.reverted) continue;
-        parsed.verdicts.set(key, pr.reverted);
-        lines.push(outcomeJournalRow(at, repo.repo, pr));
+        const row = outcomeJournalRow(at, repo.repo, pr);
+        const prev = latestByKey.get(key);
+        if (prev !== undefined && outcomeEvidence(prev) === outcomeEvidence(row)) continue;
+        latestByKey.set(key, row);
+        lines.push(JSON.stringify(row));
         appended += 1;
       }
     }
@@ -182,7 +221,9 @@ export async function syncOutsidePrOutcomes(
     await appendFile(journalPath, `${lines.join('\n')}\n`, { mode: 0o600 });
     return {
       state: read.state, journalPath, sourceState,
-      appended, scanAppended: true, seen: parsed.verdicts.size, truncated,
+      // seen = distinct PRs known after this pass: the journaled keys plus
+      // any first-seen ones (evidence-changed keys were already counted).
+      appended, scanAppended: true, seen: latestByKey.size, truncated,
     };
   } catch {
     return skipped('error', journalPath);

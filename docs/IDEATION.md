@@ -87,5 +87,10 @@ missing observations or failed attempts remain unresolved. Win rate is
 `merged / (merged + died)`, null without resolved evidence. Prepared but not yet
 queued proposals stay unresolved. Thirty-day eval-report durability aggregates
 accompany this metric; merging alone never proves stability or product value.
+The same jobs-ledger fold also feeds the self-improvement backlog:
+`ideationOutcomeBacklogItems` (src/core/improve/ideation-outcome-backlog.ts)
+emits a discover item only while died proposals recur inside a 7-day window
+and outnumber merged ones, so a persistently adverse proposal mix becomes
+work instead of living only inside the next prompt.
 
-Hermetic coverage: `npm run test:ci -- test/ideation.test.ts test/research-proposals.test.ts test/fleet-research-digest.test.ts`.
+Hermetic coverage: `npm run test:ci -- test/ideation.test.ts test/research-proposals.test.ts test/fleet-research-digest.test.ts test/improve-ideation-outcome-backlog.test.ts`.

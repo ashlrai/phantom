@@ -44,12 +44,37 @@ moves that boundary.
 The installed app polls the endpoint every 15 minutes and rechecks after wake
 when the polling gap exceeded 30 seconds. Downloads are verified against the
 feed's minisign signature in the background; concurrent checks coalesce.
-Publication alone never installs anything: automatic installation additionally
-requires an idle app, authority Stop, zero leases, a normal Quit and an
-unchanged active grant. The updater never relaunches the app, never stops
-work and never clears Stop. See
+Publication alone never installs anything. The updater can stage and verify the
+signed app and CLI while work runs, but adoption requires authority Stop and a
+fresh census with zero active or unknown execution leases. A normal Quit can
+offer the handoff; with automatic updates enabled, the native app can also
+quit after the host acknowledges that exact handoff. The host then waits for
+the verified native process to exit and rechecks the admission conditions
+before switching the app or managed CLI. After switching, the transaction
+launches the native app and checks health. It may stop the already-drained
+resident service, but never restarts it, resumes fleet authority, or clears
+Stop. A mismatched active authority surface cannot authorize a fleet resume.
+This is a staged, idle update, not an in-flight session migration. See
 [the signed idle update flow](../desktop/README.md#signed-idle-updates) and
 `src/core/desktop/qualified-update.ts`.
+
+### Acceptance criteria for a future live UI-only upgrade
+
+Before permitting an update with work in flight, demonstrate with a signed
+candidate and an isolated test fleet that:
+
+- The resident runtime, running worker, and PTY owner outlive the UI process.
+  If bundled Verse owns a turn or a PTY and cannot transfer it without
+  interruption, the upgrade waits rather than terminating it.
+- With a resident job, streamed Verse turn, and PTY command all active, the
+  replacement UI reconnects to the same session, lease owner and fencing token,
+  and resumes from the last acknowledged output cursor without gaps or duplicate
+  application of replayed events. Terminal I/O continues without restarting the
+  shell or replaying input.
+- An interrupted handoff or failed health check safely restores the prior UI
+  without duplicating tool calls, queue claims, or external effects. If the
+  runtime identity, lease, or reattachment proof is unknown, leave the update
+  staged and keep the current UI and authority unchanged.
 
 ## Published-state verification (release-autorun rev2)
 

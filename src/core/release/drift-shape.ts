@@ -5,9 +5,9 @@
  * not have yet. A fact the reader could not read is the string "unknown";
  * nothing is inferred or guessed.
  */
+import { UNKNOWN, asReleaseRecord, releaseCount, type Unknown } from './cadence.js';
+
 export const SELF_DRIFT_SCHEMA = 'phantom.self-drift.v1';
-export const UNKNOWN = 'unknown';
-export type Unknown = typeof UNKNOWN;
 
 /**
  * Fleet capabilities and the installed-CLI help that proves each one exists.
@@ -55,24 +55,22 @@ export interface SelfDriftV1 {
   line: string;
 }
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
-
 /** "Up to date", or "N releases behind, M fleet features not live yet"; unknown parts say unknown. */
 export function driftLine(drift: Pick<SelfDriftV1, 'behindReleases' | 'missingFeatures' | 'unknownFeatures'>): string {
   const missing = drift.missingFeatures.length, unknown = drift.unknownFeatures.length;
-  const tail = unknown ? `; ${plural(unknown, 'feature')} unknown` : '';
+  const tail = unknown ? `; ${releaseCount(unknown, 'feature')} unknown` : '';
   if (drift.behindReleases === 0 && missing === 0) return `Up to date${tail}`;
-  const releases = drift.behindReleases === UNKNOWN ? 'releases behind unknown' : `${plural(drift.behindReleases, 'release')} behind`;
+  const releases = drift.behindReleases === UNKNOWN ? 'releases behind unknown' : `${releaseCount(drift.behindReleases, 'release')} behind`;
   return `${releases}, ${missing} fleet ${missing === 1 ? 'feature' : 'features'} not live yet${tail}`;
 }
 
 /** Narrow an untrusted response (web client) to the typed shape, or null. */
 export function narrowSelfDrift(raw: unknown): SelfDriftV1 | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const row = raw as Partial<SelfDriftV1>;
+  const row = asReleaseRecord(raw) as Partial<SelfDriftV1> | null;
+  if (!row) return null;
   const names = (v: unknown) => Array.isArray(v) && v.every(item => typeof item === 'string');
   return row.schema === SELF_DRIFT_SCHEMA && row.version === 1 && typeof row.line === 'string'
     && (row.behindReleases === UNKNOWN || Number.isSafeInteger(row.behindReleases))
     && names(row.liveFeatures) && names(row.missingFeatures) && names(row.unknownFeatures)
-    ? raw as SelfDriftV1 : null;
+    ? row as SelfDriftV1 : null;
 }

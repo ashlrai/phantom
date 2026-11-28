@@ -28,7 +28,7 @@ export type FleetKeptReader = (path: string) => Promise<string>;
 
 const USAGE = `Usage: ashlr fleet kept [--json]
 Why worktrees were kept: one line per reason (abort_push, abort_pr, empty, other, unknown) with its count and the ${FLEET_KEPT_OLDEST} oldest job ids. Read-only.
-Reads kept_worktrees from ~/.ashlr-runs/queue/status.json and the last ${FLEET_ABORTS_TAIL_LINES} lines of ~/.ashlr-runs/metrics/jobs.jsonl. A job with no row that has a class is unknown.`;
+Reads kept_worktrees from queue/status.json and the last ${FLEET_ABORTS_TAIL_LINES} lines of metrics/jobs.jsonl under ASHLR_RUNS_DIR (default ~/.ashlr-runs). A job with no row that has a class is unknown.`;
 const UNREADABLE = 'Queue status or jobs ledger is unreadable.';
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
@@ -94,8 +94,9 @@ export async function cmdFleetKept(
   }
   const json = args[0] === '--json';
   try {
-    const kept = parseKeptWorktrees(await readStatus(join(homedir(), '.ashlr-runs', 'queue', 'status.json')));
-    const report = summarizeFleetKept(kept, await readJobs(join(homedir(), '.ashlr-runs', 'metrics', 'jobs.jsonl')));
+    const runsDir = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+    const kept = parseKeptWorktrees(await readStatus(join(runsDir, 'queue', 'status.json')));
+    const report = summarizeFleetKept(kept, await readJobs(join(runsDir, 'metrics', 'jobs.jsonl')));
     if (json) console.log(JSON.stringify(report));
     else if (report.reasons.length === 0) console.log('No kept worktrees.');
     else for (const g of report.reasons) console.log(`${g.reason} ${g.count} ${g.oldest.join(' ')}`);

@@ -17,6 +17,19 @@ function setup(classification = 'probable-flake') {
 }
 
 describe('resident CI reruns', () => {
+  it.each([true, false])('preserves rerun deduplication only for a complete receipt at the tail cutoff (complete: %s)', async (complete) => {
+    const { opts, gh } = setup();
+    const attempt = { at: new Date(opts.now!()).toISOString(), repo: 'org/repo', head: 'a'.repeat(40), runId: 123, pr: 1, outcome: 'attempt' };
+    const tail = `${JSON.stringify(attempt)}\n`;
+    const padding = ' '.repeat(4 * 1024 * 1024 - Buffer.byteLength(tail));
+    writeFileSync(opts.journalPath!, `\n${complete ? '\n' : 'x'}${tail}${padding}`);
+
+    expect(readCiReruns(opts.journalPath!, opts.now!()).counts.attempted).toBe(complete ? 1 : 0);
+    const status = await runCiRerunMaintenance(opts);
+    expect(status.repos['org/repo']?.skippedDuplicate).toBe(complete ? 1 : 0);
+    expect(gh).toHaveBeenCalledTimes(complete ? 0 : 1);
+  });
+
   it('journals before rerunning and deduplicates by workflow run even when the reported head changes', async () => {
     const { opts, gh, report } = setup();
     gh.mockImplementation(async () => {
@@ -150,6 +163,29 @@ describe('resident CI reruns', () => {
     expect(status.repos[report.repo]).toMatchObject({ recurringFlakes: 0, flakeFixesQueued: 0 });
   });
 
+  it.each([
+    ['matching singleton aliases', ['test/a.test.ts > a'], 1],
+    ['conflicting singleton aliases', ['test/b.test.ts > b'], 0],
+    ['singleton and multiple tests', ['test/a.test.ts > a', 'test/b.test.ts > b'], 0],
+    ['partially invalid array', ['test/a.test.ts > a', null], 0],
+    ['malformed array field', 'test/a.test.ts > a', 0],
+  ] as const)('attributes recurrence with %s only when the test identity agrees', async (_case, tests, expected) => {
+    const { opts, report } = setup();
+    const test = 'test/a.test.ts > a';
+    const rows = ['a', 'b', 'c'].map((head, i) => ({
+      at: '2026-01-01T11:30:00Z', repo: report.repo, head: head.repeat(40),
+      runId: 123 + i, pr: i + 1, outcome: 'attempt', test,
+      ...(i === 0 ? { tests } : {}),
+    }));
+    appendFileSync(opts.journalPath!, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+    const read = readCiReruns(opts.journalPath!, opts.now!());
+    expect(read.counts.attempted).toBe(3);
+    expect(read.recurringFlakes.map(flake => flake.test)).toEqual(expected ? [test] : []);
+    report.groups[0]!.runs = [];
+    const status = await runCiRerunMaintenance(opts);
+    expect(status.repos[report.repo]).toMatchObject({ recurringFlakes: expected, flakeFixesQueued: expected });
+  });
+
   it('records a workflow-only verdict when the attempt belongs to a different head', async () => {
     const { opts, gh } = setup();
     await runCiRerunMaintenance(opts);
@@ -265,9 +301,11 @@ describe('resident CI reruns', () => {
     };
     const failed = { ...first, runId: 124, outcome: 'failed' };
     const conflict = { ...first, runId: 125 };
+    const headConflict = { ...first, runId: 126 };
     const rows = [
       first, { ...first, at: '2026-01-01T11:59:00Z' },
       failed, failed, conflict, { ...conflict, outcome: 'failed' },
+      headConflict, { ...headConflict, repo: 'Org/Repo', head: 'b'.repeat(40) },
       { ...first, outcome: 'failed', at: '2026-01-01T12:01:00Z' },
     ];
     appendFileSync(opts.journalPath!, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
@@ -283,11 +321,12 @@ describe('resident CI reruns', () => {
     expect(readCiReruns(opts.journalPath!, Date.parse('2026-01-01T12:01:00Z')).verdicts.pending).toBe(0);
   });
 
-  it('keeps a future verdict out of the report until its timestamp without polling again', async () => {
+  it.each([false, true])('withholds duplicate polling for a future verdict (different head: %s)', async differentHead => {
     const { opts, gh, report } = setup();
     await runCiRerunMaintenance(opts);
     appendFileSync(opts.journalPath!, JSON.stringify({
       ...report.groups[0]!.runs[0]!, repo: 'org/repo', at: '2026-01-01T12:11:00Z',
+      ...(differentHead ? { head: 'b'.repeat(40) } : {}),
       outcome: 'verdict', verdict: 'pass',
     }) + '\n');
     opts.now = () => Date.parse('2026-01-01T12:10:00Z');

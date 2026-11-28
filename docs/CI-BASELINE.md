@@ -5,8 +5,33 @@ Run `phm ci baseline --json` to inspect open PRs in ashlrai/phantom. Use
 read-only: it does not rerun jobs, change tests, merge PRs, or update branches.
 
 The version 1 JSON report contains failure groups, per-PR freshness, master
-evidence, unknown reasons, and proposed update-branch commands. Latest workflow
-runs are checked against the current head and full checkout SHA in job logs.
+evidence, unknown reasons, and proposed update-branch commands.
+
+An additive `repairShadow` object is a deterministic advisory sample for offline
+repair-routing evaluation. Its first supported class, `refresh-generated-docs`,
+covers two exact generated-doc assertions on Phantom. It needs verified master
+failure and at least two unaffected PRs on distinct exact heads per assertion.
+It groups overlapping PRs once and returns at most eight example heads, without
+logs, excerpts, or free-form text. It is not a queue entry, authorization, or a
+command to run a model.
+
+Latest workflow runs are checked against the current head and full checkout SHA in job logs.
+Master evidence queries GitHub Actions by both branch and current commit SHA,
+so a newer run on another branch at the same commit cannot replace a master run.
+Runs of workflows that automate releases and operations rather than check the
+ref's code (`release-please`, `release-prep`, `auto-tag`, `release-train`,
+`full-suite-fixforward`, `ecosystem-stats`, `attest-ci-build` and
+`publish-canonical-npm`, matched by workflow file basename) are not master
+check evidence: they land on nearly every tip through push, schedule and
+workflow_run triggers, their jobs check out unpinned refs that can never
+satisfy the head-proof rule, and none of them prints a failure shape the
+parsers recognize — a red run there is release-pipeline evidence carried by
+its own ledgers, not a `shared-baseline` group. Counting them would mark
+every open PR unknown on every tip and leave probable-flake and
+update-branch readiness unreachable. The exclusion is deliberately narrow:
+a workflow that can print a recognized failure — or one the list has never
+seen — still counts, so an unrecognized automation workflow fails toward
+unknown, never toward clean.
 A job proves its checkout one of three ways: echoing `git log -1
 --format=%H` followed by the head SHA; printing the `Bound candidate <sha>
 to event tree|merge ...` receipt `.github/scripts/ci-source-binding.mjs`
@@ -15,10 +40,15 @@ or, for gate jobs that never run the binding script (secret-shape, quick,
 clean-tree, authority-drift, fast-gate, secret-scan and the whole
 dependency-audit job), recording `actions/checkout` steps whose resolved
 `with: ref:` input is the analyzed head in every checkout group of the log.
-The bound revision or checkout ref must equal the analyzed head exactly; an
+Every Git SHA echo and source-binding receipt in the same job log must
+identify the analyzed head, even when both forms of proof appear together.
+A later conflicting receipt invalidates earlier matching proof. For jobs
+using checkout ref echoes as proof, the ref must equal the analyzed head exactly. An
 unpinned checkout (which falls back to the event's merge commit on pull
 requests), a non-SHA ref or a second checkout of anything else leaves the
-job unverifiable. Jobs that never check out the workspace (aggregators such
+job unverifiable. A log with a checkout step and no valid head proof keeps
+freshness unknown even when it contains no recognizable failure or test pass.
+Jobs that never check out the workspace (aggregators such
 as Merge Gate) cannot emit any proof; their logs are dropped from evidence
 only when they carry no parseable failure or per-test pass output. The
 default reporter's green-module pass lines are expected from checkout jobs
@@ -34,12 +64,19 @@ and master's known state drops while the run's verified job logs still
 feed failure parsing. If an incomplete job's log is unavailable, the
 analyzer retains verified sibling logs. These same conclusions on the
 workflow run itself mark it incomplete even when every listed job reached
-a verdict. Verified master failures still contribute evidence. A missing log for a job that
-reached a verdict still makes the run's logs unusable. `skipped` and `neutral` conclusions are
+a verdict. Verified master failures still contribute evidence. Master jobs
+that conclude `success` can supply pass evidence and are excluded from
+failure parsing because their logs can include failed attempts before the
+final pass. A missing log for a job that reached a verdict still makes the
+run's logs unusable. `skipped` and `neutral` conclusions are
 deliberate non-verdicts. A workflow whose conclusion is `failure` is also
 incomplete when it lists no failed job, including when it lists no jobs
 at all. A passing job in such a workflow cannot supply master pass
 evidence for a flake rerun.
+A head-verified master job that concludes `failure` without a recognized
+failure also makes master evidence incomplete. Recognized failures from
+sibling jobs still count. Passing siblings cannot establish that a failed
+PR test is a probable flake or that a branch update is ready.
 Vitest FAIL lines -- including named-project labels such as `|unit|` or `|console|` --
 identify tests under `test/` and `src/web-ui/`; AssertionError summaries are scrubbed
 and capped at 2,000 characters per failure, with at most 100 failures per log.
@@ -540,6 +577,23 @@ job-memory, lifecycle (`started`/`exited`), aggregate
 unparsed: `exited` lines fire on ordinary test failures and on the
 stop-others SIGTERM cascade, so they can never be runner identities.
 
+The scheduled companion smoke gets the same treatment.
+`.github/workflows/companion-smoke.yml` builds the ref and runs
+`node scripts/companion-workflow-smoke.mjs --published`, which prints
+one `<mark> <check-id>: <detail>` row per companion seam -- `ok  `,
+`warn`, `FAIL` or `skip` -- and closes with the tally `N pass, N
+warn, N fail, N skip`; only FAIL rows fail the step. Rows group under
+`scripts/companion-workflow-smoke.mjs > (companion-smoke)
+<check-id>` -- the check id is the unit a master fix restores -- and
+count only inside a log carrying the smoke's own tally whose fail
+count equals the FAIL rows, so a truncated or interleaved log stays
+unparsed. The dependency set is a closed input list (the script and
+the workflow step that invokes it): the checks exercise published
+companions plus the ref's built `dist/` graph, which has no enumerable
+closure. Like the other non-test identities these groups can never
+resolve through a vitest pass line: `shared-baseline`, `pr-caused` or
+`unknown` -- never `probable-flake`.
+
 Two unaffected fresh PRs at distinct head commits sharing a failure produce
 `queue-master-fix` and a ready brief. PRs at the same commit remain visible in
 the group but contribute only one head toward that threshold. Test/import
@@ -558,7 +612,10 @@ file whose literal `include` globs cover the suite (a config with none governs
 every suite), that config's import closure, its `setupFiles`/`globalSetup`
 entries and their closures, the nearest `tsconfig.json`/`jsconfig.json`
 walking up from the test file, and the dependency manifests (which also cover
-suites running without bare imports). An unreadable governing config, an
+suites running without bare imports). A changed root Vitest config absent
+from master has unknown collection scope. Any failure without another
+observed dependency change stays unattributed for that PR, withholding its
+evidence from flake reruns and shared-baseline corroboration. An unreadable governing config, an
 unresolvable or globbed setup entry, or a failed harness probe yields
 `unknown`, never independence. A candidate that 404s tries the next
 resolution; any other fetch failure, unresolvable spec, alias, or computed
@@ -572,6 +629,19 @@ at 100 each. A run or job listing supplies evidence only when its item count
 matches `total_count` and each item has a distinct, valid ID. Incomplete or
 capped listings leave that evidence unknown. Master reproduction remains an
 explicit step in the fix brief.
+
+Groups also come from master evidence alone. The observation groups
+above require an open PR to reproduce a failure, but master runs at
+the tip also carry scheduled and master-push workflows that never run
+on PR heads -- the companion smoke, custody, the daily perf-budget
+drift run -- plus suite breaks no open PR happens to hit. Each parsed
+master failure no open PR reproduced still emits a group: empty
+`prs`/`runs`/`unaffectedPrs`, `shared-baseline`, `queue-master-fix`,
+`master: 'fail'`, and a brief naming the master-run provenance. A test
+id an open PR did observe keeps its observation group -- the richer
+evidence wins -- and each id emits once. These groups queue a master
+fix through the same `--queue` path but never produce update-branch
+plans (no unaffected PRs) or rerun proposals (no PR runs).
 
 `phm ci baseline --queue --json` appends only master-fix briefs to
 `~/.ashlr-runs/queue/router-queue.md`, at tier `work`, deduplicated by queue
@@ -615,11 +685,13 @@ redaction are omitted from recurrence evidence, and their presence on a run
 withholds per-test attribution of its workflow verdict.
 When multiple probable flakes share a workflow run, one attempt counts
 toward each test's recurrence and consumes one slot in the hourly cap. A test that was
-rerun-attempted on at least three distinct heads within the last seven days is
+rerun-attempted on at least three distinct full commit SHAs within the last seven days is
 a recurring flake: maintenance appends one `RQ-CIFLAKE-*`
 stabilization brief (tier `work`) per (repository, test) to the router queue,
 capped at ten new rows per repository per maintenance pass, under the same
-standing-authority and KILL gates as shared-baseline fixes. Suppressed
+standing-authority and KILL gates as shared-baseline fixes. Recurrence counts
+40-character hexadecimal head SHAs case-insensitively and ignores attempt
+and verdict rows with missing, abbreviated, or malformed heads. Suppressed
 candidates do not consume the cap, so later eligible flakes can enter the
 queue on subsequent passes. Deduplication is generation-aware like the
 master fixes: an open row suppresses queueing, dropped or retired rows stay
@@ -638,7 +710,9 @@ run remains eligible. When the baseline report assigns multiple heads to one
 run, maintenance records a status error and skips dispatch for that run.
 Reads tolerate malformed rows and
 are bounded to the last 4 MiB, so deduplication, counts and recurrence cover
-that retained read window. Rerun identity compares repository names
+that retained read window. The reader discards a row cut off at the start
+of the window and retains a complete row starting exactly at that boundary.
+Rerun identity compares repository names
 case-insensitively, so a configuration casing change preserves duplicate
 protection, pending verdicts and the polling cursor. Raw journal entries
 retain their recorded spelling. Recurring-flake groups combine attempt and
@@ -657,10 +731,9 @@ If visible attempt receipts disagree on the head SHA or the set of triggering te
 attempt still consumes its hourly slot but supplies no per-test attempt
 evidence to stabilization or discovery. Test order and duplicate test IDs
 within a receipt do not affect the comparison.
-Successful and failed call totals likewise count one result per repository,
-head SHA and run ID. When visible receipts disagree on whether the call
-succeeded, the result is unknown and excluded from both call totals and
-verdict polling. Recent entries retain the conflicting receipts.
+Successful and failed call totals count one result per repository and run ID.
+When visible receipts disagree on the head SHA or whether the call succeeded,
+the result is unknown and excluded from both call totals and verdict polling. Recent entries retain the conflicting receipts.
 
 ## Rerun verdicts
 
@@ -684,9 +757,10 @@ deadline. Each repository resumes after its last checked rerun, wrapping
 to the oldest eligible rerun when it reaches the end. The polling position
 persists across restarts, so transient read failures leave reruns pending
 for retry while later reruns still get checked.
-For each repository, head SHA and run ID, polling and the pending count
+For each repository and run ID, polling and the pending count
 use the earliest visible successful-call receipt in the retained journal
-for runs with a consistent call result.
+for runs with a consistent call result. A recorded verdict reserves that run ID
+against a second verdict, including when its head differs from the call receipt.
 Later receipts cannot reset the settle or expiry clock. When these receipts
 disagree on the triggering test, the workflow verdict still counts in the
 overall tally and its per-test attribution is withheld.
@@ -714,17 +788,25 @@ such as PR-caused failures. A `fail` verdict is evidence the classification may 
 rerun firing rules are unchanged. In recurring-failure briefs from
 `phm improve discover`, a shared attempt counts once for each recorded
 triggering test. The shared workflow verdict does not count toward any
-test's recurring-failure threshold.
+test's recurring-failure threshold. Discovery requires the same matching
+single-test attempt as stabilization, including its repository, head SHA,
+workflow run ID and time ordering. A verdict whose attempt is missing,
+expired or disputed remains eligible for the workflow-level tally.
+Discovery counts per-test attempts and verdicts only for full 40-character
+hexadecimal head SHAs. Case variants count as one distinct head.
 Discovery counts one attempt per repository and workflow run ID,
 and at most one verdict per repository and workflow run ID. The earliest
 observed receipt sets each attempt or verdict's time in the recurrence
 window, so a replay cannot bring expired evidence back into the window.
+If an attempt carries both `test` and `tests`, both must identify the same
+single test. A malformed test array or disagreement between fields withholds
+per-test evidence while the receipt still counts as a workflow attempt.
 If observed verdict receipts for a run disagree on its head, test
 attribution, or verdict, that run provides no per-test verdict evidence.
 For recurring call failures, discovery counts one call result per
-repository, head SHA and workflow run ID. The earliest observed receipt
-sets its time in the recurrence window. If observed receipts disagree on
-whether the call succeeded, that call contributes to neither tally.
+repository and workflow run ID. The earliest observed receipt sets its time in
+the recurrence window. Discovery uses the same conflict rules as the CLI
+call totals.
 `ci-reruns/status.json` contains the last
 maintenance time, per-repository counts (including `recurringFlakes` detected,
 `flakeFixesQueued` appended, `verdictsPending` and `verdictsResolved`), errors

@@ -117,8 +117,8 @@ export function nudgeSkillsFromJobs(jobs: readonly SkillNudgeJob[], ts = new Dat
 //     CANCELLED->cancelled, REVERT/REVERTED->merged with reverted evidence.
 //     PUBLISHED/OPEN and task-level words (done/skipped/deferred) never
 //     resolve a job outcome.
-//   - reverted: sticky hasRevertEvidence, the same rule slot-yield and the
-//     router outcome fold apply — plus, when the caller supplies the
+//   - reverted: sticky per PR for named receipts and job-wide for
+//     unscoped receipts. When the caller supplies the
 //     standing revert keys (`revertedPrKeys`: outcome-ledger, cloud-task and
 //     `fleet reverts --record` detections), a merged job whose standing
 //     verdict row's pull URL is claimed by exactly that job and whose
@@ -173,6 +173,7 @@ interface NudgeJobAccum {
   /** Canonical PR key on the standing verdict row, when available. */
   verdictPrKey: string | null;
   reverted: boolean;
+  revertedPrKeys: Set<string>;
   recutReady: boolean;
   lastLine: number;
   outcomeLine: number | null;
@@ -303,15 +304,19 @@ export function skillNudgeJobsFromLedger(
       .find(Number.isFinite);
     const futureRevert = revertAt !== undefined && revertAt > nowMs;
     const phase = ledgerPhase(row);
-    if (futureRevert && ((phase !== null && REVERT_PHASES.has(phase))
-      || event === 'revert' || event === 'reverted')) continue;
+    const standaloneRevert = (phase !== null && REVERT_PHASES.has(phase))
+      || (outcome === 'merged' && phase !== 'MERGED' && (event === 'revert' || event === 'reverted'));
+    if (futureRevert && standaloneRevert) continue;
     const executionEvidence = row['launched'] !== false;
     const dispatched = executionEvidence && ((event !== null && ATTEMPT_EVENTS.has(event))
       || (event === 'claim' && row['launch_dedupe'] !== true));
     // A replay must not move a verdict past later failures or capture
     // execution evidence recorded after the original verdict.
     const datedVerdict = outcome !== undefined && (rowAt !== null || terminalAt !== null);
-    const datedRecovery = rowAt !== null && (dispatched || event === 'recut_admission'
+    // A launch-dedupe claim is only a reservation, but its lane can still
+    // contextualize a subsequent launch failure that has no lane of its own.
+    const claimReservation = executionEvidence && event === 'claim' && row['launch_dedupe'] === true;
+    const datedRecovery = rowAt !== null && (dispatched || claimReservation || event === 'recut_admission'
       || event === 'launch_failed' || event === 'launch_terminal' || event === 'finish');
     if (datedVerdict || datedRecovery) {
       let receipt = line.trim();
@@ -323,14 +328,13 @@ export function skillNudgeJobsFromLedger(
       if (recoveryReceipts.has(receipt)) continue;
       recoveryReceipts.add(receipt);
     }
-    let prKey: string | null = null;
+    const keys = rowPrKeys(row);
+    const prKey = keys.size === 1 ? keys.values().next().value ?? null : null;
     if (claims !== null) {
-      const keys = rowPrKeys(row);
       for (const key of keys) {
         const set = claims.get(key) ?? new Set<string>();
         set.add(id);
         claims.set(key, set);
-        if (keys.size === 1) prKey = key;
       }
     }
     if (!LEDGER_ID_PATTERN.test(id)) continue;
@@ -338,12 +342,21 @@ export function skillNudgeJobsFromLedger(
     if (acc === undefined) {
       acc = {
         evidence: { lane: null, attempts: 0, retryReceipts: 0, recuts: 0, failureClass: null },
-        verdictEvidence: null, outcome: undefined, verdictPrKey: null, reverted: false, recutReady: false,
+        verdictEvidence: null, outcome: undefined, verdictPrKey: null, reverted: false,
+        revertedPrKeys: new Set(), recutReady: false,
         lastLine: lineNo, outcomeLine: null,
       };
       jobs.set(id, acc);
     }
     acc.lastLine = lineNo;
+    if (!futureRevert && hasRevertEvidence(row)) {
+      if (keys.size === 0) acc.reverted = true;
+      if (prKey !== null) acc.revertedPrKeys.add(prKey);
+    }
+    // Once a verdict identifies a PR, a named standalone revert only adds
+    // revert evidence. It does not take a new snapshot of execution evidence.
+    if (standaloneRevert && (keys.size > 1
+      || (prKey !== null && acc.verdictPrKey !== null))) continue;
     const evidence = acc.evidence;
     if (executionEvidence && (event === null ? outcome !== undefined : !QUEUE_HINT_EVENTS.has(event))) {
       for (const key of LEDGER_LANE_KEYS) {
@@ -369,7 +382,6 @@ export function skillNudgeJobsFromLedger(
     }
     const failureClass = executionEvidence ? failureClassOf(row, event) : null;
     if (failureClass !== null) evidence.failureClass = failureClass;
-    if (!futureRevert && hasRevertEvidence(row)) acc.reverted = true;
     if (outcome !== undefined) {
       acc.recutReady = false;
       acc.verdictEvidence = { ...evidence };
@@ -385,7 +397,9 @@ export function skillNudgeJobsFromLedger(
     .map(([id, acc]) => {
       const evidence = acc.verdictEvidence ?? acc.evidence;
       const retries = Math.max(0, evidence.attempts - 1) + evidence.retryReceipts;
-      const reverted = acc.reverted || standingReverted(id, acc, claims, revertedPrKeys);
+      const reverted = acc.reverted
+        || (acc.verdictPrKey !== null && acc.revertedPrKeys.has(acc.verdictPrKey))
+        || standingReverted(id, acc, claims, revertedPrKeys);
       return {
         id,
         lane: evidence.lane ?? 'unknown',

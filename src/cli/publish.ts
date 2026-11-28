@@ -29,12 +29,15 @@ function sweepLines(r: PublishResumeSweepReport): string {
   return lines.join('\n');
 }
 
+const helpText = `${usage}\nresume opens the PR for a pushed branch and turns on auto-merge through the merge queue.\norphans lists your fork's codex-bridge/ branches from the last 48 hours that have no PR.\nsweep finishes publishes that pushed a branch but aborted before the PR existed: it opens the PR without arming auto-merge (the merge queue decides), at most --limit per run, oldest first. The fleet self-tick runs it every pass.\nExit: 0 done, 1 branch missing, GitHub unavailable or unreadable logs (a short outage is retried first; branches are kept), 2 bad usage.`;
+
 export async function cmdPublish(args: string[], gh?: Gh, retry?: RetryOptions): Promise<number> {
   const verb = args[0];
   if (verb === undefined || verb === '--help' || verb === '-h' || verb === 'help') {
-    console.log(`${usage}\nresume opens the PR for a pushed branch and turns on auto-merge through the merge queue.\norphans lists your fork's codex-bridge/ branches from the last 48 hours that have no PR.\nsweep finishes publishes that pushed a branch but aborted before the PR existed: it opens the PR without arming auto-merge (the merge queue decides), at most --limit per run, oldest first. The fleet self-tick runs it every pass.\nExit: 0 done, 1 branch missing, GitHub unavailable or unreadable logs (a short outage is retried first; branches are kept), 2 bad usage.`);
+    console.log(helpText);
     return verb === undefined ? 2 : 0;
   }
+  if (args.includes('--help') || args.includes('-h')) { console.log(helpText); return 0; }
   if (verb === 'sweep') {
     let values;
     try {

@@ -116,9 +116,13 @@ export async function cmdFleetPlannerTick(args: string[], deps: Dependencies = {
     ...(lowSupply === undefined ? {} : { lowSupply }),
   });
   // Every tick is observed, apply or not; a log that will not take the line
-  // never changes the verdict.
+  // never changes the verdict. An unreadable ready queue has no count to
+  // report: omit phx so the gap fold records queue depth as unknown rather
+  // than the decision's 0 placeholder reading as a proven-empty queue.
+  const queueUnknown = input.queueUnreadable === true || !Number.isFinite(input.phxReady);
+  const phx = queueUnknown ? '' : ` phx=${decision.phxReady}`;
   await appendTickLine(root,
-    `${eventClock(new Date(now))} PLANNER_TICK ${decision.run ? 'run' : 'skip'} reason=${decision.reason} phx=${decision.phxReady} free=${decision.freeSlots}${decision.lane ? ` lane=${decision.lane} from=${decision.fallbackFrom}` : ''}\n`)
+    `${eventClock(new Date(now))} PLANNER_TICK ${decision.run ? 'run' : 'skip'} reason=${decision.reason}${phx} free=${decision.freeSlots}${decision.lane ? ` lane=${decision.lane} from=${decision.fallbackFrom}` : ''}\n`)
     .catch(() => undefined);
   const printDecision = (): void => {
     if (json) output(JSON.stringify(sanitizePublicJson(decision)));

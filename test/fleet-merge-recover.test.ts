@@ -45,6 +45,14 @@ function fixture(remainingPaths = source.remainingPaths) {
   return { run, state, inspected, liveSource, liveReplacement, calls, onSearch(fn: () => void) { afterSearch = fn; }, get writes() { return writes; }, get body() { return body; }, get report() { return JSON.parse(output); } };
 }
 describe('fleet merge-recover', () => {
+  it.each(['--help', '-h'])('prints usage for %s without inspecting', async flag => {
+    const lines: string[] = [];
+    expect(await cmdFleetMergeRecover([flag], {
+      output: text => lines.push(text),
+      inspect: async () => { throw new Error('must not inspect'); },
+    })).toBe(0);
+    expect(lines.join('\n')).toContain('Usage: phm fleet merge-recover');
+  });
   it.each([
     { mergeable: 'CONFLICTING', mergeStateStatus: 'UNKNOWN' },
     { mergeable: 'CONFLICTING', mergeStateStatus: 'CLEAN' },

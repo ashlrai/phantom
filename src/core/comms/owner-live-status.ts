@@ -62,7 +62,7 @@ export function readOwnerLiveStatus(settings: OwnerThreadSettings, hold: { halte
     } else {
       decidedBy.push({ file: ADAPTERS, key: `[${channel}] secretHandle = "${OWNER_SECRET_HANDLES[channel as OwnerSecretChannel]}"`, value: settings.secretHandles[channel as OwnerSecretChannel] ? 'set' : 'not set' });
     }
-    decidedBy.push({ file: COMMS, key: 'confirmed = true (Mason confirms the owner)', value: settings.confirmed ? 'set' : 'not set' });
+    decidedBy.push({ file: COMMS, key: 'confirmedByMason = true (Mason confirms the owner)', value: settings.confirmed ? 'set' : 'not set' });
     const base = { channel, decidedBy };
     if (hold.halted || hold.paused) {
       return { ...base, state: 'off', reason: `${NAME[channel]} is held: ${gate.reason}`, nextStep: 'Remove ~/.ashlr/KILL or resume comms.' };
@@ -76,7 +76,7 @@ export function readOwnerLiveStatus(settings: OwnerThreadSettings, hold: { halte
       return { ...base, state: 'not-set-up', reason: `${NAME[channel]} not set up: ${gate.reason.replace(/\.$/, '')}.`, nextStep: gate.nextStep };
     }
     if (!settings.confirmed) {
-      return { ...base, state: 'off', reason: `${NAME[channel]} is set up but Mason has not confirmed it.`, nextStep: `Set confirmed = true in ${COMMS}.` };
+      return { ...base, state: 'off', reason: `${NAME[channel]} is set up but Mason has not confirmed it.`, nextStep: `Confirm in the desktop Comms panel, or set confirmedByMason = true in ${COMMS}.` };
     }
     if (!bound(channel, settings)) {
       return { ...base, state: 'off', reason: `${NAME[channel]} owner id is not in the team list, so nothing is sent.`, nextStep: `Add the same ${NAME[channel]} id under [team] in ${NETWORK}.` };

@@ -7,6 +7,8 @@
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
+import { parse } from 'smol-toml';
 
 export const OWNER_ADAPTERS_FILE = 'owner-adapters.toml';
 
@@ -54,21 +56,41 @@ export function setImessageBridge(configDir: string, on: boolean): SetBridgeResu
   const { file } = ensureOwnerAdaptersFile(configDir);
   const value = on ? 'loopback' : 'off';
   const text = readFileSync(file, 'utf8');
+  let original = parse('');
+  try { original = parse(text); } catch { throw new Error('Cannot switch iMessage: invalid owner adapters TOML'); }
+  const section = original.imessage;
+  if (section !== undefined && (section === null || typeof section !== 'object' || Array.isArray(section) || section instanceof Date)) {
+    throw new Error('Cannot switch iMessage: imessage is not a table');
+  }
+  const expected = parse(text);
+  const table = (expected.imessage ??= Object.create(null)) as Record<string, unknown>;
+  if (table.bridge === value) return { file, changed: false, bridge: value };
+  table.bridge = value;
+
+  // Try bounded, single-line edits, and let the same TOML parser used by the
+  // settings reader prove that no other parsed setting changed. Unsupported
+  // shapes (such as inline tables or multiline values) fail closed.
   const lines = text.split('\n');
-  const line = `bridge = "${value}"`;
-  let section = '';
-  let sectionAt = -1;
-  let keyAt = -1;
-  lines.forEach((raw, i) => {
-    const head = /^\s*\[([^\]]+)\]\s*(#.*)?$/.exec(raw);
-    if (head) { section = head[1]!.trim(); if (section === 'imessage' && sectionAt < 0) sectionAt = i; return; }
-    if (section === 'imessage' && keyAt < 0 && /^\s*bridge\s*=/.test(raw)) keyAt = i;
+  const candidates: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i]!;
+    const assignment = /^(\s*[^#\r\n]+?\s*=\s*)("(?:[^"\\]|\\.)*"|'[^']*'|[^#\s]+)(\s*(?:#.*)?\r?)$/.exec(raw);
+    if (assignment) {
+      const copy = lines.slice();
+      copy[i] = `${assignment[1]}"${value}"${assignment[3]}`;
+      candidates.push(copy.join('\n'));
+    }
+    if (/^\s*\[/.test(raw)) {
+      const copy = lines.slice();
+      copy.splice(i + 1, 0, `bridge = "${value}"${raw.endsWith('\r') ? '\r' : ''}`);
+      candidates.push(copy.join('\n'));
+    }
+  }
+  candidates.push(`${text}${text && !text.endsWith('\n') ? '\n' : ''}\n[imessage]\nbridge = "${value}"\n`);
+  const next = candidates.find(candidate => {
+    try { return isDeepStrictEqual(parse(candidate), expected); } catch { return false; }
   });
-  if (keyAt >= 0) lines[keyAt] = line;
-  else if (sectionAt >= 0) lines.splice(sectionAt + 1, 0, line);
-  else lines.push('', '[imessage]', line, '');
-  const next = lines.join('\n');
-  if (next === text) return { file, changed: false, bridge: value };
+  if (next === undefined) throw new Error('Cannot switch iMessage: no safe TOML edit found');
   writeFileSync(file, next, { mode: 0o600 });
   return { file, changed: true, bridge: value };
 }

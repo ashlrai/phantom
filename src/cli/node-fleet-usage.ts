@@ -40,7 +40,9 @@ runner executes, which the claiming node's \`pull\` prints. Repeat \`--task-part
 for long text (the parts join in order; each at most 4000 characters, 16 KiB
 joined). \`--task-sha256\` is \`sha256:\` plus the lowercase hex sha256 of the
 exact joined text (\`sha256sum\` on Linux, \`shasum -a 256\` on macOS). An embedded
-task requires \`--pack codex-file\`, and the two flags together or neither.
+task requires \`--pack codex-file\`, \`--pack codex-file\` requires the embedded
+task (the pack's only input is the task text), and the two flags together or
+neither — enqueue refuses the pair split either way.
 
 \`beat --watch\` repeats the beat every --every seconds (default 10, at most 25 — sessions
 expire 30 s after the last beat) until Ctrl-C, re-measuring capacity and host stats on this
@@ -66,4 +68,18 @@ export function nodeFleetVerbUsage(verb: string): string | null {
   // scoped help for any other verb needs it added back.
   const text = line.trimStart();
   return `${text.startsWith('Usage:') ? text : `Usage: ${text}`}\n\n${prose.join('\n\n')}`;
+}
+
+/**
+ * `replica` rides the pool dispatch (`cmdNodePool`) but is documented beside
+ * the fleet verbs, and it needs no pool enrollment — `--leader` or the saved
+ * fleet leader names the source. Its scoped help is the two usage lines it
+ * already carries in the fleet block, derived here so the full list and this
+ * help can never drift apart.
+ */
+export function nodeReplicaUsage(): string {
+  const [usageBlock] = NODE_FLEET_USAGE.split('\n\n');
+  const lines = usageBlock!.split('\n').filter(line => line.includes('phm node replica '));
+  if (lines.length === 0) return '';
+  return `Usage: ${lines.map(line => line.trim()).join('\n       ')}`;
 }

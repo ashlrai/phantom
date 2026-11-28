@@ -19,6 +19,7 @@
  */
 import { canonicalJson } from '../authority/canonical-json.js';
 import { parseLedgerTs } from '../metrics/loop.js';
+import { isNodePoolLedgerRow } from './jobs-ledger-dialect.js';
 import { hasRevertEvidence } from './slot-yield.js';
 
 export const LANE_YIELD_SCHEMA = 'lanes.yield.v1';
@@ -81,6 +82,18 @@ const EVENT_KEYS = ['event', 'type', 'kind'] as const;
 const PHASE_KEYS = ['state', 'outcome', 'status', 'phase', 'result', 'conclusion'] as const;
 const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
 const TS_FIELDS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt', 'revertedAt', 'reverted_at'] as const;
+/**
+ * RQ-BATCH-* ids are batch-session infrastructure, not jobs: dispatchd runs
+ * related ready lines as one session whose members arrive through
+ * `batch_claim`/`task_outcome` rows, while the session id's own launch/finish
+ * rows carry session-aggregate evidence no single job owns (the bundle
+ * publishes nothing itself; its lines publish on their own). Every sibling
+ * reader — outcome-metrics, lane-reward, the router outcome fold and the
+ * unfed claims fold — skips the prefix; counting the session here would add
+ * a launch that can never merge or finish empty, diluting every batched
+ * lane's yield toward zero.
+ */
+const BATCH_SESSION_PREFIX = 'RQ-BATCH-';
 
 /** Terminal "no work" phases: the fleet's empty-outcome vocabulary (skill-nudge EMPTY_PHASES, launch_precheck _TERMINAL_EMPTY). */
 const EMPTY_PHASES: ReadonlySet<string> = new Set(['DONE-NOOP', 'EMPTY', 'EMPTY_DONE', 'SKIPPED-EMPTY', 'NOOP']);
@@ -152,10 +165,11 @@ export function computeLaneYield(ledger: string | null): LaneYieldReport {
     let row: Row;
     try { const value: unknown = JSON.parse(line); if (!value || typeof value !== 'object' || Array.isArray(value)) continue; row = value as Row; } catch { continue; }
     const id = firstString(row, JOB_KEYS);
-    if (!id) continue;
+    if (!id || id.startsWith(BATCH_SESSION_PREFIX) || isNodePoolLedgerRow(row)) continue;
     const phase = phaseOf(row);
     const event = ledgerEvent(row, phase);
     if (event === 'launch') {
+      if (row.launched === false) continue;
       const lane = firstString(row, LANE_KEYS);
       if (!lane) continue;
       const at = eventTs(row, phase);

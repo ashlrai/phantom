@@ -165,6 +165,40 @@ describe('usageCostFromReadings', () => {
       'codex-cmp', window.start, window.end);
     expect(cost).toMatchObject({ pctUsedStart: 40, pctUsedEnd: 40, pctUsedDelta: 0 });
   });
+  it.each([
+    { at: DISPATCHED, pct: 41, reset: undefined, start: null, end: 55 },
+    { at: START, pct: 55, reset: '2026-11-03T12:00:00.000Z', start: 40, end: null },
+  ])('withholds a disputed quota endpoint at $at in either journal order', ({ at, pct, reset, start, end }) => {
+    const rows = [
+      reading('codex-cmp', 37, '2026-10-28T08:00:00.000Z'),
+      reading('codex-cmp', 40, DISPATCHED),
+      reading('codex-cmp', 52, '2026-10-28T11:00:00.000Z'),
+      reading('codex-cmp', 55, START),
+      reading('codex-cmp', pct, at, reset),
+      reading('codex-cmp', 55, START),
+    ];
+    for (const order of [rows, [...rows].reverse()]) {
+      expect(usageCostFromReadings(order, 'codex-cmp', window.start, window.end, 1.85))
+        .toMatchObject({ pctUsedStart: start, pctUsedEnd: end, pctUsedDelta: null, costUsd: 1.85 });
+    }
+  });
+  it('keeps equivalent endpoint receipts and ignores disputes at older timestamps', () => {
+    const rows = [
+      reading('codex-cmp', 37, '2026-10-28T08:00:00.000Z'),
+      reading('codex-cmp', 38, '2026-10-28T08:00:00.000Z'),
+      reading('codex-cmp', 40, DISPATCHED),
+      reading('codex-cmp', 55, START),
+      reading('codex-cmp', 55, START, '2026-11-02T07:00:00-05:00'),
+    ];
+    expect(usageCostFromReadings(rows, 'codex-cmp', window.start, window.end))
+      .toMatchObject({ pctUsedStart: 40, pctUsedEnd: 55, pctUsedDelta: 15 });
+  });
+
+  it('requires parseable reset evidence for the quota delta', () => {
+    const rows = [DISPATCHED, START].map((at) => reading('codex-cmp', 40, at, 'unknown'));
+    expect(usageCostFromReadings(rows, 'codex-cmp', window.start, window.end))
+      .toMatchObject({ pctUsedStart: 40, pctUsedEnd: 40, pctUsedDelta: null });
+  });
   it('ignores readings entirely after the recording cutoff', () => {
     const cost = usageCostFromReadings(
       [reading('codex-cmp', 55, '2026-10-28T13:00:00.000Z')],

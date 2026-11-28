@@ -23,6 +23,7 @@ import { performance } from 'node:perf_hooks';
 import { dirname, join } from 'node:path';
 import type { EngineId } from '../types.js';
 import type { TerminationReason } from './run-monitor.js';
+import { isRecord } from './tool-calls.js';
 import { isSafeExecutionIdentity } from '../fleet/attempt-identity.js';
 
 const PRIVATE_DIR_MODE = 0o700;
@@ -214,13 +215,12 @@ function positiveAttempt(value: unknown): number | undefined {
 }
 
 function sanitizeShape(value: unknown): AgentDiagnosticTextShape | undefined {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
-  const input = value as Record<string, unknown>;
-  const bytes = boundedCounter(input['bytes']);
-  const lines = boundedCounter(input['lines']);
-  if (bytes === undefined || lines === undefined || typeof input['present'] !== 'boolean') return undefined;
-  if (input['present'] !== (bytes > 0) || (bytes === 0 ? lines !== 0 : lines < 1)) return undefined;
-  return { bytes, lines, present: input['present'] };
+  if (!isRecord(value)) return undefined;
+  const bytes = boundedCounter(value['bytes']);
+  const lines = boundedCounter(value['lines']);
+  if (bytes === undefined || lines === undefined || typeof value['present'] !== 'boolean') return undefined;
+  if (value['present'] !== (bytes > 0) || (bytes === 0 ? lines !== 0 : lines < 1)) return undefined;
+  return { bytes, lines, present: value['present'] };
 }
 
 function sanitizeRecord(input: AgentDiagnosticInput): AgentDiagnosticRecord | null {

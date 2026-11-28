@@ -29,6 +29,28 @@ it('returns null with a reason for empty input and keeps unpaired publications o
   expect(mergeLatencyFromGit([], [], now)).toMatchObject({ seconds: null, p90Seconds: null, paired: 0, stillOpen: 0, reason: expect.any(String) });
   expect(mergeLatencyFromGit([publish(1, 7200)], [], now)).toMatchObject({ seconds: null, stillOpen: 1, oldestOpenAgeSeconds: 7200 });
 });
+it('pairs only job publication evidence from the jobs ledger', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'merge-latency-evidence-'));
+  vi.spyOn(feed, 'readMergedPrFeed').mockReturnValue({
+    source: { kind: 'git', repoRoot: dir, ref: 'master' }, state: 'ok', reason: null, since: '', until: '',
+    prs: [{ number: 1, sha: 'plain', title: 'plain', mergedAt: new Date((now - 120) * 1000).toISOString() }],
+  });
+  const publication = (number: number, age: number, fields: Record<string, unknown> = {}) => JSON.stringify({
+    job: 'RQ-MEMBER', event: 'publish', url: `https://github.com/ashlrai/phantom/pull/${number}`,
+    ts: new Date((now - age) * 1000).toISOString(), ...fields,
+  });
+  const ledger = [
+    publication(1, 300),
+    publication(1, 1000, { launched: false }),
+    publication(2, 500, { launched: false, phase: 'PUBLISHED' }),
+    publication(3, 700, { job: 'RQ-BATCH-WRAPPER' }),
+    publication(4, 800, { schema: 'fleet.session-pool.v1' }),
+    publication(5, 900, { schema: 'phm-node-runner.v1' }),
+  ].join('\n');
+  expect(await readGitMergeLatency(dir, ledger, now * 1000)).toMatchObject({
+    seconds: 180, paired: 1, stillOpen: 0, oldestOpenAgeSeconds: null,
+  });
+});
 it('reads publication files and ledger times, keeps snapshot precedence, and prints the fleet brief', async () => {
   dir = await mkdtemp(join(tmpdir(), 'merge-latency-')); vi.stubEnv('ASHLR_RUNS_DIR', dir);
   const reading: feed.MergedPrFeed = { source: { kind: 'git', repoRoot: dir, ref: 'master' }, state: 'ok', reason: null, since: '', until: '',

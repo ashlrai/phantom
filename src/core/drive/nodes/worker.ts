@@ -2,7 +2,7 @@ import { validNodeTask } from './task.js';
 import { spawn, spawnSync } from 'node:child_process';
 import { lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { checkDriveExecutable } from '../script-bridge.js';
 import type { JobClaim } from './index.js';
 import { probeLocalModelCaps, type LocalLaneProbeDeps } from './local-model-caps.js';
@@ -58,10 +58,16 @@ export function classifyRunnerReply(code: number | null, fenced: boolean, stdout
   return reply && validId(reply['resultRef']) ? { kind: 'ok', resultRef: reply['resultRef'] as string } : { kind: 'stopped' };
 }
 
-/** Missing sentinels mean open; unreadable/unsafe control paths hold admission. */
+/** Missing sentinels mean open; unreadable/unsafe control paths hold admission.
+ * The runs root honors the fleet-wide ASHLR_RUNS_DIR override (absolute paths
+ * only) — the same resolution the pause reader, fleet switches and the node
+ * bridge's readiness check apply — so a relocated fleet's PAUSE/KILL still
+ * reaches this gate instead of only the default home's copies. */
 export function nodeStopped(): boolean {
+  const override = process.env['ASHLR_RUNS_DIR'];
+  const root = override !== undefined && isAbsolute(override) ? override : join(homedir(), '.ashlr-runs');
   for (const name of ['PAUSE', 'KILL']) {
-    try { lstatSync(join(homedir(), '.ashlr-runs', name)); return true; }
+    try { lstatSync(join(root, name)); return true; }
     catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') return true; }
   }
   return false;

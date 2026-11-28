@@ -85,6 +85,25 @@ describe('readLaunchStallFacts', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+  it('counts each job once in head lines when READY rows repeat', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'launch-stall-dup-'));
+    try {
+      mkdirSync(join(dir, 'queue'));
+      writeFileSync(join(dir, 'queue', 'status.json'),
+        '{"lanes":{"claude":{"running":0,"target":4,"queued":3,"held":false}}}');
+      // ready.tsv can carry repeated READY rows for one job; the launch head is
+      // jobs, so the first valid row wins and the third distinct job still shows.
+      writeFileSync(join(dir, 'queue', 'ready.tsv'),
+        'RQ-DUP-A\tphantom\tclaude\twork\t/abs/a.md\n'
+        + 'RQ-DUP-A\tphantom\tclaude\twork\t/abs/a-again.md\n'
+        + 'RQ-DUP-B\tphantom\tclaude\twork\t/abs/b.md\n'
+        + 'RQ-DUP-C\tphantom\tclaude\twork\t/abs/c.md\n');
+      const facts = await readLaunchStallFacts(dir);
+      expect(facts[0]!.headLines).toEqual([{ id: 'RQ-DUP-A' }, { id: 'RQ-DUP-B' }, { id: 'RQ-DUP-C' }]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   it('resolves envelopes when router-queue.md outgrows the old read bound', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'launch-stall-deep-'));
     try {

@@ -49,7 +49,7 @@ import {
 } from './chat.js';
 import { connectedClient, launchDevinTask, type DevinServiceDeps } from './service.js';
 import { readDevinTask } from './store.js';
-import { DEVIN_PROMPT_MAX_CHARS, DEVIN_TASK_ID_PATTERN } from './types.js';
+import { DEVIN_GITHUB_PR_URL_PATTERN, DEVIN_PROMPT_MAX_CHARS, DEVIN_TASK_ID_PATTERN, redactDevinKeys } from './types.js';
 import type { DevinTurnLine, DevinTurnPayload } from './turn-protocol.js';
 
 export interface DevinTurnIo {
@@ -104,8 +104,9 @@ const SUSPEND_WORDS: Readonly<Record<string, string>> = {
   error: 'Devin suspended the session after an error. Send a message to try again.',
 };
 
-function clean(text: string, max = MAX_TEXT): string {
-  const scrubbed = scrubSecrets(text).replace(/\bcog_[A-Za-z0-9_-]+/g, '[REDACTED]');
+/** Scrub secrets and `cog_` keys and bound text forwarded from Devin turns. */
+export function cleanDevinTurnText(text: string, max = MAX_TEXT): string {
+  const scrubbed = redactDevinKeys(scrubSecrets(text));
   return scrubbed.length > max ? `${scrubbed.slice(0, max - 1)}…` : scrubbed;
 }
 
@@ -138,10 +139,6 @@ export function remoteStateOf(session: Pick<DevinSession, 'status' | 'statusDeta
   }
 }
 
-function isGithubPr(url: string): boolean {
-  return /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+$/.test(url);
-}
-
 /**
  * Run one cloud turn. Returns the process exit code (DEVIN_TURN_EXIT). Never
  * throws: every failure is an `error` line plus a non-zero code.
@@ -152,7 +149,7 @@ export async function runDevinCloudTurn(payload: DevinTurnPayload, io: DevinTurn
   const maxTurnMs = deps.maxTurnMs ?? DEVIN_CLOUD_MAX_TURN_MS;
   const started = io.now();
   const fail = (message: string, code?: string): number => {
-    io.emit({ type: 'error', message: clean(message, 2_000), ...(code ? { code } : {}) });
+    io.emit({ type: 'error', message: cleanDevinTurnText(message, 2_000), ...(code ? { code } : {}) });
     return DEVIN_TURN_EXIT.failed;
   };
 
@@ -260,7 +257,7 @@ export async function runDevinCloudTurn(payload: DevinTurnPayload, io: DevinTurn
           if (seen.has(message.eventId)) continue;
           seen.add(message.eventId);
           if (message.source !== 'devin') continue; // the operator's own words are already in the chat
-          const text = clean(message.message).trim();
+          const text = cleanDevinTurnText(message.message).trim();
           if (text === '') continue;
           io.emit({ type: 'assistant-message', text });
           changed = true;
@@ -286,7 +283,7 @@ export async function runDevinCloudTurn(payload: DevinTurnPayload, io: DevinTurn
     recordDevinChatSession(taskId, session, new Date(io.now()));
     url = session.url;
     for (const pr of session.pullRequests) {
-      if (prUrls.has(pr.url) || !isGithubPr(pr.url)) continue;
+      if (prUrls.has(pr.url) || !DEVIN_GITHUB_PR_URL_PATTERN.test(pr.url)) continue;
       prUrls.add(pr.url);
       io.emit({ type: 'remote-pr', url: pr.url, state: pr.state });
       changed = true;

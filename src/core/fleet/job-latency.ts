@@ -1,3 +1,4 @@
+import { canonicalJson } from '../authority/canonical-json.js';
 import { ledgerEventName } from './empty-cause.js';
 import { prKeyOf } from './eval-report.js';
 import { isNodePoolLedgerRow, ledgerEventTs, ledgerJobId } from './jobs-ledger-dialect.js';
@@ -121,7 +122,7 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
       row = value as Record<string, unknown>;
     } catch { ignored++; continue; }
-    if (isNodePoolLedgerRow(row)) continue;
+    if (isNodePoolLedgerRow(row) || row.launched === false) continue;
     const id = ledgerJobId(row);
     const event = boundaryEvent(row);
     if (event === 'git_operation') {
@@ -131,10 +132,15 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
           ignored++;
           continue;
         }
-        // A dated receipt can be replayed verbatim. Preserve distinct lines
-        // even when the writer records multiple operations at the same time.
+        // Deduplicate complete dated receipts so distinct operations recorded
+        // at the same time keep their own samples.
         if (Number.isFinite(observation.end)) {
-          const receipt = line.trim();
+          let receipt = line.trim();
+          try {
+            receipt = canonicalJson(row);
+          } catch {
+            // Preserve exact-text deduplication when canonicalization fails.
+          }
           if (seenGitReceipts.has(receipt)) continue;
           seenGitReceipts.add(receipt);
         }
@@ -191,6 +197,10 @@ export function jobLatency(text: string | null, phases: readonly (readonly [stri
         !Number.isFinite(at) || (at <= to && (at > from || (at === from && start !== 'launch'))))) continue;
       // A member claim may start another attempt, but does not prove execution.
       if ([...(events.get('batch_claim')?.times ?? [])].some(at => !Number.isFinite(at) || (from <= at && at <= to))) continue;
+      // Queue wait includes admission retries. For other phases a tied claim
+      // is ambiguous unless the phase starts at its own recorded launch.
+      if (start !== 'queued' && [...(events.get('claim')?.times ?? [])].some(at =>
+        !Number.isFinite(at) || (at <= to && (at > from || (at === from && start !== 'launch'))))) continue;
       samples.push((to - from) / 1000);
       if (phases === jobPhases && phase === 'checkout') {
         checkout.push(to - from);

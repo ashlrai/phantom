@@ -15,6 +15,7 @@ import path from 'node:path';
 
 import type { WikiCitation, WikiFileIndex } from './types.js';
 import { isSourceFile, isTestFile, languageOf, readRepoText, type RepoScan } from './scan.js';
+import { isPlainRecord } from './store.js';
 
 const MAX_READ_FILES = 1600;
 const MAX_READ_TOTAL = 16 * 1024 * 1024;
@@ -177,13 +178,13 @@ async function readSelected(scan: RepoScan): Promise<Map<string, string>> {
 // Small helpers
 // ---------------------------------------------------------------------------
 
-function lineOfIndex(text: string, index: number): number {
+export function lineOfIndex(text: string, index: number): number {
   let line = 1;
   for (let i = 0; i < index && i < text.length; i++) if (text.charCodeAt(i) === 10) line++;
   return line;
 }
 
-function countLines(text: string): number {
+export function countLines(text: string): number {
   if (text.length === 0) return 0;
   let n = 1;
   for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) n++;
@@ -393,27 +394,29 @@ interface ManifestFacts {
 
 function packageJsonFacts(rel: string, text: string): ManifestFacts {
   const out: ManifestFacts = { description: null, scripts: [], bins: [], entry: [], runner: null };
-  let pkg: Record<string, unknown>;
+  let parsed: unknown;
   try {
-    pkg = JSON.parse(text) as Record<string, unknown>;
+    parsed = JSON.parse(text) as unknown;
   } catch {
     return out;
   }
+  if (!isPlainRecord(parsed)) return out;
+  const pkg = parsed;
   const lines = text.split('\n');
   if (typeof pkg['description'] === 'string' && pkg['description'].trim()) {
     const line = findLine(lines, '"description"') ?? 1;
     out.description = { text: clip(pkg['description'], 300), cite: { file: rel, line } };
   }
   const scripts = pkg['scripts'];
-  if (scripts && typeof scripts === 'object') {
+  if (isPlainRecord(scripts)) {
     const start = (findLine(lines, '"scripts"') ?? 1) - 1;
-    for (const [name, cmd] of Object.entries(scripts as Record<string, unknown>)) {
+    for (const [name, cmd] of Object.entries(scripts)) {
       if (typeof cmd !== 'string') continue;
       const line = findLine(lines, `"${name}"`, start) ?? start + 1;
       out.scripts.push({ name, command: clip(cmd, 160), cite: { file: rel, line } });
       if (out.scripts.length >= 60) break;
     }
-    const test = (scripts as Record<string, unknown>)['test'];
+    const test = scripts['test'];
     if (typeof test === 'string') {
       out.runner = /vitest/.test(test) ? 'vitest' : /jest/.test(test) ? 'jest' : /mocha/.test(test) ? 'mocha' : /node --test/.test(test) ? 'node:test' : /pytest/.test(test) ? 'pytest' : null;
     }
@@ -421,9 +424,9 @@ function packageJsonFacts(rel: string, text: string): ManifestFacts {
   const bin = pkg['bin'];
   if (typeof bin === 'string') {
     out.bins.push({ name: typeof pkg['name'] === 'string' ? pkg['name'] : 'bin', target: bin, cite: { file: rel, line: findLine(lines, '"bin"') ?? 1 } });
-  } else if (bin && typeof bin === 'object') {
+  } else if (isPlainRecord(bin)) {
     const start = (findLine(lines, '"bin"') ?? 1) - 1;
-    for (const [name, target] of Object.entries(bin as Record<string, unknown>)) {
+    for (const [name, target] of Object.entries(bin)) {
       if (typeof target !== 'string') continue;
       out.bins.push({ name, target, cite: { file: rel, line: findLine(lines, `"${name}"`, start) ?? start + 1 } });
     }

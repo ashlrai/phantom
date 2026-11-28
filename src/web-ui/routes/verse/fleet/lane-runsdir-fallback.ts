@@ -10,12 +10,13 @@
  * Pure and framework-free; a null result keeps the chip's existing
  * unknown-capacity text.
  */
+import { STALE_STANDING_TICK_REASON } from '../../../../core/fleet/fleet-types.js';
 import type { FleetEngine, FleetLiveLaneState } from '../../../../core/fleet/fleet-types.js';
 import type { FleetRunsLane } from '../../../../core/fleet/runs-dir-state.js';
 import { formatRelative } from '../autonomy/format.js';
 
 /** The capReason the live API stamps on every lane when the standing tick is older than 10 minutes. */
-export const STALE_STANDING_LANES = 'No standing tick has reported lanes in the last 10 minutes.';
+export const STALE_STANDING_LANES = STALE_STANDING_TICK_REASON;
 
 /** A runs read older than this cannot stand in for the missing standing tick. */
 export const RUNS_READ_MAX_AGE_MS = 15 * 60_000;

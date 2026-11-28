@@ -24,7 +24,8 @@
  * `phm fleet coordination` and the unified inbox coordination source
  * read, the claim-store
  * drift verdict comparing the claim journal with the coordination table it
- * is dual-written to, and the outbound send gate `localWriteGate` applies
+ * is dual-written to, the channel adapter registry every channel-addressed
+ * send's delivery decision consults, and the outbound send gate `localWriteGate` applies
  * before every bus write lands. Each
  * section reports its own real state; a section that cannot be read reports
  * unavailable or null, never zero, and the whole read never throws. Read-only:
@@ -32,7 +33,7 @@
  * nothing. */
 import { createHash } from 'node:crypto';
 import { lstatSync } from 'node:fs';
-import { dirname, isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { inspectBusInbox, busPathMissing, listBusInboxAfter, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ,
   type BusInboxInspection, type BusInboxReceipt } from '../fleet/bus-inbox.js';
@@ -46,6 +47,8 @@ import { ashlrHome } from '../cloud/store.js';
 import { loadConfigReadOnlyStrict } from '../config.js';
 import type { AshlrConfig } from '../types.js';
 import { listCoordination } from './claim-store.js';
+import { listChannelRegistry, type ChannelHealth } from './channel-registry.js';
+import type { ChannelId } from './channel-policy.js';
 import { readBusWakes } from '../fleet/bus-wake-queue.js';
 import { BUS_HOPLOG_TAIL_MAX_ROWS, readBusHoplogTail } from '../fleet/bus-hoplog.js';
 import { readAgentRegistry } from './bus-identity.js';
@@ -61,6 +64,8 @@ import { handoffPressure } from './session-handoff-schema.js';
 import { probePauseState } from '../comms/pause.js';
 import { readKillSwitch } from '../sandbox/policy.js';
 import { realHome } from '../real-home.js';
+import { orgRunsRoot } from '../org/agent-plane-reader.js';
+import { previewOrgOutbox } from '../org/agent-plane-outbox.js';
 import type { BusWorkMineBoardOptions } from './bus-work-mine.js';
 
 export interface UnifiedBusStatusOptions {
@@ -435,6 +440,56 @@ export interface UnifiedBusStatus {
      * the `released-unposted` class only this projection names; same
      * null rule. */
     returns: number | null;
+  };
+  /** Org-plane membership outbox (`<runsRoot>/org/agents.json`, the
+   * `org.agents.v1` store `phm fleet org-sync`/`org-board` read) behind the
+   * `org.membership` bus events the org chart recorded but
+   * `phm fleet org-sync --apply` has not yet confirmed posted — the same
+   * `busDelivered:false` set `previewOrgOutbox` replays, the unified
+   * inbox org-outbox source itemizes and `orgBoardView.pendingBusEvents`
+   * counts. Until the apply pass runs, staffing changes the chart already
+   * recorded are invisible to the bus — the same "owed but undelivered"
+   * class `peerDispatch.unpublished` reports for peer work results — so
+   * an agent checking bus health can see the backlog without a second
+   * read. The probe runs `previewOrgOutbox` itself, so `readAgentPlane`'s
+   * whole acceptance applies: a verified-absent store is 'missing', any
+   * refusal 'unavailable'. The root resolves the same way the org-sync
+   * and org-board verbs do — `options.runsRoot`, then `ASHLR_RUNS_DIR`,
+   * then `~/.ashlr-runs` (`orgRunsRoot`'s own fallback) — never the bus
+   * `root` override, which those verbs do not honor either. `pending`
+   * counts the distinct events the apply pass would post — 0 on a
+   * verified-missing store or a fully delivered ledger, null when the
+   * store cannot be read or validated; never role ids, actors, revisions,
+   * proposals or bodies. */
+  orgOutbox: {
+    source: 'missing' | 'available' | 'unavailable';
+    /** Distinct `org.membership` events `previewOrgOutbox` would replay —
+     * the same count the unified inbox org-outbox source reports pending;
+     * same null rule as the other pending counts. */
+    pending: number | null;
+  };
+  /** Channel adapter registry (`listChannelRegistry`, the same read
+   * `agents bus channels list`, `agents bus channels test` and the
+   * comms-agent adapter probe serve) behind every channel-addressed send's
+   * delivery decision — which of the fixed bus channel ids have a
+   * registered adapter in this process and each adapter's health verdict.
+   * The bus and handoff adapters probe the same inbox store `store`
+   * reports, so their `healthy` tracks it; a channel with no registered
+   * adapter reports `adapterRegistered:false` and `healthy:'unknown'` — a send
+   * addressed through it refuses rather than guessing a delivery path.
+   * Process-local registration only: this section describes this
+   * process's adapter table, never a fleet-wide channel census, and it
+   * takes no lock and probes no network — `inspectBusInbox` is the same
+   * total read `store` already ran. */
+  channels: {
+    source: 'available' | 'unavailable';
+    /** One row per channel id in fixed CHANNEL_IDS order — the same
+     * `{id, adapterRegistered, healthy}` shape `agents bus channels list`
+     * reports, null when the registry cannot be read. `healthy` is the
+     * adapter's own verdict — `true` usable, `false` confirmed down,
+     * `'unknown'` when nothing can assess it — never collapsed to a
+     * boolean and never guessed for an unregistered channel. */
+    adapters: Array<{ id: ChannelId; adapterRegistered: boolean; healthy: ChannelHealth }> | null;
   };
   /** Outbound send gate behind every bus write verb — the kill-switch
    * sentinel and the comms soft-pause flag `localWriteGate` consults
@@ -948,6 +1003,60 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     fleetCoordination = { source: 'unavailable', messages: null, proposals: null, returns: null };
   }
 
+  // The org plane's membership outbox is bus input the probe used to leave
+  // unreported: `org.membership` envelopes are how chart staffing changes
+  // reach the bus, and until `phm fleet org-sync --apply` replays them the
+  // bus cannot see them — the same "owed but undelivered" class
+  // `peerDispatch.unpublished` counts for peer work results. The read is
+  // `previewOrgOutbox`, the same replay `org-sync` previews and the unified
+  // inbox org-outbox source itemizes, under the same runs root
+  // `options.runsRoot` selects — `ASHLR_RUNS_DIR` or `~/.ashlr-runs` by
+  // default through `orgRunsRoot`, the resolution the org-sync/org-board
+  // verbs share and a bus `root` override never relocates. Existence is
+  // probed first, the same convention `peerLedger`/`ownerChat` apply, so a
+  // never-written store reports missing rather than unavailable; any
+  // refusal `readAgentPlane`/`envelopes` raises — unsafe, oversized,
+  // malformed, chart-invalid or an undeliverable edit — reports
+  // unavailable with a null count, never a guessed backlog. Counts only —
+  // the distinct event ids the apply pass would post, never role ids,
+  // actors, revisions or proposals.
+  let orgOutbox: UnifiedBusStatus['orgOutbox'];
+  try {
+    const orgRoot = options.runsRoot ?? orgRunsRoot();
+    const orgFile = join(resolve(orgRoot), 'org', 'agents.json');
+    let present = true;
+    try { lstatSync(orgFile); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') present = false;
+      else throw error;
+    }
+    orgOutbox = present
+      ? { source: 'available',
+          pending: new Set(previewOrgOutbox(orgRoot).map(event => event.id)).size }
+      : { source: 'missing', pending: 0 };
+  } catch {
+    orgOutbox = { source: 'unavailable', pending: null };
+  }
+
+  // The channel adapter registry behind every channel-addressed send's
+  // delivery decision — `agents bus channels list`/`test` answer it on a
+  // separate dispatch path, so the health probe names it here too: which
+  // of the fixed channel ids have a registered adapter in this process
+  // and each adapter's own health verdict. `listChannelRegistry` is a
+  // total read over the process-local table plus the same
+  // `inspectBusInbox` the `store` section already ran, under the probe's
+  // own root and clock; its try stays so a throwing adapter factory or
+  // registry read cannot hide the send-gate verdict. Channel ids and
+  // verdicts only — never adapter internals or message data.
+  let channels: UnifiedBusStatus['channels'];
+  try {
+    const adapters = listChannelRegistry({ root: options.root, now });
+    channels = { source: 'available', adapters: adapters.map(row =>
+      ({ id: row.id, adapterRegistered: row.adapterRegistered, healthy: row.healthy })) };
+  } catch {
+    channels = { source: 'unavailable', adapters: null };
+  }
+
   // The send gate every bus write passes through. Both readers are total
   // by contract, but each keeps its own try so one throwing probe cannot
   // hide the other's verdict — and an uninspectable source reports
@@ -979,5 +1088,5 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     kill, pause,
   };
 
-  return { asOf, store, registry, wakes, hoplog, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats, peerDispatch, peerLedger, peerBindings, peerDispatchPolicy, peerInbox, deadLetters, sessionHandoffs, fleetCoordination, sendGate };
+  return { asOf, store, registry, wakes, hoplog, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats, peerDispatch, peerLedger, peerBindings, peerDispatchPolicy, peerInbox, deadLetters, sessionHandoffs, fleetCoordination, orgOutbox, channels, sendGate };
 }

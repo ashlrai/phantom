@@ -62,6 +62,20 @@ describe('queue dead heads', () => {
     expect(queueDeadHeads(`FAKE-LIVE\tdevin\n${ready}`, reasons, 2)[0]).toMatchObject({ roundsLost: 8, firstLaunchablePosition: 1 });
     expect(() => queueDeadHeads(ready, reasons, 0)).toThrow(RangeError);
   });
+  it('counts each job once when ready.tsv repeats its READY row', () => {
+    // The market launches jobs, not lines: a repeated READY row must not spend
+    // a second position, a second lost round, or a second cap slot.
+    const repeatedDead = `${deferred[0]}\tdevin\tmid\tfake/repo\tFake job\n${ready}`;
+    expect(queueDeadHeads(repeatedDead, reasons, 4)).toEqual([{
+      lane: 'devin',
+      deadLines: deferred.map((job, i) => ({ job, position: i + 1, reason: reasons.get(job) })),
+      firstLaunchablePosition: 9, roundsLost: 8,
+    }]);
+    const deadOnly = deferred.map(job => `${job}\tdevin\tmid\tfake/repo\tFake job`).join('\n');
+    const liveRow = 'FAKE-LIVE-09\tdevin\tmid\tfake/repo\tFake job';
+    const repeatedLive = `${liveRow}\n${liveRow}\n${deadOnly}`;
+    expect(queueDeadHeads(repeatedLive, reasons, 2)[0]).toMatchObject({ roundsLost: 8, firstLaunchablePosition: 1 });
+  });
   it('prints the eight fake devin lines through the read-only CLI', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     const root = fileURLToPath(new URL('./fixtures/queue-dead-heads', import.meta.url));

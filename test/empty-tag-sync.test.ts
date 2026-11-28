@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { syncEmptyTagsFromJobsLedger } from '../src/core/fleet/empty-tag-sync.js';
-import { ROUTER_OUTCOME_LEDGER_LIMIT } from '../src/core/router/outcomes.js';
+import { foldEmptyTags, ROUTER_OUTCOME_LEDGER_LIMIT } from '../src/core/router/outcomes.js';
 
 const NOW_MS = Date.parse('2026-10-28T20:00:00.000Z');
 const NOW = () => new Date(NOW_MS);
@@ -103,6 +103,39 @@ describe('syncEmptyTagsFromJobsLedger', () => {
     expect(readDupcheck(runsDir).filter(r => r['action'] === 'outcome')).toHaveLength(0);
   });
 
+  it('recovers a usable tag after invalid receipts and a torn final line', async () => {
+    const job = 'RQ-RECOVER';
+    const orphan = 'RQ-INVALID-TIME';
+    writeJobs([finish(job, true), finish(orphan, true)].join('\n') + '\n');
+    writeLog(job, 'This is a duplicate of an earlier job.');
+    writeLog(orphan, 'No changes needed.');
+    const path = join(runsDir, TAGS_FILE);
+    const original = [
+      line({ schema: 'other.event.v1', job, tag: 'blocked' }),
+      line({ schema: 'job.empty-tag.v1', job, tag: 'retired' }),
+      line({ schema: 'job.empty-tag.v1', job: orphan, tag: 'already_done', ts: 'invalid' }),
+      '{"schema":"job.empty-tag.v1"',
+    ].join('\n');
+    writeFileSync(path, original);
+    writeFileSync(join(runsDir, DUPCHECK_FILE), [job, orphan].map(id => line({
+      schema: 'queue.dupcheck-event.v1', at: TS, job: id, action: 'launch',
+    })).join('\n') + '\n');
+
+    expect(await syncEmptyTagsFromJobsLedger({ runsDir, now: NOW })).toMatchObject({
+      candidates: 2, alreadyTagged: 0, classified: 2, recorded: 2, dupcheckOutcomes: 1,
+    });
+    const recovered = readFileSync(path, 'utf8');
+    expect(recovered.startsWith(original + '\n')).toBe(true);
+    expect(foldEmptyTags(recovered)).toEqual(new Map([[job, 'already_done'], [orphan, 'no_change_needed']]));
+    expect(readDupcheck(runsDir).filter(row => row['action'] === 'outcome')).toEqual([
+      expect.objectContaining({ job, tag: 'already_done' }),
+    ]);
+    expect(await syncEmptyTagsFromJobsLedger({ runsDir, now: NOW })).toMatchObject({
+      alreadyTagged: 2, classified: 0, recorded: 0, dupcheckOutcomes: 0,
+    });
+    expect(readFileSync(path, 'utf8')).toBe(recovered);
+  });
+
   it('keeps tags outside the tail authoritative without starving fresh candidates', async () => {
     writeJobs([finish('RQ-RECORDED', true), finish('RQ-FRESH', true)].join('\n') + '\n');
     for (const job of ['RQ-RECORDED', 'RQ-FRESH']) {
@@ -142,9 +175,14 @@ describe('syncEmptyTagsFromJobsLedger', () => {
     expect(readDupcheck(runsDir).map(row => row['action'])).toEqual(['launch']);
   });
 
-  it.each(['launch', 'batch_claim'])('waits for the current attempt after a %s', async (event) => {
+  it.each([
+    ['launch', {}],
+    ['batch_claim', {}],
+    ['claim', { launch_dedupe: true }],
+  ] as const)('waits for the current attempt after a %s', async (event, fields) => {
     const job = 'RQ-RETRY';
-    const dispatch = line({ event, job, ts: TS });
+    const dispatch = line({ event, job, ts: TS, ...fields });
+    const replayedDispatch = line({ ts: TS, job, event, ...fields });
     const previousFinish = finish(job, true, '2026-10-28T18:30:00.000Z');
     // The previous finish arrived late in the ledger. The log already belongs to the retry.
     writeJobs([dispatch, previousFinish].join('\n') + '\n');
@@ -159,9 +197,58 @@ describe('syncEmptyTagsFromJobsLedger', () => {
 
     // A finish at the dispatch timestamp belongs to the retry when appended after it.
     // Replaying that dispatch after the finish does not start another attempt.
-    writeJobs([dispatch, previousFinish, finish(job, true), dispatch].join('\n') + '\n');
+    writeJobs([dispatch, previousFinish, finish(job, true), dispatch, replayedDispatch].join('\n') + '\n');
     const completed = await syncEmptyTagsFromJobsLedger({ runsDir, now: NOW });
     expect(completed).toMatchObject({ state: 'read', candidates: 1, classified: 1, recorded: 1, dupcheckOutcomes: 1 });
+    expect(readTags(runsDir)).toEqual([expect.objectContaining({ job, tag: 'already_done' })]);
+  });
+
+  it('does not tag a retry from a reserialized finish of its earlier attempt', async () => {
+    const job = 'RQ-RETRY';
+    const dispatch = line({ event: 'launch', job, ts: TS });
+    const replayedFinish = line({ ts: TS, empty: true, lane: 'codex-cmp', job, event: 'finish' });
+    writeJobs([finish(job, true), dispatch, replayedFinish].join('\n') + '\n');
+    writeLog(job, 'This is a duplicate of an earlier job.');
+
+    const result = await syncEmptyTagsFromJobsLedger({ runsDir, now: NOW });
+    expect(result).toMatchObject({ state: 'read', candidates: 0, recorded: 0 });
+    expect(existsSync(join(runsDir, TAGS_FILE))).toBe(false);
+  });
+
+  it('uses worker evidence through declined dispatch and outcome receipts', async () => {
+    const job = 'RQ-WORKER';
+    const declinedAt = '2026-10-28T19:30:00.000Z';
+    writeJobs([
+      finish(job, true),
+      line({ event: 'batch_claim', job, ts: declinedAt, launched: false }),
+      line({ event: 'claim', job, ts: declinedAt, launch_dedupe: true, launched: false }),
+      line({ event: 'claim', job, ts: declinedAt }),
+      line({ event: 'outcome', job, ts: declinedAt, empty: false, launched: false }),
+      line({ event: 'outcome', job: 'RQ-DECLINED', ts: declinedAt, empty: true, launched: false }),
+    ].join('\n') + '\n');
+    writeLog(job, 'This is a duplicate of an earlier job.');
+
+    const result = await syncEmptyTagsFromJobsLedger({ runsDir, now: NOW });
+
+    expect(result).toMatchObject({ state: 'read', candidates: 1, recorded: 1 });
+    expect(readTags(runsDir)).toEqual([expect.objectContaining({ job, tag: 'already_done' })]);
+  });
+
+  it('uses member finishes without treating wrapper and node telemetry as local jobs', async () => {
+    const job = 'RQ-MEMBER';
+    const later = '2026-10-28T19:30:00.000Z';
+    writeJobs([
+      line({ event: 'batch_claim', job, ts: TS }),
+      finish(job, true),
+      finish('RQ-BATCH-SESSION', true),
+      line({ schema: 'fleet.session-pool.v1', event: 'launch', job, ts: later }),
+      line({ schema: 'phm-node-runner.v1', event: 'finish', job: 'RQ-NODE', ts: later, empty: true }),
+    ].join('\n') + '\n');
+    writeLog(job, 'This is a duplicate of an earlier job.');
+
+    const result = await syncEmptyTagsFromJobsLedger({ runsDir, now: NOW });
+
+    expect(result).toMatchObject({ state: 'read', candidates: 1, recorded: 1 });
     expect(readTags(runsDir)).toEqual([expect.objectContaining({ job, tag: 'already_done' })]);
   });
 

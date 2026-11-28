@@ -14,7 +14,7 @@ its work are distinct steps.
 The primary CLI is `phm`; `ashlr` remains compatible. Current source uses
 `@ashlr/phantom` in `ashlrai/phantom`. Find the current qualified release at
 [GitHub releases](https://github.com/ashlrai/phantom/releases/latest).
-This source tree targets version 3.30.79; check canonical release availability and exact matching assets before installation.
+This source tree targets version 3.30.85; check canonical release availability and exact matching assets before installation.
 The verified 3.25.3 compatibility release remains `@ashlr/hub`.
 Local routes remain `/verse/`, and the published macOS app is `Phantom.app`. See
 [the product naming guide](PHANTOM-BRAND.md).
@@ -52,6 +52,9 @@ Use **Automatic** for an eligible resource, or **Advanced** to choose an account
 or model explicitly. No eligible resource means setup is still incomplete.
 Fleet activation is a separate, optional step after this first interactive task.
 See the [first-session guide](VERSE.md#first-local-session) for the same checklist.
+To lend a computer's compute to the fleet, see
+[Add a computer in 60 seconds](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md): each machine joins with its
+own sign-in and jobs carry secret names, never values.
 
 <a id="open-verse"></a>
 
@@ -103,7 +106,7 @@ installation, desktop installation and fleet activation are separate steps.
 Latest dated changelog release (verify promoted package availability before installing):
 
 ```sh
-npm install -g @ashlr/phantom@3.30.77
+npm install -g @ashlr/phantom@3.30.84
 phm --version
 ```
 <!-- fresh:end -->

@@ -324,6 +324,28 @@ describe('trajectory join quality', () => {
     expect(result.edges.dispatchToProposal).toMatchObject({ denominator: 1, joined: 1, rate: 1 });
   });
 
+  it('omits future agent actions from trajectories and join counts', () => {
+    const read = actionRead();
+    const future = new Date(Date.parse(NOW) + 1).toISOString();
+    read.events = [
+      { ...read.events[0]!, ts: NOW },
+      { ...read.events[1]!, ts: future },
+      { ...read.events[2]!, ts: future },
+    ];
+
+    const result = listTrajectoryJoinQuality({
+      deps: {
+        readDispatchProductionEventsDetailed: () => dispatchRead(),
+        listOutcomeRecordsDetailed: () => listOutcomeRecordsDetailed({ deps: outcomeDeps() }),
+        readAgentActionsDetailed: () => read,
+      },
+    });
+
+    expect(result.agentActions).toMatchObject({ denominator: 1, joined: 1, excludedIdentityFree: 0 });
+    expect(result.records.flatMap((record) => record.timeline)
+      .filter((event) => event.kind === 'agent-action').map((event) => event.ts)).toEqual([NOW]);
+  });
+
   it('omits future proposal snapshots from join matches and denominators', () => {
     const outcomes = listOutcomeRecordsDetailed({ deps: outcomeDeps() });
     outcomes.records[0]!.proposal.createdAt = new Date(Date.parse(NOW) + 1).toISOString();
@@ -338,6 +360,34 @@ describe('trajectory join quality', () => {
 
     expect(result.edges.dispatchToProposal).toMatchObject({ denominator: 1, joined: 0, unjoined: 1 });
     expect(result.edges.proposalToVerification.denominator).toBe(0);
+  });
+
+  it.each([
+    ['historical', '2026-06-01T00:00:00.000Z', 0],
+    ['at cutoff', NOW, 1],
+  ] as const)('uses %s decision activity when a future receipt is latest', (_label, decisionAt, expected) => {
+    const historicalAt = '2026-06-01T00:00:00.000Z';
+    const futureAt = new Date(Date.parse(NOW) + 1).toISOString();
+    const deps = outcomeDeps();
+    const outcomes = listOutcomeRecordsDetailed({ deps: {
+      ...deps,
+      listProposals: () => [{ ...proposal(), createdAt: historicalAt, decidedAt: historicalAt }],
+      readDecisions: () => [{ ts: decisionAt, proposalId: PROPOSAL_ID, action: 'merged' }],
+      listAutonomyEvidencePacks: () => [],
+      readPostMergeObservations: () => postMergeRead({
+        observations: postMergeRead().observations.map((row) => ({ ...row, observedAt: futureAt })),
+      }),
+    } });
+    expect(outcomes.records[0]?.lastActivityAt).toBe(futureAt);
+
+    const result = listTrajectoryJoinQuality({ deps: {
+      readDispatchProductionEventsDetailed: () => dispatchRead(),
+      listOutcomeRecordsDetailed: () => outcomes,
+      readAgentActionsDetailed: () => actionRead(),
+    } });
+
+    expect(result.edges.dispatchToProposal).toMatchObject({ denominator: 1, joined: expected });
+    expect(result.edges.proposalToVerification.denominator).toBe(expected);
   });
 
   it('reconstructs a protected GitHub trajectory and publishes exact healthy edge rates', () => {
@@ -472,6 +522,41 @@ describe('trajectory join quality', () => {
     expect(trajectory?.terminalOutcome).toBe('merged');
     expect(trajectory?.realizedOutcome).toBe(joined ? 'regressed' : undefined);
     expect(trajectory?.timeline.some((row) => row.kind === 'post-merge')).toBe(joined);
+  });
+
+  it.each([
+    [NOW, true],
+    ['2026-07-28T20:05:01.001Z', false],
+    ['invalid', false],
+    ['', false],
+  ])('uses evidence pack generation time %j for verification and coverage', (generatedAt, observed) => {
+    const outcomes = listOutcomeRecordsDetailed({ deps: outcomeDeps() });
+    const result = listTrajectoryJoinQuality({
+      deps: {
+        readDispatchProductionEventsDetailed: () => dispatchRead(),
+        listOutcomeRecordsDetailed: () => ({
+          ...outcomes,
+          records: outcomes.records.map((outcome) => ({
+            ...outcome,
+            proposal: { ...outcome.proposal, verifyResult: undefined },
+            evidencePacks: outcome.evidencePacks.map((evidence) => ({ ...evidence, generatedAt })),
+          })),
+        }),
+        readAgentActionsDetailed: () => actionRead(),
+        loadProposal: () => proposal(),
+      },
+    });
+
+    expect(result.edges.proposalToVerification).toMatchObject({
+      denominator: 1,
+      joined: observed ? 1 : 0,
+      unjoined: observed ? 0 : 1,
+    });
+    const trajectory = result.records.find((record) => record.proposalId === PROPOSAL_ID);
+    expect(trajectory?.coverage.evidence).toBe(observed);
+    expect(trajectory?.timeline.filter((row) => row.kind === 'evidence').map((row) => row.ts))
+      .toEqual(observed ? [generatedAt] : []);
+    expect(trajectory?.latestAt).toBe(observed ? NOW : TS5);
   });
 
   it('excludes historical outcomes from join indices and every outcome edge denominator', () => {
