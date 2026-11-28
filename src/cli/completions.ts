@@ -177,7 +177,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
     'disk-forecast', 'disk-sweep', 'done-evaluate', 'done-plan', 'dot-handoff', 'drift', 'edges',
     'email-outbox', 'empty-merges', 'grok-usage', 'guardian-stuck', 'guardian-verify',
     'handoff-receive', 'handoff-reply', 'health-age', 'heartbeat', 'held', 'hostload',
-    'ideation-status', 'idle-lanes', 'imessage-acks', 'imessage-path', 'imessage-tasks', 'intent', 'intent-evidence',
+    'ideation-status', 'idle-lanes', 'imessage-acks', 'imessage-path', 'imessage-tasks', 'inbox-acks', 'intent', 'intent-evidence',
     'intent-import', 'intent-read', 'intent-summary', 'kept-worktrees', 'lane-hold', 'lane-idle', 'lane-reward', 'lane-share',
     'lane-starve', 'lane-supply', 'lane-target', 'lane-truth', 'launchable', 'leader-facts', 'leader-health', 'load',
     'login-health', 'machine', 'main-health', 'main-red-age', 'map', 'mason-digest', 'memory',
