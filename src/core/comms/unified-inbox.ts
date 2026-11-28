@@ -65,6 +65,30 @@
  *               `phm owner pair status`, `phm owner pair imessage` (a
  *               waiting pair is checked first, so re-running it after the
  *               YES finishes the binding).
+ *   inbox-acks  MASON-INBOX.md entries still owed a channel ack — the
+ *               `pending` rows of the same bounded read `phm fleet
+ *               inbox-acks` serves (the 256 KiB inbox tail, the
+ *               `queue/inbox-acks.jsonl` ledger and the MASON-OUTBOX/
+ *               PLAN-LOG reply journals, shared through `readInboxAcks`
+ *               so the two surfaces can never disagree): a recorded Mason
+ *               message whose planner "Got it" ack has no ledger row and
+ *               no answering leader reply. Until the next planner ack
+ *               pass — or `phm fleet inbox-acks --flush` — Mason has no
+ *               confirmation his message landed. Entries the ledger
+ *               already settled (`acked`, `skipped`) or that no channel
+ *               can carry (`no-channel`) are recorded decisions, never
+ *               pending work, and never list. Warn, non-blocking — the
+ *               act is agent-side. `since` is the entry's recorded
+ *               timestamp, `expiresAt` null — an owed ack waits for the
+ *               next pass, never a guessed deadline. Coverage is the same
+ *               bounded tail `fleet inbox-acks` reads: an absent inbox is
+ *               'missing' (verified: nothing recorded, nothing owed); an
+ *               unreadable inbox or ack ledger 'unavailable' — pending is
+ *               unknown, never an empty ack state passed off as fact; a
+ *               partially readable reply journal 'degraded' — pending rows
+ *               may include entries a leader reply already answered, so
+ *               the set is an upper bound. Act: `phm fleet inbox-acks
+ *               --flush`, `phm fleet inbox-acks`, `phm comms inbox read`.
  *   drafts      outbound email drafts still pending approval
  *               (`phm drafts list --status pending`), act: show/approve/reject —
  *               plus pending Comms-agent reply drafts that have no cos mirror
@@ -873,6 +897,8 @@ import { readLinkedInDrop, type LinkedInMessage } from './linkedin-drop.js';
 import { readOwnerAwaitingReplies, readOwnerUndeliveredReplies, type OwnerAwaitingReplies, type OwnerUndeliveredReplies } from './owner-thread.js';
 import { fixedOwnerConfigDir } from './owner-channel.js';
 import { readOwnerPairPending, type OwnerPairPendingRead } from './owner-pair-pending.js';
+import { readInboxAcks, type InboxAcksRead } from '../fleet/inbox-acks-read.js';
+import { inboxEntryMs } from '../fleet/inbox-ack-match.js';
 import { commsRequestAgeStartMs, commsRequestTtlMs, DEFAULT_REQUEST_TTL_HOURS, readCommsRequests, type CommsRequestsRead } from './requests.js';
 import { probePauseState, type PauseProbe } from './pause.js';
 import { readAgentConversations, plainAge, type AgentConversations } from '../fleet/agent-conversations.js';
@@ -924,7 +950,7 @@ const SUGGESTED_LEASE_MS = 600_000;
 /** Every pending-work source the unified view can report, in display order. */
 export const UNIFIED_INBOX_SOURCES = [
   'needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'owner-thread',
-  'owner-delivery', 'owner-pair', 'drafts', 'comms-mail', 'bus', 'mailbox', 'board', 'work-board', 'conversations', 'wakes', 'seats',
+  'owner-delivery', 'owner-pair', 'inbox-acks', 'drafts', 'comms-mail', 'bus', 'mailbox', 'board', 'work-board', 'conversations', 'wakes', 'seats',
   'peer-dispatch', 'peer-inbox', 'session-handoff', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
   'slack-sends', 'leader-delivery', 'leader-network', 'leader-replies', 'coordination', 'claim-drift',
   'send-gate', 'router-queue', 'jobs-stuck', 'channel-health', 'queue-parked',
@@ -949,7 +975,7 @@ export const isUnifiedInboxSeverity = (value: string): value is UnifiedInboxSeve
  * `--kind` filters on. */
 export const UNIFIED_INBOX_KINDS = [
   'needs-you', 'needs-you-delivery', 'teammate-text', 'teammate-task', 'owner-message',
-  'owner-reply-undelivered', 'owner-pair-waiting', 'draft-approval', 'comms-mail', 'bus-work', 'bus-handoff', 'bus-dead-letter', 'mailbox-message',
+  'owner-reply-undelivered', 'owner-pair-waiting', 'inbox-ack', 'draft-approval', 'comms-mail', 'bus-work', 'bus-handoff', 'bus-dead-letter', 'mailbox-message',
   'board-delivery', 'board-task', 'work-board-received', 'work-board-assigned', 'work-board-blocked',
   'agent-thread', 'wake-hint', 'seat-handoff', 'peer-dispatch-result', 'peer-message', 'session-handoff', 'org-membership', 'gmail-over-target',
   'linkedin-message', 'comms-request', 'email-inbound', 'email-stuck', 'team-approval',
@@ -1291,6 +1317,10 @@ export interface UnifiedInboxOptions {
    * and the owner-live self-tick consult, minus the handles (only the sent count
    * ever leaves the store). */
   readOwnerPair?: (options: { configDir: string }) => OwnerPairPendingRead;
+  /** Inbox-ack seam; default reads the same bounded MASON-INBOX tail, ack
+   * ledger and reply journals `phm fleet inbox-acks` serves through
+   * `readInboxAcks`. */
+  readInboxAcks?: (options: { runsDir?: string; limit?: number }) => Promise<InboxAcksRead>;
   readConversations?: typeof readAgentConversations;
   /** Wake-hint seam; default reads `readAllWakes` fleet-wide under the same
    * bus root and runs dir `agents bus wakes --all`/`fleet_agent_wakes` use. */
@@ -1708,6 +1738,53 @@ function ownerPairItems(read: NonNullable<UnifiedInboxOptions['readOwnerPair']>,
     act: ['phm owner pair status --json', 'phm owner pair imessage'],
   }];
   return { report: { state: 'healthy', pending: items.length }, items };
+}
+
+/**
+ * MASON-INBOX.md entries still owed a channel ack — the `pending` rows of
+ * the same bounded read `phm fleet inbox-acks` serves. Until the next
+ * planner ack pass — or `phm fleet inbox-acks --flush` — Mason has no
+ * confirmation his recorded message landed, so the wait is real pending
+ * work: warn, non-blocking, `since` the entry's recorded timestamp and
+ * `expiresAt` null because an owed ack has no deadline — it waits for the
+ * next pass, never a guessed one. Entries the ledger already settled or
+ * that no channel can carry are recorded decisions, never pending work.
+ * An absent inbox is 'missing' (verified: nothing recorded, nothing owed);
+ * an unreadable inbox or ack ledger 'unavailable' — pending is unknown,
+ * never an empty ack state passed off as fact; a partially readable reply
+ * journal 'degraded' — pending rows may include entries a leader reply
+ * already answered, so the listed set is an upper bound.
+ */
+async function inboxAckItems(
+  read: NonNullable<UnifiedInboxOptions['readInboxAcks']>,
+  runsDir: string | undefined,
+): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  const dir = runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let result: InboxAcksRead;
+  try { result = await read({ runsDir: dir }); } catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  const state: UnifiedInboxSourceState =
+    result.inbox === 'missing' ? 'missing'
+    : result.inbox === 'unavailable' || result.ledger === 'unavailable' ? 'unavailable'
+    : result.replies === 'degraded' ? 'degraded'
+    : 'healthy';
+  if (state === 'unavailable') return { report: { state, pending: null }, items: [] };
+  const items = result.entries.filter(row => row.state === 'pending').map((row): Omit<UnifiedInboxItem, 'priority'> => {
+    const ms = inboxEntryMs(row.raw);
+    const preview = oneLine(row.text, 200);
+    return {
+      id: `inbox-acks:${row.entryId}`,
+      source: 'inbox-acks',
+      kind: 'inbox-ack',
+      severity: 'warn',
+      blocking: false,
+      title: oneLine(`Inbox ack pending on ${row.channel ?? 'unlabelled source'} — ${row.entryId.slice(0, 12)}`, TITLE_MAX),
+      detail: oneLine(`${preview} — ${row.reason ?? 'ack not recorded'}`, DETAIL_MAX),
+      since: isoMs(ms),
+      expiresAt: null,
+      act: ['phm fleet inbox-acks --flush', 'phm fleet inbox-acks', 'phm comms inbox read'],
+    };
+  });
+  return { report: { state, pending: pendingCount(state, items.length) }, items };
 }
 
 async function draftItems(
@@ -4954,6 +5031,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const ownerDelivery = ownerDeliveryItems(options.readOwnerUndelivered ?? readOwnerUndeliveredReplies, options.runsDir);
   const ownerPair = ownerPairItems(options.readOwnerPair ?? ((o) => readOwnerPairPending(o.configDir)),
     fixedOwnerConfigDir(), now);
+  const inboxAcks = await inboxAckItems(options.readInboxAcks ?? readInboxAcks, options.runsDir);
   const drafts = await draftItems(options.listPendingDrafts ?? listDrafts, options.listCommsDrafts ?? listCommsAgentDrafts, options.runsDir);
   const commsMail = await commsMailItems(options.readCommsInbox ?? readCommsAgentInbox, options.listCommsDrafts ?? listCommsAgentDrafts, options.runsDir);
   const bus = busItems(options);
@@ -5003,6 +5081,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'owner-thread': ownerThread.report,
     'owner-delivery': ownerDelivery.report,
     'owner-pair': ownerPair.report,
+    'inbox-acks': inboxAcks.report,
     drafts: drafts.report,
     'comms-mail': commsMail.report,
     bus: bus.report,
@@ -5039,7 +5118,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'stranded-work': strandedWork.report,
     'dispatch-stuck': dispatchStuck.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...drafts.items, ...commsMail.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...peerInbox.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...jobsStuck.items, ...channelHealth.items, ...queueParked.items, ...stuckFixes.items, ...strandedWork.items, ...dispatchStuck.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...inboxAcks.items, ...drafts.items, ...commsMail.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...peerInbox.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...jobsStuck.items, ...channelHealth.items, ...queueParked.items, ...stuckFixes.items, ...strandedWork.items, ...dispatchStuck.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

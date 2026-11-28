@@ -271,6 +271,25 @@ verified-absent state file is `missing` and a file that cannot be read or
 parsed `unavailable` — never an empty wait passed off as fact; deep links
 `phm owner pair status --json` and `phm owner pair imessage`, which checks
 a waiting pair first so re-running it after the YES finishes the binding),
+MASON-INBOX.md entries still owed a channel ack — the `pending` rows of
+the same bounded read `phm fleet inbox-acks` serves (the 256 KiB inbox
+tail, the `queue/inbox-acks.jsonl` ledger and the MASON-OUTBOX/PLAN-LOG
+reply journals, shared through `readInboxAcks` so the two surfaces can
+never disagree): a recorded Mason message whose planner "Got it" ack has
+no ledger row and no answering leader reply. Until the next planner ack
+pass — or `phm fleet inbox-acks --flush` — Mason has no confirmation his
+message landed; entries the ledger already settled (`acked`, `skipped`)
+or that no channel can carry (`no-channel`) are recorded decisions, never
+pending work, and never list. Warn, non-blocking, `since` the entry's
+recorded timestamp and `expiresAt` null — an owed ack waits for the next
+pass, never a guessed deadline. Coverage is the same bounded tail
+`fleet inbox-acks` reads: an absent inbox is `missing` (verified: nothing
+recorded, nothing owed); an unreadable inbox or ack ledger `unavailable`
+— pending is unknown, never an empty ack state passed off as fact; a
+partially readable reply journal `degraded` — pending rows may include
+entries a leader reply already answered, so the set is an upper bound.
+Deep links `phm fleet inbox-acks --flush`, `phm fleet inbox-acks` and
+`phm comms inbox read`,
 outbound drafts awaiting approval — `phm drafts` items plus pending
 Comms-agent reply drafts that have no cos mirror (every non-email transport,
 or an email mirror that failed to write; a mirrored copy lists through its
