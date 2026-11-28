@@ -1,52 +1,39 @@
 /** Shared owner-free objective registration. Execution owners supply additional live publication checks. */
-import { isAbsolute, join, parse, resolve } from 'node:path';
+import { join } from 'node:path';
 import { lstatSync } from 'node:fs';
-import { canonicalEvidencePackJsonV3 } from '../foundry/provenance.js';
-import { canonical, digest, inspectPrivateDirectory } from '../universe/artifacts.js';
+import { canonical, inspectPrivateDirectory } from '../universe/artifacts.js';
 import { validateResourceGenerationRuntime } from '../universe/resource-generation.js';
 import { readImmutablePrivateRecords, writeImmutablePrivateRecord, type ImmutablePrivateRecordStoreConfig } from '../util/immutable-private-record-store.js';
 import { readResourceJson } from './pool-runtime.js';
-import { ResourceSupervisorError } from './pool-supervisor.js';
 import { validateResourceConsoleEngineeringCatalog, type ResourceConsoleEngineeringCatalog } from './console-engineering.js';
 import { checkResourceEngineeringPreparation, prepareResourceEngineeringBundle, readPreparedResourceEngineeringBundle, readPreparedResourceEngineeringMetadata } from './engineering-preparation.js';
 import type { ResourceEngineeringPreparationPlan, ResourceEngineeringSuccessorSource } from './engineering-preparation-types.js';
 import { readResourceEngineeringSuccessorBundle, readResourceEngineeringSuccessorMetadata } from './engineering-successor-preparation.js';
 import { validateUniverseCampaignDeliverySource } from '../universe/campaign-handoff.js';
 import type { ResourceConsoleEngineeringObjective, ResourceConsoleEngineeringObjectivePlan, ResourceConsoleEngineeringPreparationConfig } from './console-engineering-preparation-types.js';
+import { cloneCanonicalEngineeringData, engineeringDigest as hash, failResourceSupervisor as fail,
+  hasExactEngineeringKeys as exact, isBoundedEngineeringText as text, isCanonicalEngineeringPath as path,
+  isEngineeringCommit, isEngineeringHash, isEngineeringId, isEngineeringIsoTimestamp } from './engineering-shared.js';
 
-const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/; const HASH = /^[a-f0-9]{64}$/;
-function fail(code: ConstructorParameters<typeof ResourceSupervisorError>[0], message: string): never { throw new ResourceSupervisorError(code, message); }
-function copy<T>(input: unknown): T {
-  const text = canonicalEvidencePackJsonV3(input);
-  if (text === null || Buffer.byteLength(text) > 1024 * 1024) fail('INVALID_INPUT', 'Invalid engineering preparation data');
-  return JSON.parse(text) as T;
-}
-const exact = (value: unknown, keys: string[]): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value) &&
-  Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
-const text = (value: unknown, max: number): value is string => typeof value === 'string' && value.trim().length > 0 && Buffer.byteLength(value) <= max &&
-  [...value].every(character => { const code = character.charCodeAt(0); return code === 9 || code === 10 || code === 13 || code >= 32 && code < 127 || code >= 160; });
-const path = (value: unknown): value is string => typeof value === 'string' && isAbsolute(value) && value === resolve(value) &&
-  value !== parse(value).root && Buffer.byteLength(value) <= 4096 && [...value].every(character => {
-    const code = character.charCodeAt(0); return code >= 32 && !(code >= 127 && code <= 159);
-  });
-const hash = (value: unknown) => digest(canonical(value));
+const copy = <T>(input: unknown): T =>
+  cloneCanonicalEngineeringData<T>(input, 1024 * 1024, () => fail('INVALID_INPUT', 'Invalid engineering preparation data'));
 
 export function validateResourceConsoleEngineeringPreparationConfig(input: unknown): ResourceConsoleEngineeringPreparationConfig {
   const config = copy<ResourceConsoleEngineeringPreparationConfig>(input);
   if (!exact(config, ['schemaVersion', 'outputRoot', 'resourceRuntime', 'profiles',
     ...(Object.hasOwn(config ?? {}, 'registrationScope') ? ['registrationScope'] : [])]) || config.schemaVersion !== 1 ||
-    Object.hasOwn(config, 'registrationScope') && (typeof config.registrationScope !== 'string' || !ID.test(config.registrationScope)) ||
+    Object.hasOwn(config, 'registrationScope') && !isEngineeringId(config.registrationScope) ||
     !path(config.outputRoot) || !path(config.resourceRuntime) || !Array.isArray(config.profiles) ||
     config.profiles.length < 1 || config.profiles.length > 16 || config.profiles.some(row =>
-      !exact(row, ['id', 'label', 'acceptance', 'recipe']) || typeof row.id !== 'string' || !ID.test(row.id) ||
+      !exact(row, ['id', 'label', 'acceptance', 'recipe']) || !isEngineeringId(row.id) ||
       !text(row.label, 120) || !text(row.acceptance, 1024) || !row.recipe || typeof row.recipe !== 'object' ||
-      typeof row.recipe.seedRevision !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(row.recipe.seedRevision)) ||
+      !isEngineeringCommit(row.recipe.seedRevision)) ||
     new Set(config.profiles.map(row => row.id)).size !== config.profiles.length) fail('INVALID_INPUT', 'Invalid engineering preparation profiles');
   return config;
 }
 export function validateResourceConsoleEngineeringObjective(input: unknown): ResourceConsoleEngineeringObjective {
   const request = copy<ResourceConsoleEngineeringObjective>(input);
-  if (!exact(request, ['id', 'profileId', 'name', 'objective']) || ![request.id, request.profileId].every(value => typeof value === 'string' && ID.test(value)) ||
+  if (!exact(request, ['id', 'profileId', 'name', 'objective']) || ![request.id, request.profileId].every(isEngineeringId) ||
     !text(request.name, 120) || !text(request.objective, 4000)) fail('INVALID_INPUT', 'Expected a profile, unique objective ID, name and bounded objective');
   return request;
 }
@@ -66,8 +53,7 @@ export interface ResourceEngineeringAutomaticAdmissionCandidate {
 export function validateResourceEngineeringAutomaticAdmission(input: unknown): ResourceEngineeringAutomaticAdmission {
   const value = copy<ResourceEngineeringAutomaticAdmission>(input);
   if (!exact(value, ['schemaVersion', 'supervisionId', 'configDigest', 'deadlineAt']) || value.schemaVersion !== 1 ||
-      typeof value.supervisionId !== 'string' || !ID.test(value.supervisionId) || typeof value.configDigest !== 'string' || !HASH.test(value.configDigest) ||
-      typeof value.deadlineAt !== 'string' || !Number.isFinite(Date.parse(value.deadlineAt)) || new Date(value.deadlineAt).toISOString() !== value.deadlineAt) {
+      !isEngineeringId(value.supervisionId) || !isEngineeringHash(value.configDigest) || !isEngineeringIsoTimestamp(value.deadlineAt)) {
     fail('INVALID_INPUT', 'Invalid automatic admission binding');
   }
   return value;
@@ -76,7 +62,7 @@ function decodeRegistration(value: unknown): ResourceEngineeringPreparationRegis
     try {
       if (!exact(value, ['schemaVersion', 'configDigest', 'request', 'planDigest', 'bundlePlanDigest', 'enrollmentDigest',
         ...(Object.hasOwn(value ?? {}, 'source') ? ['source'] : []), ...(Object.hasOwn(value ?? {}, 'automaticAdmission') ? ['automaticAdmission'] : [])]) || value.schemaVersion !== 1 ||
-        ![value.configDigest, value.planDigest, value.bundlePlanDigest, value.enrollmentDigest].every(v => typeof v === 'string' && HASH.test(v))) return null;
+        ![value.configDigest, value.planDigest, value.bundlePlanDigest, value.enrollmentDigest].every(isEngineeringHash)) return null;
       validateResourceConsoleEngineeringObjective(value.request);
       if (Object.hasOwn(value, 'source')) validateUniverseCampaignDeliverySource(value.source);
       if (Object.hasOwn(value, 'automaticAdmission')) {
@@ -88,7 +74,7 @@ function decodeRegistration(value: unknown): ResourceEngineeringPreparationRegis
 }
 /** A fixed child of the accounting anchor, never a caller-selected path. */
 export function resourceEngineeringPreparationRegistrationRoot(root: string, registrationScope?: string): string {
-  if (!path(root) || registrationScope !== undefined && (typeof registrationScope !== 'string' || !ID.test(registrationScope))) {
+  if (!path(root) || registrationScope !== undefined && !isEngineeringId(registrationScope)) {
     fail('INVALID_INPUT', 'Invalid engineering registration scope');
   }
   return join(root, registrationScope === undefined ? 'console-engineering-preparations'
@@ -218,7 +204,7 @@ export function createResourceEngineeringPreparationRegistry(input: {
     prepare(input: unknown, guards: { beforeNew(id: string, priorCount: number): void; beforePublication(catalog: ResourceConsoleEngineeringCatalog): void }, automaticAdmission?: ResourceEngineeringAutomaticAdmission) {
       const admission = automaticAdmission === undefined ? undefined : validateResourceEngineeringAutomaticAdmission(automaticAdmission);
       const value = copy<Record<string, unknown>>(input);
-      if (!exact(value, ['id', 'profileId', 'name', 'objective', 'expectedPlanDigest']) || typeof value.expectedPlanDigest !== 'string' || !HASH.test(value.expectedPlanDigest)) fail('INVALID_INPUT', 'Expected a checked objective digest');
+      if (!exact(value, ['id', 'profileId', 'name', 'objective', 'expectedPlanDigest']) || !isEngineeringHash(value.expectedPlanDigest)) fail('INVALID_INPUT', 'Expected a checked objective digest');
       const { expectedPlanDigest, ...request } = value;
       const incoming = validateResourceConsoleEngineeringObjective(request);
       const prior = registrations(); const existing = prior.find(row => row.request.id === incoming.id);

@@ -2,25 +2,17 @@ import { createResourceEngineeringPreparationRegistry, validateResourceConsoleEn
   validateResourceEngineeringAutomaticAdmission, type ResourceEngineeringAutomaticAdmission, type ResourceEngineeringAutomaticAdmissionCandidate, type ResourceEngineeringPreparationRegistration } from './engineering-preparation-registry.js';
 export { validateResourceConsoleEngineeringObjective, validateResourceConsoleEngineeringPreparationConfig } from './engineering-preparation-registry.js';
 /** Host-pinned objective preparation on the existing engineering owner. No execution or queue mutation. */
-import { canonicalEvidencePackJsonV3 } from '../foundry/provenance.js';
 import { canonical } from '../universe/artifacts.js';
-import { ResourceSupervisorError } from './pool-supervisor.js';
 import { type ResourceConsoleEngineeringOwner } from './console-engineering.js';
+import { captureStrictOwnDataOptions, cloneCanonicalEngineeringData, failResourceSupervisor as fail,
+  hasExactEngineeringKeys as exact, isEngineeringHash, isEngineeringId } from './engineering-shared.js';
 import type { ResourceEngineeringSuccessorSource } from './engineering-preparation-types.js';
 import { checkResourceEngineeringSuccessorPreparation, prepareResourceEngineeringSuccessorBundle } from './engineering-successor-preparation.js';
 import { readResourceEngineeringDeliveredSource, type ResourceEngineeringDeliveredSource } from './engineering-delivered-source.js';
 import type { ResourceConsoleEngineeringObjective, ResourceConsoleEngineeringObjectivePlan, ResourceConsoleEngineeringObjectivePrepared,
   ResourceConsoleEngineeringPreparationConfig, ResourceConsoleEngineeringProfile } from './console-engineering-preparation-types.js';
 
-const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
-function fail(code: ConstructorParameters<typeof ResourceSupervisorError>[0], message: string): never { throw new ResourceSupervisorError(code, message); }
-function copy<T>(input: unknown): T {
-  const text = canonicalEvidencePackJsonV3(input);
-  if (text === null || Buffer.byteLength(text) > 1024 * 1024) fail('INVALID_INPUT', 'Invalid engineering preparation data');
-  return JSON.parse(text) as T;
-}
-const exact = (value: unknown, keys: string[]): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value) &&
-  Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
+const copy = <T>(input: unknown): T => cloneCanonicalEngineeringData<T>(input, 1024 * 1024, () => fail('INVALID_INPUT', 'Invalid engineering preparation data'));
 export class ResourceEngineeringAutomaticAdmissionOwnershipError extends Error {
   constructor() { super('Automatic admission owner unavailable'); }
 }
@@ -46,12 +38,8 @@ export function createResourceConsoleEngineeringPreparation(input: {
   // Capture caller-owned options without invoking accessors. Later mutation must
   // not redirect a checked objective away from its pinned console context.
   const required = ['configFile', 'config', 'root', 'workspace', 'projectsFile', 'poolFile', 'bindingsFile', 'observationsFile', 'owner'];
-  if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_INPUT', 'Invalid engineering preparation options');
-  const descriptors = Object.getOwnPropertyDescriptors(input);
-  if (Reflect.ownKeys(input).some(key => typeof key !== 'string' || ![...required, 'quotaConfigFile'].includes(key)) ||
-    required.some(key => !Object.hasOwn(descriptors, key)) ||
-    Object.values(descriptors).some(descriptor => !Object.hasOwn(descriptor, 'value'))) fail('INVALID_INPUT', 'Invalid engineering preparation options');
-  const options = Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value])) as typeof input;
+  const options = captureStrictOwnDataOptions(input, required, ['quotaConfigFile'],
+    () => fail('INVALID_INPUT', 'Invalid engineering preparation options'), false);
   const { owner: _owner, ...registryOptions } = options;
   const registry = createResourceEngineeringPreparationRegistry(registryOptions);
   const { config, contextDigest, currentConfig, registrations, objective, planned, materialize, successorOptions, committed } = registry;
@@ -88,9 +76,9 @@ export function createResourceConsoleEngineeringPreparation(input: {
     pendingAutomaticAdmissions(input, admittedInput, preferredEnrollmentId) {
       const binding = validateResourceEngineeringAutomaticAdmission(input);
       const admitted = copy<typeof admittedInput>(admittedInput);
-      if (preferredEnrollmentId !== undefined && (typeof preferredEnrollmentId !== 'string' || !ID.test(preferredEnrollmentId))) fail('INVALID_INPUT', 'Invalid preferred automatic enrollment');
+      if (preferredEnrollmentId !== undefined && !isEngineeringId(preferredEnrollmentId)) fail('INVALID_INPUT', 'Invalid preferred automatic enrollment');
       if (!Array.isArray(admitted) || admitted.length > 32 || admitted.some(row => !exact(row, ['enrollmentId', 'enrollmentDigest']) ||
-          typeof row.enrollmentId !== 'string' || !ID.test(row.enrollmentId) || typeof row.enrollmentDigest !== 'string' || !/^[a-f0-9]{64}$/.test(row.enrollmentDigest)) ||
+          !isEngineeringId(row.enrollmentId) || !isEngineeringHash(row.enrollmentDigest)) ||
           new Set(admitted.map(row => row.enrollmentId)).size !== admitted.length) fail('INVALID_INPUT', 'Invalid admitted enrollment evidence');
       currentConfig();
       const rows = registrations().filter(row => row.automaticAdmission?.supervisionId === binding.supervisionId).sort((a, b) => a.request.id.localeCompare(b.request.id));
@@ -153,7 +141,7 @@ export function createResourceConsoleEngineeringPreparation(input: {
       return copy({ plan: verified.candidate.plan, enrollment, disposition: report.disposition });
     },
     profiles(projectId) {
-      if (typeof projectId !== 'string' || !ID.test(projectId)) fail('INVALID_INPUT', 'Expected a registered project ID');
+      if (!isEngineeringId(projectId)) fail('INVALID_INPUT', 'Expected a registered project ID');
       currentConfig();
       return copy(config.profiles.filter(row => row.recipe.projectId === projectId).map(row => ({ id: row.id, label: row.label,
         acceptance: row.acceptance, projectId, seedRevision: row.recipe.seedRevision, metric: row.recipe.metric,

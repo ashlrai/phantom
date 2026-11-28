@@ -1,5 +1,4 @@
 /** Historical completion evidence only. Never opens an execution owner or renews a budget. */
-import { lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { canonicalEvidencePackJsonV3 } from '../foundry/provenance.js';
 import { ownsLocalStoreLock, type LocalStoreLock } from '../fleet/local-store-lock.js';
@@ -23,6 +22,7 @@ import { validateResourcePool } from './pool-policy.js';
 import { validateResourceBindings } from './worker.js';
 import { hash, readEngineeringSuccessorJournal, parseResourceEngineeringSuccessorProposal,
   validateResourceEngineeringSuccessorCoordinatorConfig, type Intent, type Result, type Prepared, type Admitted } from './engineering-successor-store.js';
+import { isEngineeringHash, isEngineeringIsoTimestamp, pathExistsStrict } from './engineering-shared.js';
 
 export interface ResourceEngineeringPredecessorCheckOptions {
   setup: ResourceEngineeringAutonomousSetupOptions;
@@ -44,8 +44,7 @@ export interface ResourceEngineeringPredecessorCheck {
 type Stage = 'inputs' | 'setup' | 'configuration' | 'projects' | 'queue' | 'completion' | 'custody' | 'successors' | 'lineage' | 'stability';
 function requireEvidence(value: unknown): asserts value { if (!value) throw new Error('Incomplete predecessor evidence'); }
 function absent(file: string): void {
-  try { lstatSync(file); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
-  throw new Error('Predecessor ownership or pending work is present');
+  if (pathExistsStrict(file)) throw new Error('Predecessor ownership or pending work is present');
 }
 
 /** A bounded, double-read join, NOT an atomic seal or dispatch permission. A mission
@@ -68,9 +67,7 @@ export function checkResourceEngineeringPredecessor(input: ResourceEngineeringPr
     requireEvidence(options && Object.keys(options).sort().join(',') === (options.proposalFeedback === undefined
       ? 'expectedDeadlineAt,expectedPlanDigest,setup' : 'expectedDeadlineAt,expectedPlanDigest,proposalFeedback,setup') &&
       (options.proposalFeedback === undefined || options.proposalFeedback === MISSION_MEASURED_FEEDBACK) &&
-      typeof options.expectedPlanDigest === 'string' && /^[a-f0-9]{64}$/.test(options.expectedPlanDigest) &&
-      typeof options.expectedDeadlineAt === 'string' && Number.isFinite(Date.parse(options.expectedDeadlineAt)) &&
-      new Date(options.expectedDeadlineAt).toISOString() === options.expectedDeadlineAt);
+      isEngineeringHash(options.expectedPlanDigest) && isEngineeringIsoTimestamp(options.expectedDeadlineAt));
     const sample = () => {
       stage = 'setup';
       const setupEvidence = readResourceEngineeringAutonomousSetupEvidence(options.setup);

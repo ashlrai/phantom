@@ -1,6 +1,5 @@
 /** Standalone inspection: no owner, collector, provider, evaluator or repair is started. */
-import { lstatSync } from 'node:fs';
-import { isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
+import { join } from 'node:path';
 import { canonicalEvidencePackJsonV3, loadExistingProvenanceKeyReadOnly } from '../foundry/provenance.js';
 import { readKillSwitch } from '../sandbox/policy.js';
 import { canonical, digest } from '../universe/artifacts.js';
@@ -11,6 +10,7 @@ import { portfolioControllerDirectory } from '../universe/portfolio-controller-s
 import { checkResourceGenerationRuntime, type ResourceGenerationRuntimeCheck } from '../universe/resource-runtime-check.js';
 import { prepareResourceConsoleEngineeringEnrollments, validateResourceConsoleEngineeringCatalog } from './console-engineering.js';
 import { matchesResourceConsoleProject, validateResourceConsoleProjects } from './console-projects.js';
+import { containsPath as contains, isCanonicalEngineeringPath, pathExistsStrict as present } from './engineering-shared.js';
 import { decodeResourceConsoleState, previewResourceConsoleProjects } from './pool-supervisor.js';
 import { readResourceJson, resourcePoolStatus, readResourcePoolHistory } from './pool-runtime.js';
 import { validateResourcePool, validateResourceObservations } from './pool-policy.js';
@@ -30,12 +30,6 @@ export interface ResourceConsoleEngineeringCheck {
     projectRegistration: 'persisted' | 'would-register'; status: 'configured' | 'held'; reasons: string[];
     graph: Pick<ControlGraphReport, 'sourceState' | 'status' | 'definitionDigest'>;
     runtime: ResourceGenerationRuntimeCheck }>;
-}
-function present(path: string): boolean {
-  try { lstatSync(path); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
-}
-function contains(parent: string, child: string): boolean {
-  const part = relative(parent, child); return part === '' || part !== '..' && !part.startsWith(`..${sep}`) && !isAbsolute(part);
 }
 
 /** Valid local configuration does not attest capacity or authorize a future launch. */
@@ -65,9 +59,7 @@ export function checkResourceConsoleEngineering(input: ResourceConsoleEngineerin
       const keys = ['root', 'poolFile', 'bindingsFile', 'observationsFile', 'workspace', 'projectsFile', 'engineeringFile',
         ...(Object.hasOwn(value, 'quotaConfigFile') ? ['quotaConfigFile'] : [])];
       if (Object.keys(value).length !== keys.length || keys.some(key => !Object.hasOwn(value, key)) ||
-        Object.values(value).some(path => typeof path !== 'string' || Buffer.byteLength(path) > 4096 ||
-          !isAbsolute(path) || resolve(path) !== path || parse(path).root === path ||
-          [...path].some(c => c.charCodeAt(0) < 32 || c.charCodeAt(0) >= 127 && c.charCodeAt(0) <= 159)) || process.platform === 'win32') throw new Error();
+        Object.values(value).some(path => !isCanonicalEngineeringPath(path)) || process.platform === 'win32') throw new Error();
       return value;
     });
     const pool = stage('pool', () => validateResourcePool(read(options.poolFile)));

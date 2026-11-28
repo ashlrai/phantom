@@ -18,12 +18,15 @@ export interface ResourceConsoleEngineeringSupervisionAdmission {
   expectedRevision: number;
 }
 
-export const ENGINEERING_SUPERVISION_REASONS = [
+export type ResourceConsoleEngineeringSupervisionReason =
+  | 'not-started' | 'waiting-for-readiness' | 'supervisor-paused' | 'running' | 'completed'
+  | 'cancelled' | 'deadline-exhausted' | 'unchanged-evidence' | 'attempt-limit'
+  | 'evidence-unavailable' | 'launch-unavailable' | 'supervisor-closed';
+const ENGINEERING_SUPERVISION_REASONS: readonly ResourceConsoleEngineeringSupervisionReason[] = [
   'not-started', 'waiting-for-readiness', 'supervisor-paused', 'running', 'completed',
   'cancelled', 'deadline-exhausted', 'unchanged-evidence', 'attempt-limit',
   'evidence-unavailable', 'launch-unavailable', 'supervisor-closed',
-] as const;
-export type ResourceConsoleEngineeringSupervisionReason = typeof ENGINEERING_SUPERVISION_REASONS[number];
+];
 export interface ResourceConsoleEngineeringSupervisionSnapshot {
   schemaVersion: 1;
   configId: string;

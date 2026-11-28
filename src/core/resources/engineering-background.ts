@@ -1,7 +1,5 @@
 /** One effectful engineering isolate. Unlike read workers it is never restarted automatically. */
 import { Worker } from 'node:worker_threads';
-import { createRequire } from 'node:module';
-import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 import { canonicalEvidencePackJsonV3 } from '../foundry/provenance.js';
 import { ResourceSupervisorError, type ResourcePoolSupervisor } from './pool-supervisor.js';
@@ -12,42 +10,28 @@ import { createEngineeringSuccessorReader, type EngineeringSuccessorReader } fro
 import type { ResourceEngineeringSuccessorJournalScope } from './engineering-successor-store.js';
 import type { EngineeringCoordinatorLifecycleReport } from './engineering-successor-coordinator-types.js';
 import { readEngineeringCoordinatorObservation } from './engineering-coordinator-observation.js';
+import { bindOwnDataMethod, captureStrictOwnDataOptions, cloneCanonicalEngineeringData,
+  failResourceSupervisor, resolveTsxWorkerEntrypoint } from './engineering-shared.js';
 import { ENGINEERING_BACKGROUND_HOST_METHODS, type EngineeringBackground, type EngineeringBackgroundHost,
   type EngineeringBackgroundPreparation } from './engineering-background-types.js';
 
 const MAX_BYTES = 2 * 1024 * 1024;
 const CODES = ['INVALID_INPUT', 'NOT_FOUND', 'CONFLICT', 'CAPACITY', 'UNAVAILABLE'] as const;
 function unavailable(): ResourceSupervisorError { return new ResourceSupervisorError('UNAVAILABLE', 'Engineering background operation unavailable'); }
-function copy<T>(input: unknown): T {
-  const text = canonicalEvidencePackJsonV3(input);
-  if (text === null || Buffer.byteLength(text) > MAX_BYTES) throw new ResourceSupervisorError('INVALID_INPUT', 'Invalid engineering background data');
-  return JSON.parse(text) as T;
-}
-function method<T extends object, K extends keyof T>(object: T, key: K): T[K] {
-  const property = object && Object.getOwnPropertyDescriptor(object, key);
-  if (!property || !Object.hasOwn(property, 'value') || typeof property.value !== 'function') throw unavailable();
-  return property.value.bind(object) as T[K];
-}
-function entrypoint(): URL {
-  if (import.meta.url.endsWith('/engineering-background.ts')) {
-    const loader = pathToFileURL(createRequire(import.meta.url).resolve('tsx/esm/api')).href;
-    const source = new URL('./engineering-background-worker.ts', import.meta.url).href;
-    return new URL(`data:text/javascript,${encodeURIComponent(`import { register } from ${JSON.stringify(loader)}; register(); await import(${JSON.stringify(source)});`)}`);
-  }
-  return new URL('./engineering-background-worker.js', import.meta.url);
-}
+const copy = <T>(input: unknown): T =>
+  cloneCanonicalEngineeringData<T>(input, MAX_BYTES, () => failResourceSupervisor('INVALID_INPUT', 'Invalid engineering background data'));
+const method = <T extends object, K extends keyof T>(object: T, key: K): T[K] =>
+  bindOwnDataMethod(object, key, () => { throw unavailable(); });
+const entrypoint = (): URL => resolveTsxWorkerEntrypoint(import.meta.url, '/engineering-background.ts', 'engineering-background-worker');
 
 export async function createEngineeringBackground(input: {
   preparation: EngineeringBackgroundPreparation; owner: ResourceConsoleEngineeringOwner; supervisor: ResourcePoolSupervisor;
   isClosing(): boolean; onFault(): void; signal?: AbortSignal;
 }): Promise<EngineeringBackground> {
-  const required = ['preparation', 'owner', 'supervisor', 'isClosing', 'onFault'];
-  if (!input || ![Object.prototype, null].includes(Object.getPrototypeOf(input)) ||
-      required.some(key => !Object.hasOwn(input, key)) || Reflect.ownKeys(input).some(key => typeof key !== 'string' ||
-      ![...required, 'signal'].includes(key) || !Object.hasOwn(Object.getOwnPropertyDescriptor(input, key)!, 'value'))) throw unavailable();
-  const { owner, supervisor, signal } = input;
-  const preparation = copy<EngineeringBackgroundPreparation>(input.preparation);
-  const isClosing = method(input, 'isClosing'); const onFault = method(input, 'onFault');
+  const captured = captureStrictOwnDataOptions(input, ['preparation', 'owner', 'supervisor', 'isClosing', 'onFault'], ['signal'], () => { throw unavailable(); });
+  const { owner, supervisor, signal } = captured;
+  const preparation = copy<EngineeringBackgroundPreparation>(captured.preparation);
+  const isClosing = method(captured, 'isClosing'); const onFault = method(captured, 'onFault');
   if (signal !== undefined && !(signal instanceof AbortSignal) || signal?.aborted) throw unavailable();
   const ownerMethods = { catalog: method(owner, 'catalog'), snapshot: method(owner, 'snapshot'),
     checkRegistration: method(owner, 'checkRegistration'), register: method(owner, 'register') };

@@ -1,4 +1,4 @@
-import { resourceCheckOptions, resourceCheckPath, ResourceCheckUsageError } from './resource-check-options.js';
+import { quoteAshlrCommand, reportResourceCheckError, resourceCheckOptions, resourceCheckPath, resourceCheckSha256, ResourceCheckUsageError } from './resource-check-options.js';
 
 const USAGE = `usage: ashlr resources pool engineering prepare --recipe ABS --output ABS
        --resource-runtime ABS --workspace ABS --projects ABS
@@ -27,8 +27,6 @@ Either console command can resume previously queued ordinary tasks.
 Exit codes: 0 prepared/planned/help, 1 unavailable/conflict, 2 invalid arguments.
 `;
 const PATHS = ['--recipe', '--output', '--resource-runtime', '--workspace', '--projects'];
-const HASH = /^[a-f0-9]{64}$/;
-const command = (args: string[]) => `node bin/ashlr ${args.map(arg => `'${arg.replaceAll("'", "'\\''")}'`).join(' ')}`;
 
 export async function cmdResourceEngineeringPrepare(args: string[]): Promise<number> {
   try {
@@ -43,8 +41,7 @@ export async function cmdResourceEngineeringPrepare(args: string[]): Promise<num
       resourceRuntime: resourceCheckPath(parsed.values, '--resource-runtime'),
       workspace: resourceCheckPath(parsed.values, '--workspace'),
       projectsFile: resourceCheckPath(parsed.values, '--projects') };
-    const expected = parsed.values.get('--expected-plan-digest');
-    if (expected !== undefined && !HASH.test(expected)) throw new ResourceCheckUsageError('Expected a SHA256 preparation digest');
+    const expected = resourceCheckSha256(parsed.values, '--expected-plan-digest', 'Expected a SHA256 preparation digest');
     const [{ readResourceJson }, backend] = await Promise.all([
       import('../core/resources/pool-runtime.js'), import('../core/resources/engineering-preparation.js'),
     ]);
@@ -64,16 +61,14 @@ export async function cmdResourceEngineeringPrepare(args: string[]): Promise<num
         `Bundle: ${result.disposition} · enrollment digest: ${result.enrollmentDigest}`,
         `Commissioning: ${result.commissioning.status} · ${result.commissioning.reasons.join(', ') || 'no recorded holds'}`,
         `Receipt: ${result.paths.receipt}`,
-        `Manual engineering console (run from the built source checkout): ${command(result.consoleArguments.manual)}`,
-        `Automatic engineering console (effectful when run): ${command(result.consoleArguments.automatic)}`,
+        `Manual engineering console (run from the built source checkout): ${quoteAshlrCommand(result.consoleArguments.manual)}`,
+        `Automatic engineering console (effectful when run): ${quoteAshlrCommand(result.consoleArguments.automatic)}`,
       ] : ['Check only: no files created or campaigns registered.']),
       'No workers, evaluators, console or services started. Account policy and shared usage history are unchanged.',
       'Prepared configuration is not provider commissioning, accepted engineering value or production deployment.',
     ].join('\n'));
     return 0;
   } catch (error) {
-    const message = error instanceof ResourceCheckUsageError ? error.message : 'Engineering preparation unavailable; inspect the selected inputs and any incomplete bundle';
-    if (args.includes('--json')) console.log(JSON.stringify({ error: message })); else console.error(message);
-    return error instanceof ResourceCheckUsageError ? 2 : 1;
+    return reportResourceCheckError(args, error, 'Engineering preparation unavailable; inspect the selected inputs and any incomplete bundle');
   }
 }

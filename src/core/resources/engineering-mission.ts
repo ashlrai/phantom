@@ -1,6 +1,6 @@
 /** Standing missions compose the existing console; they never dispatch a second worker runtime. */
-import { lstatSync, mkdirSync } from 'node:fs';
-import { isAbsolute, join, relative, sep } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { acquireLocalStoreLockWithOutcome, ownsLocalStoreLock, releaseLocalStoreLock, type LocalStoreLock } from '../fleet/local-store-lock.js';
 import { canonical, digest, inspectPrivateDirectory } from '../universe/artifacts.js';
@@ -26,6 +26,7 @@ import type { ResourceConsoleSnapshot, ResourceConsoleTranscript } from './conso
 import { MissionConsoleRequestError, requestEngineeringMissionConsole } from './engineering-mission-console.js';
 import { beginEngineeringMissionInvocation } from './engineering-mission-invocations.js';
 import { MAX_MISSION_FEEDBACK_PROMPT_BYTES } from './engineering-mission-feedback.js';
+import { pathExistsStrict as present, pathsOverlap } from './engineering-shared.js';
 
 export interface ResourceEngineeringMissionReport {
   schemaVersion: 1; missionId: string; state: 'completed' | 'stopped' | 'held'; reason: string;
@@ -38,10 +39,6 @@ export interface ResourceEngineeringMissionHost {
 }
 class MissionEvidenceError extends Error {}
 const requireFact = (value: unknown, reason: string): void => { if (!value) throw new MissionEvidenceError(reason); };
-const present = (path: string): boolean => { try { lstatSync(path); return true; } catch (error) {
-  if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error;
-} };
-const contains = (a: string, b: string): boolean => { const part = relative(a, b); return part === '' || part !== '..' && !part.startsWith(`..${sep}`) && !isAbsolute(part); };
 
 export async function runResourceEngineeringMission(input: ResourceEngineeringMissionConfig,
   host: ResourceEngineeringMissionHost = {}): Promise<ResourceEngineeringMissionReport> {
@@ -80,7 +77,7 @@ export async function runResourceEngineeringMission(input: ResourceEngineeringMi
     for (const path of [runtime.root, runtime.workspace, config.initial.setup.workspace, config.initial.setup.resourceRuntime,
       config.initial.setup.projectsFile, runtime.poolPath, runtime.bindingsPath, runtime.observationsPath,
       ...projects.map(row => row.workspace), ...(runtime.quotaConfigPath ? [runtime.quotaConfigPath] : [])]) {
-      requireFact(!contains(config.root, path) && !contains(path, config.root), 'Mission records overlap execution controls');
+      requireFact(!pathsOverlap(config.root, path), 'Mission records overlap execution controls');
     }
     const acquired = acquireLocalStoreLockWithOutcome(join(config.root, '.mission.lock'), 0, { anchorPath: config.root, exactPrivateStorage: true });
     requireFact(acquired.state === 'acquired', 'Mission already owned or unavailable');

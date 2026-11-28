@@ -1,4 +1,4 @@
-import { resourceCheckOptions, resourceCheckPath, ResourceCheckUsageError } from './resource-check-options.js';
+import { reportResourceCheckError, resourceCheckOptions, resourceCheckPath } from './resource-check-options.js';
 
 const USAGE = `usage: ashlr resources pool engineering check --root ABS --pool ABS --bindings ABS
        --observations ABS --workspace ABS --projects ABS --engineering ABS
@@ -69,9 +69,6 @@ export async function cmdResourceEngineeringCheck(args: string[]): Promise<numbe
     ].join('\n'));
     return report.status === 'configured' ? 0 : 1;
   } catch (error) {
-    const message = error instanceof ResourceCheckUsageError ? error.message : 'Engineering commissioning check unavailable';
-    if (args.includes('--json')) console.log(JSON.stringify({ error: message }));
-    else console.error(message);
-    return error instanceof ResourceCheckUsageError ? 2 : 1;
+    return reportResourceCheckError(args, error, 'Engineering commissioning check unavailable');
   }
 }

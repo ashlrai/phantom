@@ -1,8 +1,7 @@
 /** Trusted local registration bridge. No executor, scheduler, key creation or provider calls. */
 import { execFileSync } from 'node:child_process';
-import { closeSync, constants, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
-import { canonicalEvidencePackJsonV3 } from '../foundry/provenance.js';
+import { linkSync, lstatSync, mkdirSync, unlinkSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative } from 'node:path';
 import { canonical, digest, executable, evaluationExecutableDigest, inspectPrivateDirectory, pinSeed, MAX_ARTIFACT_BYTES, MAX_ARTIFACT_ENTRIES } from '../universe/artifacts.js';
 import { assertComparatorUnchanged, initUniverse, initUniverseWithCampaignDeliveryOrigin, manifestRecord, universePath, validateUniverseManifest } from '../universe/store.js';
 import { PREPARATION_PROCESS_SCORE_BUILTIN, resolveBuiltinEvaluator } from '../universe/builtin-evaluator-registry.js';
@@ -23,40 +22,23 @@ import { readResourceJson, readResourcePoolHistory } from './pool-runtime.js';
 import { validateResourcePool } from './pool-policy.js';
 import { validateResourceBindings } from './worker.js';
 import { matchesResourceConsoleProject, validateResourceConsoleProjects } from './console-projects.js';
-import { decodeResourceConsoleState, previewResourceConsoleProjects, ResourceSupervisorError } from './pool-supervisor.js';
+import { decodeResourceConsoleState, previewResourceConsoleProjects } from './pool-supervisor.js';
 import { prepareResourceConsoleEngineeringEnrollments, type ResourceConsoleEngineeringCatalog } from './console-engineering.js';
 import { checkResourceConsoleEngineering } from './console-engineering-check.js';
 import { validateResourceConsoleEngineeringSupervisionConfig } from './console-engineering-supervisor.js';
+import { cloneCanonicalEngineeringData, containsPath as contains, engineeringDigest as sha,
+  failResourceSupervisor as fail, hasExactEngineeringKeys as exact, isCanonicalEngineeringPath as path,
+  isEngineeringHash, pathExistsStrict as present, pathsOverlap as overlaps,
+  writeExclusivePrivateJson as writePrivate } from './engineering-shared.js';
 import type { ResourceEngineeringPreparationOptions, ResourceEngineeringPreparationPlan, ResourceEngineeringPreparationReport,
   ResourceEngineeringRecipe, ResourceEngineeringSuccessorPreparationOptions, ResourceEngineeringSuccessorPreparationPlan,
   ResourceEngineeringSuccessorPreparationReport, ResourceEngineeringPreparationMetadata,
   ResourceEngineeringSuccessorPreparationMetadata } from './engineering-preparation-types.js';
 export type { ResourceEngineeringPreparationOptions, ResourceEngineeringPreparationPlan, ResourceEngineeringPreparationReport,
-  ResourceEngineeringRecipe, ResourceEngineeringPreparationMetadata, ResourceEngineeringSuccessorPreparationMetadata } from './engineering-preparation-types.js';
+  ResourceEngineeringRecipe, ResourceEngineeringSuccessorPreparationMetadata } from './engineering-preparation-types.js';
 
-const HASH = /^[a-f0-9]{64}$/;
-function fail(code: 'INVALID_INPUT' | 'CONFLICT' | 'UNAVAILABLE', message: string): never { throw new ResourceSupervisorError(code, message); }
-function data<T>(input: unknown): T {
-  const text = canonicalEvidencePackJsonV3(input);
-  if (text === null || Buffer.byteLength(text) > 256 * 1024) fail('INVALID_INPUT', 'Invalid preparation data');
-  return JSON.parse(text) as T;
-}
-function exact(value: unknown, keys: string[]): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value) &&
-    Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
-}
-function path(value: unknown): value is string {
-  return typeof value === 'string' && Buffer.byteLength(value) <= 4096 && isAbsolute(value) && resolve(value) === value &&
-    value !== parse(value).root && [...value].every(c => c.charCodeAt(0) >= 32 && !(c.charCodeAt(0) >= 127 && c.charCodeAt(0) <= 159));
-}
-function contains(parent: string, child: string): boolean {
-  const part = relative(parent, child); return part === '' || part !== '..' && !part.startsWith(`..${sep}`) && !isAbsolute(part);
-}
-function overlaps(a: string, b: string): boolean { return contains(a, b) || contains(b, a); }
-function present(file: string): boolean {
-  try { lstatSync(file); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
-}
-function sha(value: unknown): string { return digest(canonical(value)); }
+const data = <T>(input: unknown): T =>
+  cloneCanonicalEngineeringData<T>(input, 256 * 1024, () => fail('INVALID_INPUT', 'Invalid preparation data'));
 function git(repo: string, args: string[], maxBuffer = 8 * 1024 * 1024): Buffer {
   return execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-C', repo, ...args], {
     env: { PATH: process.env.PATH, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0' },
@@ -226,11 +208,6 @@ export function checkResourceEngineeringPreparation(options: ResourceEngineering
   return final.plan;
 }
 
-function writePrivate(file: string, value: unknown): void {
-  const fd = openSync(file, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-  try { writeFileSync(fd, canonical(value) + '\n'); fsyncSync(fd); } finally { closeSync(fd); }
-  fsyncDirectory(dirname(file));
-}
 function generated(current: ReturnType<typeof capture>) {
   const { recipe, runtime, paths, options } = current;
   const catalog: ResourceConsoleEngineeringCatalog = { schemaVersion: 1, enrollments: [{ id: recipe.id, projectId: recipe.projectId,
@@ -300,7 +277,7 @@ function readPreparedBundle(input: ResourceEngineeringPreparationOptions & { exp
 function inspectPreparedBundle(input: ResourceEngineeringPreparationOptions & { expectedPlanDigest: string }, successor?: SuccessorContext) {
   const captured = data<ResourceEngineeringPreparationOptions & { expectedPlanDigest: string }>(input);
   if (!exact(captured, ['recipe', 'output', 'resourceRuntime', 'workspace', 'projectsFile', 'expectedPlanDigest']) ||
-    typeof captured.expectedPlanDigest !== 'string' || !HASH.test(captured.expectedPlanDigest)) fail('INVALID_INPUT', 'Preparation requires an exact plan digest');
+    !isEngineeringHash(captured.expectedPlanDigest)) fail('INVALID_INPUT', 'Preparation requires an exact plan digest');
   const { expectedPlanDigest, ...options } = captured;
   const current = capture(options, successor);
   if (current.plan.planDigest !== expectedPlanDigest || !present(options.output)) fail('CONFLICT', 'Prepared bundle is missing or changed');
@@ -334,7 +311,7 @@ export function prepareResourceEngineeringBundle(input: ResourceEngineeringPrepa
 function prepareBundle(input: ResourceEngineeringPreparationOptions & { expectedPlanDigest: string }, successor?: SuccessorContext): ResourceEngineeringPreparationReport {
   const captured = data<ResourceEngineeringPreparationOptions & { expectedPlanDigest: string }>(input);
   if (!exact(captured, ['recipe', 'output', 'resourceRuntime', 'workspace', 'projectsFile', 'expectedPlanDigest']) ||
-    typeof captured.expectedPlanDigest !== 'string' || !HASH.test(captured.expectedPlanDigest)) fail('INVALID_INPUT', 'Preparation requires an exact plan digest');
+    !isEngineeringHash(captured.expectedPlanDigest)) fail('INVALID_INPUT', 'Preparation requires an exact plan digest');
   const { expectedPlanDigest, ...options } = captured;
   let current = capture(options, successor);
   if (current.plan.planDigest !== expectedPlanDigest) fail('CONFLICT', 'Preparation plan changed');
@@ -390,7 +367,7 @@ function prepareBundle(input: ResourceEngineeringPreparationOptions & { expected
 function successorInput(input: unknown, expected: boolean) {
   const value = data<ResourceEngineeringSuccessorPreparationOptions & { expectedPlanDigest?: string }>(input);
   const keys = ['recipe', 'output', 'resourceRuntime', 'workspace', 'projectsFile', 'source', ...(expected ? ['expectedPlanDigest'] : [])];
-  if (!exact(value, keys) || expected && (typeof value.expectedPlanDigest !== 'string' || !HASH.test(value.expectedPlanDigest)) ||
+  if (!exact(value, keys) || expected && !isEngineeringHash(value.expectedPlanDigest) ||
       !value.recipe || typeof value.recipe !== 'object' || Array.isArray(value.recipe) || Object.hasOwn(value.recipe, 'seedRevision')) {
     fail('INVALID_INPUT', 'Invalid successor preparation request');
   }

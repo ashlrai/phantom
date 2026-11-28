@@ -1,7 +1,7 @@
 /** Bounded successor intake. Proposal effects use the existing account ledger;
  * engineering effects remain exclusively owned by the existing supervisor. */
 import { mkdirSync } from 'node:fs';
-import { isAbsolute, join, parse, resolve } from 'node:path';
+import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { acquireLocalStoreLockWithOutcome, ownsLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { canonical, digest, inspectPrivateDirectory } from '../universe/artifacts.js';
@@ -9,9 +9,10 @@ import { writeImmutablePrivateRecord } from '../util/immutable-private-record-st
 import { pinResourceConsoleProject, matchesResourceConsoleProject } from './console-projects.js';
 import { validateResourcePool } from './pool-policy.js';
 import { resourceAdmissionPreflight, resourcePoolStatus, runResourceTask, validateResourceTask } from './pool-runtime.js';
-import { ResourceSupervisorError } from './pool-supervisor.js';
 import { validateResourceBindings } from './worker.js';
 import { waitForResourceCapacity } from './capacity-wait.js';
+import { bindOwnDataMethod, captureStrictOwnDataOptions, failResourceSupervisor,
+  isCanonicalAbsoluteNonRootPath, isEngineeringHash } from './engineering-shared.js';
 import type { EngineeringCoordinatorLifecycleReport, ResourceEngineeringSuccessorCoordinatorOptions as Options,
   ResourceEngineeringSuccessorCoordinatorSnapshot as Snapshot, ResourceEngineeringSuccessorEvidence as Evidence } from './engineering-successor-coordinator-types.js';
 export type * from './engineering-successor-coordinator-types.js';
@@ -20,34 +21,28 @@ import { data, hash, evidence, engineeringSuccessorRecordStore, engineeringSucce
   type JournalScope, type DurableRecord, type EnrollmentRecord, type Intent, type Result, type Prepared } from './engineering-successor-store.js';
 export { validateResourceEngineeringSuccessorCoordinatorConfig, parseResourceEngineeringSuccessorProposal } from './engineering-successor-store.js';
 
-const HASH = /^[a-f0-9]{64}$/; const MAX_OUTPUT = 16 * 1024;
-function fail(message: string): never { throw new ResourceSupervisorError('UNAVAILABLE', message); }
+const MAX_OUTPUT = 16 * 1024;
+function fail(message: string): never { failResourceSupervisor('UNAVAILABLE', message); }
 
 export function createResourceEngineeringSuccessorCoordinator(options: Options): { snapshot(): Snapshot; observationScope(): JournalScope; start(): void; close(): Promise<void> } {
   const required = ['root', 'config', 'pool', 'bindings', 'cwd', 'supervision', 'readAdmissionEvidence', 'host'];
-  if (!options || ![Object.prototype, null].includes(Object.getPrototypeOf(options)) || required.some(key => !Object.hasOwn(options, key)) ||
-    Reflect.ownKeys(options).some(key => typeof key !== 'string' ||
-    !['root', 'config', 'pool', 'bindings', 'cwd', 'supervision', 'readAdmissionEvidence', 'host', 'signal', 'onLifecycle'].includes(key) ||
-    !Object.hasOwn(Object.getOwnPropertyDescriptor(options, key)!, 'value'))) fail('Invalid successor options');
-  const config = validateResourceEngineeringSuccessorCoordinatorConfig(options.config); const configDigest = hash(config);
-  const root = options.root, cwd = options.cwd, signal = options.signal;
-  const onLifecycle = options.onLifecycle;
+  const captured = captureStrictOwnDataOptions(options, required, ['signal', 'onLifecycle'], () => fail('Invalid successor options'));
+  const config = validateResourceEngineeringSuccessorCoordinatorConfig(captured.config); const configDigest = hash(config);
+  const root = captured.root, cwd = captured.cwd, signal = captured.signal;
+  const onLifecycle = captured.onLifecycle;
   if (onLifecycle !== undefined && typeof onLifecycle !== 'function') fail('Invalid successor lifecycle observer');
-  for (const path of [root, cwd]) if (typeof path !== 'string' || !isAbsolute(path) || resolve(path) !== path || parse(path).root === path) fail('Invalid successor path');
+  for (const path of [root, cwd]) if (!isCanonicalAbsoluteNonRootPath(path)) fail('Invalid successor path');
   if (signal !== undefined && !(signal instanceof AbortSignal) || signal?.aborted) fail('Successor startup cancelled');
-  const pool = validateResourcePool(data(options.pool)); const bindings = validateResourceBindings(data(options.bindings), pool); const poolDigest = hash({ pool, bindings });
+  const pool = validateResourcePool(data(captured.pool)); const bindings = validateResourceBindings(data(captured.bindings), pool); const poolDigest = hash({ pool, bindings });
   if (config.allowedWorkerIds.some(id => !pool.workers.some(row => row.id === id))) fail('Unknown successor worker');
-  function method<T extends object, K extends keyof T>(object: T, key: K): T[K] {
-    const property = object && Object.getOwnPropertyDescriptor(object, key);
-    if (!property || !Object.hasOwn(property, 'value') || typeof property.value !== 'function') fail('Invalid successor host');
-    return property.value.bind(object) as T[K];
-  }
-  const host = { source: method(options.host, 'source'), prepare: method(options.host, 'prepare'), isExecutionStopped: method(options.host, 'isExecutionStopped') };
-  const supervision = { snapshot: method(options.supervision, 'snapshot'), admit: method(options.supervision, 'admit') };
-  if (typeof options.readAdmissionEvidence !== 'function') fail('Invalid successor admission reader');
-  const readAdmissionEvidence = options.readAdmissionEvidence;
+  const method = <T extends object, K extends keyof T>(object: T, key: K): T[K] =>
+    bindOwnDataMethod(object, key, () => fail('Invalid successor host'));
+  const host = { source: method(captured.host, 'source'), prepare: method(captured.host, 'prepare'), isExecutionStopped: method(captured.host, 'isExecutionStopped') };
+  const supervision = { snapshot: method(captured.supervision, 'snapshot'), admit: method(captured.supervision, 'admit') };
+  if (typeof captured.readAdmissionEvidence !== 'function') fail('Invalid successor admission reader');
+  const readAdmissionEvidence = captured.readAdmissionEvidence;
   const initial = data<ReturnType<typeof supervision.snapshot>>(supervision.snapshot());
-  if (initial.sourceState !== 'healthy' || initial.configId !== config.supervisionId || !HASH.test(initial.configDigest) || !initial.admission ||
+  if (initial.sourceState !== 'healthy' || initial.configId !== config.supervisionId || !isEngineeringHash(initial.configDigest) || !initial.admission ||
     !['idle', 'running', 'paused', 'completed', 'timed-out'].includes(initial.state) || !Number.isFinite(Date.parse(initial.deadlineAt))) fail('Successor requires an available appendable supervisor');
   const cwdBinding = pinResourceConsoleProject({ id: 'proposal', label: 'Proposal workspace', workspace: cwd });
   inspectPrivateDirectory(root);
@@ -203,7 +198,7 @@ export function createResourceEngineeringSuccessorCoordinator(options: Options):
       live = { key, state: 'preparing' };
       const enrollment = data<Awaited<ReturnType<Options['host']['prepare']>>>(await host.prepare({ id: intent.successorId, profileId: config.profileId,
         name: proposal.name, objective: proposal.objective, source: data(intent.source) }));
-      if (enrollment.id !== intent.successorId || enrollment.projectId !== intent.source.projectId || !HASH.test(enrollment.enrollmentDigest)) fail('Successor preparation identity changed');
+      if (enrollment.id !== intent.successorId || enrollment.projectId !== intent.source.projectId || !isEngineeringHash(enrollment.enrollmentDigest)) fail('Successor preparation identity changed');
       prepared = { id: `prepared-${key}`, kind: 'prepared', key, intentDigest: hash(intent), enrollmentId: enrollment.id,
         enrollmentDigest: enrollment.enrollmentDigest, projectId: enrollment.projectId };
       write(prepared, intent.source);

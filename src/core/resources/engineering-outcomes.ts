@@ -1,6 +1,5 @@
 /** Targeted immutable-evidence joins. No admission, execution, repair or routing. */
 import { lstatSync } from 'node:fs';
-import { isAbsolute, resolve } from 'node:path';
 import { canonicalEvidencePackJsonV3 } from '../foundry/provenance.js';
 import { canonical, digest } from '../universe/artifacts.js';
 import { campaignDirectory, foldCampaignEvents, projectCampaign, readCampaignEvents } from '../universe/campaign-store.js';
@@ -20,6 +19,7 @@ import { validateResourcePool } from './pool-policy.js';
 import { readResourceJson, readResourcePoolHistory, resourcePoolStatus } from './pool-runtime.js';
 import { resourceUsageScopeForProvider } from './performance.js';
 import { validateResourceBindings } from './worker.js';
+import { isCanonicalAbsoluteNonRootPath, isEngineeringGraphId, isEngineeringHash } from './engineering-shared.js';
 
 export interface ResourceEngineeringOutcomesOptions {
   /** Host-owned captured enrollment, not browser-supplied metadata. */
@@ -29,8 +29,6 @@ export interface ResourceEngineeringOutcomesOptions {
   poolFile: string;
   bindingsFile: string;
 }
-const HASH = /^[a-f0-9]{64}$/;
-const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const MAX_TRIALS = 4096;
 class OutcomeAccountingOverflow extends Error {}
 function usage(): ResourceEngineeringOutcomeUsage {
@@ -70,10 +68,10 @@ function capture(input: ResourceEngineeringOutcomesOptions): ResourceEngineering
   if (serialized === null || Buffer.byteLength(serialized) > 256 * 1024) throw new Error('Invalid engineering outcome scope');
   const value = JSON.parse(serialized) as ResourceEngineeringOutcomesOptions;
   if (Object.keys(value).sort().join() !== 'bindingsFile,enrollment,host,poolFile,root' ||
-      !value.enrollment || !ID.test(value.enrollment.id) || !HASH.test(value.enrollment.enrollmentDigest) ||
-      !ID.test(value.enrollment.graphId) || !ID.test(value.enrollment.projectId) ||
+      !value.enrollment || !isEngineeringGraphId(value.enrollment.id) || !isEngineeringHash(value.enrollment.enrollmentDigest) ||
+      !isEngineeringGraphId(value.enrollment.graphId) || !isEngineeringGraphId(value.enrollment.projectId) ||
       [value.root, value.poolFile, value.bindingsFile, value.host?.root, value.host?.resourceRuntime]
-        .some(path => typeof path !== 'string' || !isAbsolute(path) || resolve(path) !== path || path === '/')) {
+        .some(path => !isCanonicalAbsoluteNonRootPath(path))) {
     throw new Error('Invalid engineering outcome scope');
   }
   value.host.definition = validateUniversePortfolioDefinition(value.host.definition);

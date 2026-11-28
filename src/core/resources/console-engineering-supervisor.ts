@@ -1,33 +1,25 @@
 /** Finite, explicitly approved resident queue. The engineering owner alone executes effects. */
 import { randomUUID } from 'node:crypto';
-import { closeSync, constants, fsyncSync, lstatSync, mkdirSync, openSync, renameSync, unlinkSync, writeSync } from 'node:fs';
-import { isAbsolute, join, parse, resolve } from 'node:path';
+import { closeSync, constants, fsyncSync, mkdirSync, openSync, renameSync, unlinkSync, writeSync } from 'node:fs';
+import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { acquireLocalStoreLockWithOutcome, ownsLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
-import { canonicalEvidencePackJsonV3 } from '../foundry/provenance.js';
 import { canonical, digest, inspectPrivateDirectory } from '../universe/artifacts.js';
 import { fsyncDirectory } from '../util/durability.js';
 import { readResourceJson } from './pool-runtime.js';
-import { ResourceSupervisorError } from './pool-supervisor.js';
 import type { ResourceConsoleEngineeringOwner } from './console-engineering.js';
 import type { ResourceConsoleEngineeringSupervisionConfig, ResourceConsoleEngineeringSupervisionSnapshot, ResourceConsoleEngineeringSupervisionAdmission } from './console-engineering-supervisor-types.js';
 import { validateResourceConsoleEngineeringSupervisionConfig, validateResourceConsoleEngineeringSupervisionState,
   ENGINEERING_SUPERVISION_STATE_MAX_BYTES, type ResourceConsoleEngineeringSupervisionState as DurableState } from './console-engineering-supervision-state.js';
+import { bindOwnDataMethod, captureStrictOwnDataOptions, cloneCanonicalEngineeringData,
+  failResourceSupervisor as fail, hasExactEngineeringOwnKeys as exact, isCanonicalEngineeringCharPath,
+  isEngineeringHash, isEngineeringId, isEngineeringInteger as integer, pathExistsStrict as present } from './engineering-shared.js';
 export { validateResourceConsoleEngineeringSupervisionConfig } from './console-engineering-supervision-state.js';
-export type { ResourceConsoleEngineeringSupervisionConfig, ResourceConsoleEngineeringSupervisionSnapshot, ResourceConsoleEngineeringSupervisionAdmission } from './console-engineering-supervisor-types.js';
+export type { ResourceConsoleEngineeringSupervisionConfig, ResourceConsoleEngineeringSupervisionSnapshot } from './console-engineering-supervisor-types.js';
 
-const HASH = /^[a-f0-9]{64}$/;
-const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const MAX_STATE_BYTES = ENGINEERING_SUPERVISION_STATE_MAX_BYTES;
-const exact = (value: unknown, keys: string[]): value is Record<string, unknown> => !!value && typeof value === 'object' &&
-  !Array.isArray(value) && Reflect.ownKeys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
-const integer = (value: unknown, min: number, max: number): value is number => Number.isSafeInteger(value) && Number(value) >= min && Number(value) <= max;
-function fail(code: ConstructorParameters<typeof ResourceSupervisorError>[0], message: string): never { throw new ResourceSupervisorError(code, message); }
-function data<T>(value: unknown): T {
-  const text = canonicalEvidencePackJsonV3(value);
-  if (text === null || Buffer.byteLength(text) > MAX_STATE_BYTES) fail('INVALID_INPUT', 'Invalid engineering supervision data');
-  return JSON.parse(text) as T;
-}
+const data = <T>(value: unknown): T =>
+  cloneCanonicalEngineeringData<T>(value, MAX_STATE_BYTES, () => fail('INVALID_INPUT', 'Invalid engineering supervision data'));
 export interface ResourceConsoleEngineeringSupervisor {
   snapshot(): ResourceConsoleEngineeringSupervisionSnapshot;
   /** Host-only final dispatch veto; no campaign, graph or pool reads. */
@@ -43,29 +35,23 @@ export interface ResourceConsoleEngineeringSupervisorOptions {
   config: ResourceConsoleEngineeringSupervisionConfig;
   signal?: AbortSignal;
 }
-function present(path: string): boolean {
-  try { lstatSync(path); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
-}
 
 /** Construction enrolls private metadata/ownership only; start() is the explicit execution boundary. */
 export function createResourceConsoleEngineeringSupervisor(options: ResourceConsoleEngineeringSupervisorOptions): ResourceConsoleEngineeringSupervisor {
-  if (!options || ![Object.prototype, null].includes(Object.getPrototypeOf(options)) ||
-      Reflect.ownKeys(options).some(key => typeof key !== 'string' || !['owner', 'root', 'config', 'signal'].includes(key) ||
-        !Object.hasOwn(Object.getOwnPropertyDescriptor(options, key)!, 'value'))) fail('INVALID_INPUT', 'Invalid engineering supervision options');
-  const config = validateResourceConsoleEngineeringSupervisionConfig(options.config);
-  const configDigest = digest(canonical(config)); const root = options.root; const signal = options.signal;
-  if (typeof root !== 'string' || root.length > 4096 || !isAbsolute(root) || resolve(root) !== root || parse(root).root === root ||
-      [...root].some(char => { const code = char.charCodeAt(0); return code < 32 || code >= 127 && code <= 159; }) ||
-      signal !== undefined && !(signal instanceof AbortSignal)) fail('INVALID_INPUT', 'Invalid engineering supervision scope');
-  if (signal?.aborted) fail('UNAVAILABLE', 'Engineering supervision startup cancelled');
-  const owner = options.owner;
-  for (const key of ['catalog', 'snapshot', 'readiness', 'evidenceFingerprint', 'launch', 'awaitSettlement'] as const) {
-    const property = owner && Object.getOwnPropertyDescriptor(owner, key);
-    if (!property || !Object.hasOwn(property, 'value') || typeof property.value !== 'function') fail('INVALID_INPUT', 'Invalid engineering supervision owner');
+  const captured = captureStrictOwnDataOptions(options, [], ['owner', 'root', 'config', 'signal'],
+    () => fail('INVALID_INPUT', 'Invalid engineering supervision options'));
+  const config = validateResourceConsoleEngineeringSupervisionConfig(captured.config);
+  const configDigest = digest(canonical(config)); const root = captured.root; const signal = captured.signal;
+  if (!isCanonicalEngineeringCharPath(root) || signal !== undefined && !(signal instanceof AbortSignal)) {
+    fail('INVALID_INPUT', 'Invalid engineering supervision scope');
   }
+  if (signal?.aborted) fail('UNAVAILABLE', 'Engineering supervision startup cancelled');
+  const owner = captured.owner;
+  const method = <K extends keyof ResourceConsoleEngineeringOwner>(key: K) =>
+    bindOwnDataMethod(owner, key, () => fail('INVALID_INPUT', 'Invalid engineering supervision owner'));
   // Capture host methods before any asynchronous invocation or durable enrollment.
-  const host = { catalog: owner.catalog.bind(owner), snapshot: owner.snapshot.bind(owner), readiness: owner.readiness.bind(owner),
-    evidenceFingerprint: owner.evidenceFingerprint.bind(owner), launch: owner.launch.bind(owner), awaitSettlement: owner.awaitSettlement.bind(owner) };
+  const host = { catalog: method('catalog'), snapshot: method('snapshot'), readiness: method('readiness'),
+    evidenceFingerprint: method('evidenceFingerprint'), launch: method('launch'), awaitSettlement: method('awaitSettlement') };
   const catalog = host.catalog();
   if (config.enrollments.some(row => !catalog.some(value => value.id === row.enrollmentId && value.enrollmentDigest === row.expectedEnrollmentDigest))) {
     fail('CONFLICT', 'Engineering supervision enrollment changed');
@@ -154,7 +140,7 @@ export function createResourceConsoleEngineeringSupervisor(options: ResourceCons
       if (ready.enrollmentId !== row.enrollmentId || ready.enrollmentDigest !== row.enrollmentDigest) throw new Error();
       if (ready.status !== 'ready' || !['launch', 'reconcile', 'continue'].includes(ready.action)) return { ...base, state: 'waiting', reasons: ['waiting-for-readiness'] };
       const fingerprint = host.evidenceFingerprint(row.enrollmentId);
-      if (fingerprint === null || !HASH.test(fingerprint)) return { ...base, state: 'unavailable', reasons: ['evidence-unavailable'] };
+      if (fingerprint === null || !isEngineeringHash(fingerprint)) return { ...base, state: 'unavailable', reasons: ['evidence-unavailable'] };
       if (fingerprint === row.lastEvidenceDigest) return { ...base, state: 'held', reasons: ['unchanged-evidence'] };
       return { ...base, state: 'waiting', reasons: ['waiting-for-readiness'] };
     } catch { return { ...base, state: 'unavailable', reasons: ['evidence-unavailable'] }; }
@@ -204,7 +190,7 @@ export function createResourceConsoleEngineeringSupervisor(options: ResourceCons
           if (ready.enrollmentId !== row.enrollmentId || ready.enrollmentDigest !== row.enrollmentDigest ||
               ready.status !== 'ready' || !['launch', 'reconcile', 'continue'].includes(ready.action)) continue;
           const fingerprint = host.evidenceFingerprint(row.enrollmentId);
-          if (!fingerprint || !HASH.test(fingerprint) || fingerprint === row.lastEvidenceDigest || stopped()) continue;
+          if (!fingerprint || !isEngineeringHash(fingerprint) || fingerprint === row.lastEvidenceDigest || stopped()) continue;
           launch(row.enrollmentId, fingerprint);
         }
         const completed = state.entries.every(row => project(row).state === 'completed');
@@ -247,7 +233,7 @@ export function createResourceConsoleEngineeringSupervisor(options: ResourceCons
       if (!exact(request, ['enrollments', 'expectedRevision']) || !integer(request.expectedRevision, 0, Number.MAX_SAFE_INTEGER) ||
           !Array.isArray(request.enrollments) || request.enrollments.length < 1 || request.enrollments.length > 32 ||
           request.enrollments.some(row => !exact(row, ['enrollmentId', 'expectedEnrollmentDigest']) ||
-            typeof row.enrollmentId !== 'string' || !ID.test(row.enrollmentId) || typeof row.expectedEnrollmentDigest !== 'string' || !HASH.test(row.expectedEnrollmentDigest)) ||
+            !isEngineeringId(row.enrollmentId) || !isEngineeringHash(row.expectedEnrollmentDigest)) ||
           new Set(request.enrollments.map(row => row.enrollmentId)).size !== request.enrollments.length) fail('INVALID_INPUT', 'Invalid engineering supervision admission');
       if (config.maxEnrollments === undefined) fail('CONFLICT', 'Engineering supervision admission is not enabled');
       if (closing || faulted || signal?.aborted) fail('UNAVAILABLE', 'Engineering supervision unavailable');

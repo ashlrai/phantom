@@ -1,7 +1,6 @@
 /** Durable mission decisions. Local records are evidence, never provider or delivery authority. */
-import { isAbsolute, join, parse, resolve } from 'node:path';
-import { canonicalEvidencePackJsonV3 } from '../foundry/provenance.js';
-import { canonical, digest } from '../universe/artifacts.js';
+import { join } from 'node:path';
+import { canonical } from '../universe/artifacts.js';
 import { readImmutablePrivateRecords, type ImmutablePrivateRecordStoreConfig } from '../util/immutable-private-record-store.js';
 import type { ResourceEngineeringAutonomousSetupOptions } from './engineering-autonomous-setup.js';
 import { validateResourceTask } from './pool-runtime.js';
@@ -9,6 +8,9 @@ import { parseResourceEngineeringSuccessorProposal } from './engineering-success
 import { readEngineeringMissionInvocations } from './engineering-mission-invocations.js';
 import { MISSION_MEASURED_FEEDBACK } from './engineering-mission-feedback.js';
 import { readRecordedMissionFeedbackStatus } from './engineering-mission-feedback-status.js';
+import { cloneCanonicalEngineeringData, engineeringDigest, hasExactEngineeringKeys,
+  isCanonicalAbsoluteNonRootPath, isEngineeringCommit, isEngineeringHash as isHash,
+  isEngineeringId as identifier, isEngineeringIsoTimestamp as isDate } from './engineering-shared.js';
 
 export interface ResourceEngineeringMissionConfig {
   schemaVersion: 1; id: string;
@@ -23,27 +25,23 @@ export interface ResourceEngineeringMissionConfig {
   /** Opt-in for NEW mission identities; omission preserves legacy proposal bytes. */
   proposalFeedback?: typeof MISSION_MEASURED_FEEDBACK;
 }
-export const missionHash = (value: unknown): string => digest(canonical(value));
+export const missionHash = (value: unknown): string => engineeringDigest(value);
 export function missionData<T>(input: unknown): T {
-  const text = canonicalEvidencePackJsonV3(input);
-  if (text === null || Buffer.byteLength(text) > 512 * 1024) throw new Error('Invalid mission data');
-  return JSON.parse(text) as T;
+  return cloneCanonicalEngineeringData<T>(input, 512 * 1024, () => { throw new Error('Invalid mission data'); });
 }
 export function missionExact(value: unknown, keys: string[]): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
-    Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
+  return hasExactEngineeringKeys(value, keys);
 }
-const HASH = /^[a-f0-9]{64}$/;
 export function validateResourceEngineeringMissionConfig(input: unknown): ResourceEngineeringMissionConfig {
   const config = missionData<ResourceEngineeringMissionConfig>(input);
   if (!missionExact(config, ['schemaVersion', 'id', 'root', 'initial', 'deadlineAt', 'maxScopes', 'pollIntervalMs',
     ...(Object.hasOwn(config ?? {}, 'proposalFeedback') ? ['proposalFeedback'] : [])]) ||
       Object.hasOwn(config ?? {}, 'proposalFeedback') && config.proposalFeedback !== MISSION_MEASURED_FEEDBACK ||
-      config.schemaVersion !== 1 || typeof config.id !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(config.id) ||
-      typeof config.root !== 'string' || !isAbsolute(config.root) || resolve(config.root) !== config.root || parse(config.root).root === config.root ||
-      !missionExact(config.initial, ['setup', 'expectedPlanDigest']) || typeof config.initial.expectedPlanDigest !== 'string' || !HASH.test(config.initial.expectedPlanDigest) ||
+      config.schemaVersion !== 1 || !identifier(config.id) ||
+      !isCanonicalAbsoluteNonRootPath(config.root) ||
+      !missionExact(config.initial, ['setup', 'expectedPlanDigest']) || !isHash(config.initial.expectedPlanDigest) ||
       !missionExact(config.initial.setup, ['recipe', 'policy', 'output', 'resourceRuntime', 'workspace', 'projectsFile']) ||
-      typeof config.deadlineAt !== 'string' || !Number.isFinite(Date.parse(config.deadlineAt)) || new Date(config.deadlineAt).toISOString() !== config.deadlineAt ||
+      !isDate(config.deadlineAt) ||
       !Number.isSafeInteger(config.maxScopes) || config.maxScopes < 1 || config.maxScopes > 64 ||
       !Number.isSafeInteger(config.pollIntervalMs) || config.pollIntervalMs < 100 || config.pollIntervalMs > 60_000) throw new Error('Invalid mission configuration');
   return config;
@@ -51,10 +49,7 @@ export function validateResourceEngineeringMissionConfig(input: unknown): Resour
 export type MissionRecordKind = 'definition' | 'reserved' | 'prepared' | 'running' | 'settled' | 'proposal' | 'result' | 'finished';
 export interface MissionRecord { id: string; kind: MissionRecordKind; index: number; payload: unknown }
 const KINDS: MissionRecordKind[] = ['definition', 'reserved', 'prepared', 'running', 'settled', 'proposal', 'result', 'finished'];
-const isHash = (value: unknown): value is string => typeof value === 'string' && HASH.test(value);
-const isDate = (value: unknown): value is string => typeof value === 'string' && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 const nonempty = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
-const identifier = (value: unknown): value is string => typeof value === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(value);
 function validPayload(kind: MissionRecordKind, value: unknown): boolean {
   switch (kind) {
     case 'definition': return missionExact(value, ['configDigest']) && isHash(value.configDigest);
@@ -79,7 +74,7 @@ function validPayload(kind: MissionRecordKind, value: unknown): boolean {
       isHash(value.evidenceDigest) && ['eligible', 'stop-requested'].includes(value.continuation as string) &&
       missionExact(value.tip, ['enrollmentId', 'enrollmentDigest', 'projectId', 'commit']) &&
       identifier(value.tip.enrollmentId) && isHash(value.tip.enrollmentDigest) && identifier(value.tip.projectId) &&
-      typeof value.tip.commit === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value.tip.commit);
+      isEngineeringCommit(value.tip.commit);
   }
 }
 export function missionRecord(kind: MissionRecordKind, index: number, payload: unknown): MissionRecord {

@@ -5,6 +5,7 @@ import { performance } from 'node:perf_hooks';
 import { canonical, inspectPrivateDirectory } from '../universe/artifacts.js';
 import { readImmutablePrivateRecords, writeImmutablePrivateRecord, type ImmutablePrivateRecordStoreConfig } from '../util/immutable-private-record-store.js';
 import { missionData, missionExact, missionHash, validateResourceEngineeringMissionConfig, type ResourceEngineeringMissionConfig } from './engineering-mission-store.js';
+import { isEngineeringHash as hash, isEngineeringInteger, isEngineeringIsoTimestamp as date } from './engineering-shared.js';
 
 const PHASES = ['startup', 'preparing', 'executing', 'draining', 'verifying', 'reconciling', 'proposing'] as const;
 type Phase = typeof PHASES[number];
@@ -33,10 +34,7 @@ const REASONS = new Set(['stop-requested', 'scope-limit', 'shutdown-unresolved',
     .map(reason => reason.replaceAll(' ', '-')),
   ...PHASES.flatMap(phase => [`${phase}-held`, `${phase}-stopped`])]);
 const fail = (): never => { throw new Error('Mission invocation observations unavailable'); };
-const integer = (value: unknown, maximum = Number.MAX_SAFE_INTEGER): value is number =>
-  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= maximum;
-const date = (value: unknown): value is string => typeof value === 'string' && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
-const hash = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+const integer = (value: unknown, maximum = Number.MAX_SAFE_INTEGER): value is number => isEngineeringInteger(value, 0, maximum);
 const phase = (value: unknown): value is Phase => typeof value === 'string' && (PHASES as readonly string[]).includes(value);
 const id = (index: number, kind: Record['kind']) => `${String(index).padStart(4, '0')}-${kind}`;
 function decode(input: unknown): Record | null {

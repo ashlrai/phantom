@@ -1,7 +1,8 @@
 /** Private console adapter: proposals share the existing ledger and cannot choose seed authority. */
-import { canonical, digest } from '../universe/artifacts.js';
+import { canonical } from '../universe/artifacts.js';
 import { readKillSwitch } from '../sandbox/policy.js';
 import { readResourceJson } from './pool-runtime.js';
+import { bindOwnDataMethod, captureStrictOwnDataOptions, engineeringDigest, isEngineeringHash } from './engineering-shared.js';
 import { createResourceEngineeringSuccessorCoordinator, validateResourceEngineeringSuccessorCoordinatorConfig } from './engineering-successor-coordinator.js';
 import type { ResourceEngineeringSuccessorCoordinatorOptions, ResourceEngineeringSuccessorEvidence } from './engineering-successor-coordinator-types.js';
 import type { ResourceConsoleEngineeringPreparationOwner } from './console-engineering-preparation.js';
@@ -20,19 +21,11 @@ export function createResourceConsoleEngineeringSuccessors(options: {
 }) {
   const required = ['root', 'configFile', 'config', 'projectId', 'acceptance', 'preparation', 'supervision', 'supervisor',
     'pool', 'bindings', 'readAdmissionEvidence', 'isClosing'];
-  if (!options || typeof options !== 'object' || ![Object.prototype, null].includes(Object.getPrototypeOf(options))) {
+  const captured = captureStrictOwnDataOptions(options, required, ['signal', 'onLifecycle'], () => {
     throw new Error('Invalid successor console options');
-  }
-  const descriptors = Object.getOwnPropertyDescriptors(options);
-  if (Reflect.ownKeys(options).some(key => typeof key !== 'string' || ![...required, 'signal', 'onLifecycle'].includes(key)) ||
-      required.some(key => !Object.hasOwn(descriptors, key)) ||
-      Object.values(descriptors).some(property => !Object.hasOwn(property, 'value'))) throw new Error('Invalid successor console options');
-  const captured = Object.fromEntries(Object.entries(descriptors).map(([key, property]) => [key, property.value])) as typeof options;
-  function method<T extends object, K extends keyof T>(host: T, key: K): T[K] {
-    const property = host && Object.getOwnPropertyDescriptor(host, key);
-    if (!property || !Object.hasOwn(property, 'value') || typeof property.value !== 'function') throw new Error('Invalid successor console host');
-    return property.value.bind(host) as T[K];
-  }
+  });
+  const method = <T extends object, K extends keyof T>(host: T, key: K): T[K] =>
+    bindOwnDataMethod(host, key, () => { throw new Error('Invalid successor console host'); });
   const config = validateResourceEngineeringSuccessorCoordinatorConfig(captured.config);
   const { root, configFile, projectId, acceptance, signal, readAdmissionEvidence, isClosing, onLifecycle } = captured;
   if (typeof acceptance !== 'string' || !acceptance.trim() || Buffer.byteLength(acceptance) > 1024 ||
@@ -44,16 +37,16 @@ export function createResourceConsoleEngineeringSuccessors(options: {
   const supervisor = { projectFileBinding: method(captured.supervisor, 'projectFileBinding'),
     projectExecutionBinding: method(captured.supervisor, 'projectExecutionBinding') };
   const binding = supervisor.projectFileBinding(projectId);
-  const configDigest = digest(canonical(config));
+  const configDigest = engineeringDigest(config);
   function stopped(): boolean {
     try {
       if (isClosing() || signal?.aborted || supervision.isExecutionStopped() || readKillSwitch().state !== 'inactive' ||
-          digest(canonical(readResourceJson(configFile, 16 * 1024))) !== configDigest) return true;
+          engineeringDigest(readResourceJson(configFile, 16 * 1024)) !== configDigest) return true;
       return canonical(supervisor.projectExecutionBinding(projectId)) !== canonical(binding);
     } catch { return true; }
   }
   function source(enrollmentId: string, expectedEnrollmentDigest: string) {
-    if (!/^[a-f0-9]{64}$/.test(expectedEnrollmentDigest)) return null;
+    if (!isEngineeringHash(expectedEnrollmentDigest)) return null;
     const actual = preparation.successorSource(enrollmentId, expectedEnrollmentDigest);
     if (!actual || actual.projectId !== projectId) return null;
     const evidence: ResourceEngineeringSuccessorEvidence = { enrollmentId, enrollmentDigest: expectedEnrollmentDigest,

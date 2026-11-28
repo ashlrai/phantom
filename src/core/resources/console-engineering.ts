@@ -1,7 +1,7 @@
 /** Explicit console ownership of fixed engineering graphs; no discovery or extra scheduler. */
 import { lstatSync } from 'node:fs';
-import { isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
-import { canonicalEvidencePackJsonV3, loadExistingProvenanceKeyReadOnly } from '../foundry/provenance.js';
+import { join } from 'node:path';
+import { loadExistingProvenanceKeyReadOnly } from '../foundry/provenance.js';
 import { readKillSwitch } from '../sandbox/policy.js';
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock, ownsLocalStoreLock } from '../fleet/local-store-lock.js';
 import { readImmutablePrivateRecords, writeImmutablePrivateRecord, type ImmutablePrivateRecordStoreConfig } from '../util/immutable-private-record-store.js';
@@ -20,8 +20,11 @@ import { validateResourcePool } from './pool-policy.js';
 import { validateResourceBindings } from './worker.js';
 import { matchesResourceConsoleProject, validateResourceConsoleProjectBindings, type ResourceConsoleProjectBinding } from './console-projects.js';
 import type { ResourceConsoleProject } from './console-types.js';
-import { ResourceSupervisorError, type ResourcePoolSupervisor } from './pool-supervisor.js';
+import type { ResourcePoolSupervisor } from './pool-supervisor.js';
 import { captureResourceExecutionVeto } from './execution-veto.js';
+import { cloneCanonicalEngineeringData, containsPath as contains, failResourceSupervisor as fail,
+  hasExactEngineeringKeys as exact, isCanonicalEngineeringCharPath as path, isEngineeringGraphId, isEngineeringHash,
+  isEngineeringId, isEngineeringIsoTimestamp, pathsOverlap as overlaps } from './engineering-shared.js';
 import type { ResourceConsoleEngineeringEnrollment, ResourceConsoleEngineeringJob, ResourceConsoleEngineeringLaunch,
   ResourceConsoleEngineeringReadiness, ResourceConsoleEngineeringReadinessReason } from './console-engineering-types.js';
 
@@ -67,32 +70,9 @@ export interface ResourceConsoleEngineeringLaunchControls {
   /** Must be writer-safe: no graph/controller/campaign ledger reads. */
   isExecutionStopped?: () => boolean;
 }
-const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
-const GRAPH_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
-const HASH = /^[a-f0-9]{64}$/;
 const MAX_ACTIVE = 4;
-function fail(code: ConstructorParameters<typeof ResourceSupervisorError>[0], message: string): never {
-  throw new ResourceSupervisorError(code, message);
-}
-function snapshot<T>(value: unknown, bytes = 1024 * 1024): T {
-  const text = canonicalEvidencePackJsonV3(value);
-  if (text === null || Buffer.byteLength(text) > bytes) fail('INVALID_INPUT', 'Invalid engineering enrollment');
-  return JSON.parse(text) as T;
-}
-function exact(value: unknown, keys: string[]): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
-    Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
-}
-function path(value: unknown): value is string {
-  return typeof value === 'string' && value.length <= 4096 && isAbsolute(value) && resolve(value) === value &&
-    parse(value).root !== value && [...value].every((character) => {
-      const code = character.charCodeAt(0); return code >= 32 && !(code >= 127 && code <= 159);
-    });
-}
-function contains(parent: string, child: string): boolean {
-  const part = relative(parent, child); return part === '' || part !== '..' && !part.startsWith(`..${sep}`) && !isAbsolute(part);
-}
-function overlaps(a: string, b: string): boolean { return contains(a, b) || contains(b, a); }
+const snapshot = <T>(value: unknown, bytes = 1024 * 1024): T =>
+  cloneCanonicalEngineeringData<T>(value, bytes, () => fail('INVALID_INPUT', 'Invalid engineering enrollment'));
 function present(file: string): boolean {
   try { lstatSync(file); return true; } catch (error) { return (error as NodeJS.ErrnoException).code !== 'ENOENT'; }
 }
@@ -107,8 +87,8 @@ export function validateResourceConsoleEngineeringCatalog(value: unknown): Resou
   const ids = new Set<string>(); const controllers = new Set<string>();
   const graphRoots: string[] = [];
   for (const row of result.enrollments) {
-    if (!exact(row, ['id', 'projectId', 'graphId', 'graphRoot', 'host']) || typeof row.id !== 'string' || !ID.test(row.id) ||
-      typeof row.projectId !== 'string' || !ID.test(row.projectId) || typeof row.graphId !== 'string' || !GRAPH_ID.test(row.graphId) ||
+    if (!exact(row, ['id', 'projectId', 'graphId', 'graphRoot', 'host']) || !isEngineeringId(row.id) ||
+      !isEngineeringId(row.projectId) || !isEngineeringGraphId(row.graphId) ||
       !path(row.graphRoot) || ids.has(row.id) || graphRoots.some((root) => overlaps(root, row.graphRoot))) {
       fail('INVALID_INPUT', 'Invalid engineering enrollment identity');
     }
@@ -127,9 +107,8 @@ interface OwnershipRecord {
 function records(root: string): ImmutablePrivateRecordStoreConfig<OwnershipRecord> {
   const parseRecord = (value: unknown): OwnershipRecord | null => {
     if (!exact(value, ['schemaVersion', 'kind', 'enrollmentDigest', 'definitionDigest', 'at']) || value.schemaVersion !== 1 ||
-      !['launch', 'cancel'].includes(String(value.kind)) || typeof value.enrollmentDigest !== 'string' || !HASH.test(value.enrollmentDigest) ||
-      typeof value.definitionDigest !== 'string' || !HASH.test(value.definitionDigest) || typeof value.at !== 'string' ||
-      !Number.isFinite(Date.parse(value.at)) || new Date(value.at).toISOString() !== value.at) return null;
+      !['launch', 'cancel'].includes(String(value.kind)) || !isEngineeringHash(value.enrollmentDigest) ||
+      !isEngineeringHash(value.definitionDigest) || !isEngineeringIsoTimestamp(value.at)) return null;
     return value as unknown as OwnershipRecord;
   };
   const codec = { parse: parseRecord, serialize: (value: OwnershipRecord) => canonical(value) + '\n',
@@ -185,7 +164,7 @@ export function readResourceConsoleEngineeringGraphCompletion(
     }));
     const value = snapshot<Pick<ResourceConsoleEngineeringPreparedEnrollment, typeof fields[number]>>(captured);
     const definition = validateControlGraph(value.definition);
-    if (!path(value.row.graphRoot) || !ID.test(value.row.id) || !HASH.test(value.summary.enrollmentDigest) ||
+    if (!path(value.row.graphRoot) || !isEngineeringId(value.row.id) || !isEngineeringHash(value.summary.enrollmentDigest) ||
       value.row.id !== value.summary.id || value.row.graphId !== value.summary.graphId || definition.id !== value.row.graphId ||
       definition.hostEnrollmentDigest !== value.summary.enrollmentDigest || digest(canonical(definition)) !== value.definitionDigest) return null;
     const sample = () => ({ ownership: readEngineeringOwnership(value), graph: readControlGraph(value.row.graphRoot) });
@@ -315,7 +294,7 @@ export function createResourceConsoleEngineeringOwner(options: ResourceConsoleEn
   let enrolled = new Map(prepared.map((value) => [value.row.id, value] as const));
   type Entry = NonNullable<ReturnType<typeof enrolled.get>>;
   const entry = (id: string): Entry => {
-    if (typeof id !== 'string' || !ID.test(id)) fail('INVALID_INPUT', 'Invalid engineering enrollment');
+    if (!isEngineeringId(id)) fail('INVALID_INPUT', 'Invalid engineering enrollment');
     return enrolled.get(id) ?? fail('NOT_FOUND', 'Engineering enrollment was not found');
   };
   const ownership = readEngineeringOwnership;
@@ -545,8 +524,8 @@ export function createResourceConsoleEngineeringOwner(options: ResourceConsoleEn
       const stopped = () => { try { return launchSignal?.aborted === true || !!launchGuard?.(); } catch { return true; } };
       if (stopped()) fail('UNAVAILABLE', 'Engineering enclosing execution stopped');
       const request = snapshot<ResourceConsoleEngineeringLaunch>(input, 1024);
-      if (!exact(request, ['enrollmentId', 'expectedEnrollmentDigest']) || typeof request.expectedEnrollmentDigest !== 'string' ||
-        !HASH.test(request.expectedEnrollmentDigest)) fail('INVALID_INPUT', 'Invalid engineering launch');
+      if (!exact(request, ['enrollmentId', 'expectedEnrollmentDigest']) ||
+        !isEngineeringHash(request.expectedEnrollmentDigest)) fail('INVALID_INPUT', 'Invalid engineering launch');
       const value = entry(request.enrollmentId);
       if (request.expectedEnrollmentDigest !== value.summary.enrollmentDigest) fail('CONFLICT', 'Engineering enrollment changed');
       if (active.has(value.row.id)) return owner.snapshot(value.row.id);
