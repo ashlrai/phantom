@@ -520,6 +520,36 @@ describe('phm node capacity / route CLI', () => {
     expect(JSON.parse(lines[2]!).error.message).toMatch(/node-capacity\.v1/);
   });
 
+  it('reports fleet-wide runnable sessions per harness next to the plan', async () => {
+    const { mkdtempSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { cmdNodeRoute } = await import('../src/cli/node-capacity.js');
+    const dir = mkdtempSync(join(tmpdir(), 'node-route-fleet-'));
+    const file = (name: string, value: unknown) => { writeFileSync(join(dir, name), JSON.stringify(value)); return join(dir, name); };
+    const doc = computeNodeCapacity(snap({ measuredAtMs: Date.now() }));
+    const cap = file('cap.json', doc);
+    const costs = file('costs.json', [{ provider: 'grok', model: 'grok-5', harness: 'grok', tokensPerJob: 1e6, minutesPerJob: 20 }]);
+    const jobs = file('jobs.json', [{ id: 'j1' }]);
+    const lines: string[] = [];
+    const log = console.log;
+    console.log = (line: string) => { lines.push(line); };
+    try {
+      expect(await cmdNodeRoute(['--capacity', cap, '--costs', costs, '--jobs', jobs, '--json'])).toBe(0);
+      expect(await cmdNodeRoute(['--capacity', cap, '--costs', costs, '--jobs', jobs])).toBe(0);
+    } finally { console.log = log; }
+    const out = JSON.parse(lines[0]!);
+    // The fleet rollup counts this node's measured runnable sessions and keeps
+    // harnesses no fresh node can answer for at null, never a fabricated zero.
+    expect(out.fleet_runnable.codex).toBe(doc.agents_runnable_now.codex);
+    expect(out.fleet_runnable.grok).toBe(doc.agents_runnable_now.grok);
+    expect(out.fleet_runnable.devin).toBeNull();
+    expect(lines[1]).toContain('fleet runnable now:');
+    expect(lines[1]).toContain(`codex=${doc.agents_runnable_now.codex}`);
+    expect(lines[1]).toContain('devin=unknown');
+    expect(lines[2]).toContain('j1 -> mbp');
+  });
+
   it('refuses a repeated single-value flag but allows the repeatable ones', async () => {
     const { cmdNodeCapacity, cmdNodeRoute } = await import('../src/cli/node-capacity.js');
     const lines: string[] = [];

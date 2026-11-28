@@ -624,7 +624,11 @@ capacity unknown.
 Fleet-wide runnable totals include a node's per-harness count only when the
 node also reports usable memory headroom and its own current footprint for
 that harness. A measured stop, such as swap growth or zero headroom, still
-reduces a reported count to zero.
+reduces a reported count to zero. `phm node route` reports those totals in
+its own output — `fleet_runnable` in the `phantom.node-route.v1` JSON
+envelope and a `fleet runnable now:` line in text, one `harness=count` or
+`harness=unknown` entry per adapter — describing capacity right now,
+independent of the jobs being planned.
 Learned footprints used for totals or placement must come from observations
 at or before both the containing snapshot and report time.
 For a node without its own harness footprint, routing can borrow measurements
