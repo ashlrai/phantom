@@ -15,6 +15,8 @@ export interface WorkItemEvidence {
   owner?: string;
   claimReceipt?: string;
   runningEvidence?: { source: string; at: string };
+  /** Cursor-selected bus outcome; absent for evidence without bus ordering. */
+  terminalOutcome?: 'BLOCKED' | 'VERIFIED';
   blocker?: { dependency: string; source: string; at: string };
   verified?: { pr?: number; head?: string; tests?: string; artifact?: string; source: string; at: string };
 }
@@ -33,14 +35,16 @@ export function classifyWorkItem(e: WorkItemEvidence, nowIso: string): WorkItemC
   const now = Date.parse(nowIso);
   const current = (at: unknown): at is string => stamped(at) && Date.parse(at) - now <= FUTURE_SKEW_MS;
   const v = e.verified;
+  const b = e.blocker;
+  const validBlocker = b && text(b.dependency) && b.dependency.trim().toLowerCase() !== 'unknown' && text(b.source) && current(b.at);
+  if (e.terminalOutcome === 'BLOCKED' && validBlocker) {
+    return { state: 'BLOCKED', asOf: b.at, source: b.source, missing: [] };
+  }
   if (v && text(v.source) && current(v.at)
     && ((typeof v.pr === 'number' && Number.isInteger(v.pr) && v.pr > 0 && text(v.head)) || text(v.tests) || text(v.artifact))) {
     return { state: 'VERIFIED', asOf: v.at, source: v.source, missing: [] };
   }
-  const b = e.blocker;
-  if (b && text(b.dependency) && b.dependency.trim().toLowerCase() !== 'unknown' && text(b.source) && current(b.at)) {
-    return { state: 'BLOCKED', asOf: b.at, source: b.source, missing: [] };
-  }
+  if (validBlocker) return { state: 'BLOCKED', asOf: b.at, source: b.source, missing: [] };
   const r = e.runningEvidence;
   const hasRunning = !!r && text(r.source) && stamped(r.at);
   const age = hasRunning ? now - Date.parse(r.at) : NaN;
