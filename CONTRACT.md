@@ -86,7 +86,7 @@ job IDs deduplicated by the parser. Its optional second argument is the
 queue TSV header, or `null` for a data row. `conflictingPrIds(readyTsvText)`
 reads rebase identifiers from the job ID field, including parked rows.
 
-`findStarvedLanes(statusJson, readyTsv, routerQueue?, now?)`
+`findStarvedLanes(statusJson, readyTsv, routerQueue?, now?, market?)`
 (`src/core/fleet/lane-starve.ts`) accepts `null` for a missing ready snapshot
 and an optional `router-queue.md` text that resolves spec-less dispatcher
 rows' requirement envelopes. When supplied, `now` (epoch milliseconds) requires
@@ -105,6 +105,15 @@ tolerant lane-column read. `readyMarketLine(line, routerQueue?)`
 `{ lanes, openRows }`, and its lanes plus the `fleet.lane-starve.v1` CLI
 report expose `ready`, `filler`, and `real` as nullable counts and
 `open_rows`. An empty snapshot yields numeric zeroes.
+The optional `market` argument carries the dispatcher's market inputs
+(`slots`, `models`, `budget`, `adaptive`, `hold`, `routerQueue`, `nowMs` —
+the same `UnfedMarketInputs` shape `phm fleet unfed` reads); `nowMs` defaults
+to `now` so adaptive.json freshness is judged against the same instant. When
+`queue/slots.json` parses, each starved lane also exposes `blocked`, a tally
+of the work-market reason codes `derivedRowCodes` records for that lane's own
+market-hinted ready rows (never lane-open supply, and never rows in other
+ready.tsv dialects), and `scored`, how many ready rows the tally covers; both
+stay `null` when the market inputs cannot be read.
 
 ## Wiki context and ecosystem
 

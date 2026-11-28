@@ -17,7 +17,7 @@ export interface LaneStarveReport {
 }
 
 const USAGE = `Usage: ashlr fleet lane-starve [--json]
-List lanes running below their launch target (the configured target tightened by the controller's effective_target shed) with work queued, and split each lane's queue/ready.tsv rows into filler and real. Dispatcher rows count toward the lane the work market's hint resolves to; lane-open rows are shared supply reported once. Says when queue/FILLER_HOLD exists. Read-only.
+List lanes running below their launch target (the configured target tightened by the controller's effective_target shed) with work queued, and split each lane's queue/ready.tsv rows into filler and real. Dispatcher rows count toward the lane the work market's hint resolves to; lane-open rows are shared supply reported once. When the market inputs (queue/slots.json, models.json, queue/budget-overrides.json, queue/adaptive.json, HOLD) are readable, each lane also reports the work-market reason codes its own ready rows are blocked by; blocked and scored stay null when they are not. Says when queue/FILLER_HOLD exists. Read-only.
 Parked rows are not runnable work and are not counted.
 Lane alerts are suppressed when the dispatcher is paused or fleet admission is closed.
 Reads ~/.ashlr-runs (override with ASHLR_RUNS_DIR). Exit 1 when any lane is starved.`;
@@ -44,6 +44,18 @@ const defaultIo: LaneStarveIo = {
   },
 };
 
+/** One plain clause for a lane's blocked reason codes, mirroring fleet unfed's top-three tally. */
+function blockedText(l: StarvedLane): string {
+  if (l.blocked === null) return 'blocked unknown';
+  if (l.scored === 0) return 'no market rows scored';
+  const top = Object.entries(l.blocked)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 3)
+    .map(([code, n]) => `${code} ${n}`)
+    .join(', ');
+  return `blocked ${top}`;
+}
+
 /** Read-only: never changes holds or launches work. */
 export async function cmdFleetLaneStarve(args: string[], io: LaneStarveIo = defaultIo): Promise<number> {
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
@@ -55,17 +67,28 @@ export async function cmdFleetLaneStarve(args: string[], io: LaneStarveIo = defa
     return 2;
   }
   const json = args[0] === '--json';
-  const queue = join(process.env.ASHLR_RUNS_DIR || join(homedir(), '.ashlr-runs'), 'queue');
+  const root = process.env.ASHLR_RUNS_DIR || join(homedir(), '.ashlr-runs');
+  const queue = join(root, 'queue');
   let report: LaneStarveReport;
   try {
-    const [status, ready, routerQueue, hold] = await Promise.all([
+    // Market inputs are optional diagnostics: an unreadable or over-bound
+    // file degrades that lane's blocked codes to null, never fails the read.
+    const optional = (path: string) => io.read(path).catch(() => null);
+    const [status, ready, routerQueue, hold, slots, models, budget, adaptive, operatorHold] = await Promise.all([
       io.read(join(queue, 'status.json')),
       io.read(join(queue, 'ready.tsv')),
       io.read(join(queue, 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES),
       io.read(join(queue, 'FILLER_HOLD')),
+      optional(join(queue, 'slots.json')),
+      optional(join(root, 'models.json')),
+      optional(join(queue, 'budget-overrides.json')),
+      optional(join(queue, 'adaptive.json')),
+      optional(join(root, 'HOLD')),
     ]);
     if (status === null) throw new Error('no status');
-    const { lanes, openRows } = findStarvedLanes(status, ready, routerQueue, Date.now());
+    const { lanes, openRows } = findStarvedLanes(status, ready, routerQueue, Date.now(), {
+      slots, models, budget, adaptive, hold: operatorHold,
+    });
     report = {
       schema: FLEET_LANE_STARVE_SCHEMA,
       readOnly: true,
@@ -82,7 +105,7 @@ export async function cmdFleetLaneStarve(args: string[], io: LaneStarveIo = defa
   else {
     for (const l of report.lanes) {
       const ready = l.ready === null ? 'unknown' : `${l.ready} = ${l.filler} filler + ${l.real} real`;
-      console.log(`${l.lane}: ${l.running}/${l.target} running, ${l.queued} queued; ready ${ready}`);
+      console.log(`${l.lane}: ${l.running}/${l.target} running, ${l.queued} queued; ready ${ready}; ${blockedText(l)}`);
     }
     if (report.lanes.length === 0) console.log('No starved lanes.');
     if (report.open_rows !== null && report.open_rows > 0) {

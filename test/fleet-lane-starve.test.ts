@@ -56,7 +56,7 @@ describe('findStarvedLanes', () => {
   it('keeps only lanes below target with queued work and splits ready rows', () => {
     expect(findStarvedLanes(STATUS, READY)).toEqual({
       lanes: [
-        { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 3, filler: 2, real: 1 },
+        { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 3, filler: 2, real: 1, blocked: null, scored: null },
       ],
       openRows: 0,
     });
@@ -75,7 +75,7 @@ describe('findStarvedLanes', () => {
     ].join('\n');
     expect(findStarvedLanes(STATUS, ready)).toEqual({
       lanes: [
-        { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 2, filler: 1, real: 1 },
+        { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 2, filler: 1, real: 1, blocked: null, scored: null },
       ],
       openRows: 0,
     });
@@ -90,7 +90,7 @@ describe('findStarvedLanes', () => {
     ].join('\n');
     expect(findStarvedLanes(STATUS, ready)).toEqual({
       lanes: [
-        { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 1, filler: 1, real: 0 },
+        { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 1, filler: 1, real: 0, blocked: null, scored: null },
       ],
       openRows: 0,
     });
@@ -107,7 +107,7 @@ describe('findStarvedLanes', () => {
     const ready = 'READY\tRQ-SF-A123456Q8\tclaude-api\twork\tphantom\t/prompt';
     expect(findStarvedLanes(STATUS, ready)).toEqual({
       lanes: [
-        { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 1, filler: 1, real: 0 },
+        { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 1, filler: 1, real: 0, blocked: null, scored: null },
       ],
       openRows: 0,
     });
@@ -122,7 +122,7 @@ describe('findStarvedLanes', () => {
     ].join('\n');
     expect(findStarvedLanes(STATUS, ready)).toEqual({
       lanes: [
-        { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 2, filler: 1, real: 1 },
+        { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 2, filler: 1, real: 1, blocked: null, scored: null },
       ],
       openRows: 0,
     });
@@ -144,8 +144,8 @@ describe('findStarvedLanes', () => {
     const router = '- READY RQ-ENV-1 (lane=codex tier=work): envelope-hinted job\n';
     expect(findStarvedLanes(both, ready, router)).toEqual({
       lanes: [
-        { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 1, filler: 0, real: 1 },
-        { lane: 'codex', running: 0, target: 2, queued: 3, ready: 2, filler: 0, real: 2 },
+        { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 1, filler: 0, real: 1, blocked: null, scored: null },
+        { lane: 'codex', running: 0, target: 2, queued: 3, ready: 2, filler: 0, real: 2, blocked: null, scored: null },
       ],
       openRows: 0,
     });
@@ -163,7 +163,7 @@ describe('findStarvedLanes', () => {
     ].join('\n');
     expect(findStarvedLanes(STATUS, ready)).toEqual({
       lanes: [
-        { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 1, filler: 1, real: 0 },
+        { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 1, filler: 1, real: 0, blocked: null, scored: null },
       ],
       openRows: 2,
     });
@@ -178,13 +178,13 @@ describe('findStarvedLanes', () => {
     const ready = 'RQ-ENV-2\tphantom\tclaude-api\twork\t/prompt';
     const router = '- READY RQ-ENV-2 (preferred_lane=codex): envelope job\n';
     expect(findStarvedLanes(both, ready, router).lanes).toEqual([
-      { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 0, filler: 0, real: 0 },
-      { lane: 'codex', running: 0, target: 2, queued: 3, ready: 1, filler: 0, real: 1 },
+      { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 0, filler: 0, real: 0, blocked: null, scored: null },
+      { lane: 'codex', running: 0, target: 2, queued: 3, ready: 1, filler: 0, real: 1, blocked: null, scored: null },
     ]);
     // Without the envelope the lane column stands, exactly like the market's fallback.
     expect(findStarvedLanes(both, ready).lanes).toEqual([
-      { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 1, filler: 0, real: 1 },
-      { lane: 'codex', running: 0, target: 2, queued: 3, ready: 0, filler: 0, real: 0 },
+      { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 1, filler: 0, real: 1, blocked: null, scored: null },
+      { lane: 'codex', running: 0, target: 2, queued: 3, ready: 0, filler: 0, real: 0, blocked: null, scored: null },
     ]);
   });
   it('attributes each job to its first valid ready row across queue formats and lane hints', () => {
@@ -205,8 +205,8 @@ describe('findStarvedLanes', () => {
     ].join('\n');
     expect(findStarvedLanes(status, ready)).toEqual({
       lanes: [
-        { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 1, filler: 1, real: 0 },
-        { lane: 'codex', running: 0, target: 2, queued: 3, ready: 1, filler: 0, real: 1 },
+        { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 1, filler: 1, real: 0, blocked: null, scored: null },
+        { lane: 'codex', running: 0, target: 2, queued: 3, ready: 1, filler: 0, real: 1, blocked: null, scored: null },
       ],
       openRows: 1,
     });
@@ -220,7 +220,7 @@ describe('findStarvedLanes', () => {
     const room = JSON.stringify({ lanes: { codex: { running: 0, target: 3, effective_target: 1, queued: 4 } } });
     expect(findStarvedLanes(room, '')).toEqual({
       lanes: [
-        { lane: 'codex', running: 0, target: 1, queued: 4, ready: 0, filler: 0, real: 0 },
+        { lane: 'codex', running: 0, target: 1, queued: 4, ready: 0, filler: 0, real: 0, blocked: null, scored: null },
       ],
       openRows: 0,
     });
@@ -228,10 +228,73 @@ describe('findStarvedLanes', () => {
   it('reports openRows null when ready.tsv is absent', () => {
     expect(findStarvedLanes(STATUS, null)).toEqual({
       lanes: [
-        { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: null, filler: null, real: null },
+        { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: null, filler: null, real: null, blocked: null, scored: null },
       ],
       openRows: null,
     });
+  });
+  it('tallies work-market blocked codes over each starved lane\'s own ready rows', () => {
+    const status = JSON.stringify({
+      last_tick: new Date(NOW).toISOString(),
+      lanes: {
+        claude: { running: 1, target: 3, queued: 2 },
+        'codex-personal': { running: 0, target: 1, queued: 1 },
+      },
+    });
+    const ready = [
+      'RQ-B1\tphantom\tclaude\twork\t/prompt',
+      'RQ-B2\tphantom\tclaude\twork\t/prompt\t{"preferred_lane":"claude","needs":["secrets:x"]}',
+      'RQ-CP1\tphantom\tcodex-personal\twork\t/prompt',
+    ].join('\n');
+    const market = {
+      slots: '{}',
+      budget: JSON.stringify({ claude: { weekly_used_pct: 100 } }),
+      nowMs: NOW,
+    };
+    expect(findStarvedLanes(status, ready, null, NOW, market)).toEqual({
+      lanes: [
+        {
+          lane: 'claude', running: 1, target: 3, queued: 2, ready: 2, filler: 0, real: 2,
+          blocked: { missing_capability: 1, quota_exhausted: 2 }, scored: 2,
+        },
+        {
+          lane: 'codex-personal', running: 0, target: 1, queued: 1, ready: 1, filler: 0, real: 1,
+          blocked: { deferred_after_selection: 1 }, scored: 1,
+        },
+      ],
+      openRows: 0,
+    });
+  });
+  it('scores only market-evaluated rows: tolerant dialects leave scored at zero', () => {
+    const market = { slots: '{}', nowMs: NOW };
+    const { lanes } = findStarvedLanes(STATUS, READY, null, NOW, market);
+    expect(lanes).toEqual([
+      { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 3, filler: 2, real: 1, blocked: {}, scored: 0 },
+    ]);
+  });
+  it('keeps blocked null when the market inputs cannot be read', () => {
+    for (const market of [{}, { slots: 'not json' }, { slots: null }]) {
+      const { lanes } = findStarvedLanes(STATUS, READY, null, NOW, market);
+      expect(lanes[0]).toMatchObject({ blocked: null, scored: null });
+    }
+  });
+  it('judges adaptive signals against the report instant by default', () => {
+    const status = JSON.stringify({
+      last_tick: new Date(NOW).toISOString(),
+      lanes: { claude: { running: 1, target: 3, queued: 1 } },
+    });
+    const ready = 'RQ-AD\tphantom\tclaude\twork\t/prompt';
+    const stale = JSON.stringify({ ts: NOW / 1000 - 400, lanes: { claude: { backoff: true } } });
+    const fresh = JSON.stringify({ ts: NOW / 1000 - 60, lanes: { claude: { backoff: true } } });
+    const base = { slots: '{}', nowMs: NOW };
+    expect(findStarvedLanes(status, ready, null, NOW, { ...base, adaptive: stale }).lanes[0]!.blocked)
+      .toEqual({ deferred_after_selection: 1 });
+    expect(findStarvedLanes(status, ready, null, NOW, { ...base, adaptive: fresh }).lanes[0]!.blocked)
+      .toEqual({ provider_backoff: 1 });
+    // nowMs omitted falls back to the now argument.
+    const { nowMs: _drop, ...noNow } = base;
+    expect(findStarvedLanes(status, ready, null, NOW, { ...noNow, adaptive: fresh }).lanes[0]!.blocked)
+      .toEqual({ provider_backoff: 1 });
   });
 });
 
@@ -271,7 +334,7 @@ describe('cmdFleetLaneStarve', () => {
     writeFileSync(join(dir, 'queue', 'status.json'), STATUS);
     const { code, lines } = await run([]);
     expect(code).toBe(1);
-    expect(lines).toEqual(['claude-api: 1/3 running, 4 queued; ready unknown']);
+    expect(lines).toEqual(['claude-api: 1/3 running, 4 queued; ready unknown; blocked unknown']);
   });
   it.each([
     { readyFile: null, count: null },
@@ -283,9 +346,58 @@ describe('cmdFleetLaneStarve', () => {
     expect(code).toBe(1);
     const report = JSON.parse(lines[0]!);
     expect(report.lanes).toEqual([
-      { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: count, filler: count, real: count },
+      { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: count, filler: count, real: count, blocked: null, scored: null },
     ]);
     expect(report.open_rows).toBe(readyFile === null ? null : 0);
+  });
+  it('reports blocked reason codes in JSON when market inputs are readable', async () => {
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
+      last_tick: new Date(NOW).toISOString(),
+      lanes: { claude: { running: 1, target: 3, queued: 2 } },
+    }));
+    writeFileSync(join(dir, 'queue', 'ready.tsv'), [
+      'RQ-B1\tphantom\tclaude\twork\t/prompt',
+      'RQ-B2\tphantom\tclaude\twork\t/prompt\t{"preferred_lane":"claude","needs":["secrets:x"]}',
+    ].join('\n'));
+    writeFileSync(join(dir, 'queue', 'slots.json'), '{}');
+    writeFileSync(join(dir, 'queue', 'budget-overrides.json'), JSON.stringify({ claude: { weekly_used_pct: 100 } }));
+    const { code, lines } = await run();
+    expect(code).toBe(1);
+    const report = JSON.parse(lines[0]!);
+    expect(report.lanes[0]).toMatchObject({
+      lane: 'claude', scored: 2, blocked: { missing_capability: 1, quota_exhausted: 2 },
+    });
+  });
+  it('prints the top blocked codes in plain text', async () => {
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
+      last_tick: new Date(NOW).toISOString(),
+      lanes: { claude: { running: 1, target: 3, queued: 2 } },
+    }));
+    writeFileSync(join(dir, 'queue', 'ready.tsv'), [
+      'RQ-B1\tphantom\tclaude\twork\t/prompt',
+      'RQ-B2\tphantom\tclaude\twork\t/prompt\t{"preferred_lane":"claude","needs":["secrets:x"]}',
+    ].join('\n'));
+    writeFileSync(join(dir, 'queue', 'slots.json'), '{}');
+    writeFileSync(join(dir, 'queue', 'budget-overrides.json'), JSON.stringify({ claude: { weekly_used_pct: 100 } }));
+    const { code, lines } = await run([]);
+    expect(code).toBe(1);
+    expect(lines[0]).toContain('blocked quota_exhausted 2, missing_capability 1');
+  });
+  it('keeps blocked null when slots.json is missing or unreadable', async () => {
+    writeFileSync(join(dir, 'queue', 'status.json'), STATUS);
+    writeFileSync(join(dir, 'queue', 'ready.tsv'), READY);
+    // budget-overrides.json alone cannot derive codes: slots.json anchors the market view.
+    writeFileSync(join(dir, 'queue', 'budget-overrides.json'), JSON.stringify({ 'claude-api': { weekly_used_pct: 100 } }));
+    const { code, lines } = await run();
+    expect(code).toBe(1);
+    expect(JSON.parse(lines[0]!).lanes[0]).toMatchObject({ blocked: null, scored: null });
+  });
+  it('says blocked unknown in plain text when market inputs are unreadable', async () => {
+    writeFileSync(join(dir, 'queue', 'status.json'), STATUS);
+    writeFileSync(join(dir, 'queue', 'ready.tsv'), READY);
+    const { code, lines } = await run([]);
+    expect(code).toBe(1);
+    expect(lines[0]).toContain('blocked unknown');
   });
   it('exits 0 when nothing is starved', async () => {
     writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({ last_tick: new Date(NOW).toISOString(), lanes: {} }));
