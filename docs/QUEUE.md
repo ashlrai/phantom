@@ -1600,6 +1600,11 @@ occupy slots but are not credited with future quota spend. Headroom must be
 observed and positive for a machine to offer extra slots; a shared slot can
 only be allocated once. Unhinted work and future arrivals are not counted.
 
+When the eligible ready queue view is available, scale-up uses its per-lane
+counts. Lanes outside that view have unknown demand and receive no scale-up
+advice. A covered lane with no eligible jobs has a measured count of zero.
+Dispatcher queue counts supply the fallback when the entire view is unavailable.
+
 Waste is in the allowance's own units. Where there is a quota change and
 matching finishes inside the observation interval, the estimate uses the
 observed quota per token times measured tokens per job, or observed quota per
