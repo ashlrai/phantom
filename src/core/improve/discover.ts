@@ -2243,6 +2243,20 @@
  *     truncated tails are stated as lower bounds, and items emit
  *     only for the fleet's own repository since the verdicts carry
  *     no repo column;
+ *   - the self-awareness loop's own diagnosis: `phm metrics loop`
+ *     persists one metrics.loop.v1 report per run to
+ *     <runs>/metrics/loop-*.json plus a metrics.selection-hints.v1
+ *     advisory, whose top_constraint verdict and slowest-stage p50
+ *     reached only `phm ideas list`'s human-ranked ideas — so a
+ *     binding constraint recurring across days or a stage median wait
+ *     over the Ideas bar produced no autonomous work
+ *     (loopHintsBacklogItems below). The constraint item emits only
+ *     when the newest in-window report's actionable constraint name
+ *     recurs on distinct report days inside the 72-hour freshness
+ *     bound; the stage item keeps the Ideas list's own p50 bar on a
+ *     fresh hints file; off-contract reports are dropped, 'unknown'
+ *     verdicts carry no diagnosis, and items emit only for the
+ *     fleet's own repository since the reports carry no repo column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -2429,6 +2443,7 @@ import { modelRadarBacklogItems } from './model-radar-backlog.js';
 import { racingOutcomeBacklogItems } from './racing-outcome-backlog.js';
 import { busHopBacklogItems } from './bus-hop-backlog.js';
 import { ideaVerdictBacklogItems } from './idea-verdict-backlog.js';
+import { loopHintsBacklogItems } from './loop-hints-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -5088,6 +5103,21 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // stated as lower bounds, and only the fleet's own repository
   // inherits the item since the verdicts carry no repo column.
   await feed('ideaVerdictBacklogItems', () => ideaVerdictBacklogItems({ repo }));
+
+  // Self-awareness loop diagnosis: `phm metrics loop` persists one
+  // metrics.loop.v1 report per run to <runs>/metrics/loop-*.json plus a
+  // compact metrics.selection-hints.v1 advisory, and its top_constraint
+  // verdict and slowest-stage p50 reached exactly one surface — `phm
+  // ideas list`'s human-ranked ideas — so a binding constraint that
+  // persisted for days or a stage whose median wait stayed over an hour
+  // produced no autonomous work (loopHintsBacklogItems below). The
+  // constraint item emits only when the newest in-window report's
+  // actionable constraint name recurs on distinct report days inside
+  // the freshness bound; the stage item keeps the Ideas list's own
+  // p50 bar on a fresh hints file. Read-only and bounded; items emit
+  // only for the fleet's own repository since the reports carry no
+  // repo column.
+  await feed('loopHintsBacklogItems', () => loopHintsBacklogItems({ repo }));
   return { items, errors };
 }
 
