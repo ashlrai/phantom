@@ -215,7 +215,9 @@ export async function checkOwnerPair(deps: PairDeps): Promise<PairCheckResult> {
   const pending = state.pending;
   if (!pending) return { status: 'none' };
   if (pending.expiresAt <= now) { writePairState(deps.configDir, { ...state, pending: null }); return { status: 'expired' }; }
-  const inbound = await deps.bridge.replies(pending.afterRowId, pending.handles);
+  let inbound: PairInbound[] | null;
+  try { inbound = await deps.bridge.replies(pending.afterRowId, pending.handles); }
+  catch { return { status: 'unreadable' }; }
   if (inbound === null) return { status: 'unreadable' };
   const own = new Set(pending.handles.map(h => h.toLowerCase()));
   // Rows at or before the send are older than the pairing; only the chats with pending own handles count.
