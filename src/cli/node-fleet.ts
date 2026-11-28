@@ -11,6 +11,10 @@ import type { NodeBeatWatchDeps } from './node-beat-watch.js';
 export interface NodeFleetDeps {
   store?: NodesStore;
   now?: () => number;
+  /** This machine's gh login check — exit code only, never a credential;
+   * defaults to `gh auth status` via probeLocalAuth. Feeds `beat
+   * --probe-auth`, the bare join's gh lane detection, and the join reply's
+   * ghAuth when the advertised caps include gh. */
   probeAuth?: () => NodeAuth;
   /** This build's version for the join `phm-<version>` cap and the status/list
    * drift target; defaults to localPhmVersion. */
@@ -26,7 +30,8 @@ export interface NodeFleetDeps {
   watch?: NodeBeatWatchDeps;
   /** Test seam for the bare join's sign-in lane probe (provider CLIs plus the
    * gh login check, exit codes only); defaults to this machine's real probe.
-   * An explicit --caps skips the probe entirely. */
+   * An explicit --caps skips the lane probe — though a --caps that advertises
+   * gh still pays the one gh login check the reply reports as ghAuth. */
   providerLanes?: () => string[];
 }
 
@@ -108,10 +113,13 @@ function planEmptyNote(nodes: DriveNodes, owner: string | undefined): string {
 /** Lanes a bare standalone join advertises from this machine's own sign-ins:
  * the same exit-code-only provider probe a pool worker runs, plus `gh` when
  * the local gh login check passes. Sign-in state is read on this machine only —
- * no credential, token or auth file leaves it. */
-async function joinSignInLanes(probeAuth: () => NodeAuth): Promise<string[]> {
+ * no credential, token or auth file leaves it. The gh check's own verdict
+ * rides along so the join reply can name this machine's login state without
+ * paying for a second probe. */
+async function joinSignInLanes(probeAuth: () => NodeAuth): Promise<{ lanes: string[]; ghAuth: NodeAuth }> {
   const { probeProviderBinaries } = await import('../core/drive/nodes/worker.js');
-  return [...Object.keys(probeProviderBinaries()), ...(probeAuth() === 'ok' ? ['gh'] : [])].sort();
+  const ghAuth = probeAuth();
+  return { lanes: [...Object.keys(probeProviderBinaries()), ...(ghAuth === 'ok' ? ['gh'] : [])].sort(), ghAuth };
 }
 
 function text(verb: string, out: Record<string, unknown>, notes?: {
@@ -167,6 +175,17 @@ function text(verb: string, out: Record<string, unknown>, notes?: {
       lines.push(auto.length
         ? `Caps auto-detected from this machine's sign-ins: ${auto.join(', ')}. Pass --caps to advertise a different set.`
         : 'No codex, claude or gh sign-ins detected on this machine — the join advertises no sign-in lanes. Sign in to one and join again, or pass --caps to advertise lanes yourself.');
+    }
+    // gh is advertised but this machine's login is not verified ok: name the
+    // state and the fix at join — where `gh auth login` is still cheap —
+    // because routing refuses gh jobs until a --probe-auth beat reports ok,
+    // and the first unrouted plan would otherwise be the first place the
+    // mismatch surfaces. 'ok' stays quiet: the caps line already carries it.
+    const ghAuth = out['ghAuth'];
+    if (ghAuth === 'missing') {
+      lines.push('gh is advertised but gh reports no login on this machine — gh jobs will not route here until `gh auth login` runs and a --probe-auth beat reports ok.');
+    } else if (ghAuth === 'unknown') {
+      lines.push('gh is advertised but this machine could not check its gh login — gh jobs route only while a --probe-auth beat reports ok; install gh and run `gh auth login` if it is missing.');
     }
     return lines.join('\n');
   }
@@ -381,6 +400,11 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
     // The sign-in lanes a bare join advertised, named in the reply so the caps
     // list never reads as a choice the operator made.
     let autoCaps: string[] | undefined;
+    // The gh login verdict the bare join's sign-in probe already paid for;
+    // the reply reuses it instead of probing twice. An explicit --caps — or
+    // an injected providerLanes seam — leaves it unset, and the reply probes
+    // once when the advertised caps include gh.
+    let joinGhAuth: NodeAuth | undefined;
     if (verb === 'join') {
       // A standalone join defaults --node to this computer's sanitized hostname,
       // the same default a pool join applies. Like the version cap below it stays
@@ -398,12 +422,16 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       // claude or gh here and the join advertises that lane. An explicit
       // --caps stays the complete manual advertisement and skips the probe.
       if (!flags.has('--caps')) {
-        const lanes = [...new Set(deps.providerLanes?.() ?? await joinSignInLanes(deps.probeAuth ?? probeLocalAuth))].sort();
+        const detected: { lanes: string[]; ghAuth?: NodeAuth } = deps.providerLanes !== undefined
+          ? { lanes: deps.providerLanes() }
+          : await joinSignInLanes(deps.probeAuth ?? probeLocalAuth);
+        const lanes = [...new Set(detected.lanes)].sort();
         // The probe outcome rides the reply even when empty: autoCaps: [] says
         // "probed, found no sign-ins" where an absent key means the operator
         // passed --caps and no probe ran — the same distinction the pool
         // worker's 'no-local-provider-login' hold makes for a lane-less join.
         autoCaps = lanes;
+        joinGhAuth = detected.ghAuth;
         if (lanes.length > 0) flags.set('--caps', lanes.join(','));
       } else {
         // An explicit --caps that names nothing is a scripting accident
@@ -465,7 +493,8 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
     // a working local gh login.
     if (verb === 'join') {
       const caps = out['caps'];
-      const probe = Array.isArray(caps) && caps.includes('gh') ? ' --probe-auth' : '';
+      const advertisesGh = Array.isArray(caps) && caps.includes('gh');
+      const probe = advertisesGh ? ' --probe-auth' : '';
       out['next'] = `phm node beat --node ${String(out['nodeId'])} --session ${String(out['session'])}${probe} --watch`;
       // This path only runs with no pool config (cmdNodePool owns pooled
       // joins), so the store is this machine's private ~/.ashlr/nodes: name
@@ -477,6 +506,20 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       // first-run output says why instead of looking never-configured.
       if (localLaneError !== null) {
         out['localLanes'] = { state: 'invalid', error: localLaneError, fix: 'Run: phm node lanes' };
+      }
+      // An advertised gh cap routes gh jobs only while a --probe-auth beat
+      // reports ok, so the reply names this machine's login state at join —
+      // where `gh auth login` is still cheap — instead of leaving the first
+      // unrouted plan to discover the mismatch. A bare join's sign-in probe
+      // already answered; an explicit --caps pays the same exit-code-only
+      // check a --probe-auth beat runs, once. A probe seam that throws
+      // reports 'unknown': the check could not verify the login.
+      if (advertisesGh) {
+        let ghAuth = joinGhAuth;
+        if (ghAuth === undefined) {
+          try { ghAuth = (deps.probeAuth ?? probeLocalAuth)(); } catch { ghAuth = 'unknown'; }
+        }
+        out['ghAuth'] = ghAuth;
       }
     }
     // status/list name each expired node's rejoin command. Text only: the
