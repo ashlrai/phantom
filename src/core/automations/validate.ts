@@ -7,6 +7,7 @@
 import { parsePlaybookRefText } from '../playbooks/types.js';
 import { nextOccurrence, parseRrule } from './rrule.js';
 import {
+  AUTOMATION_BRANCH_PATTERN,
   AUTOMATION_DEFAULTS,
   AUTOMATION_ID_PATTERN,
   AUTOMATION_LABEL_PATTERN,
@@ -17,6 +18,9 @@ import {
   AUTOMATION_TRIGGER_KINDS,
   AUTOMATION_ALL_GRANT_REPOS,
   AUTOMATION_TRIAGE_DEFAULT_CONFIDENCE,
+  isAutomationRecord,
+  parseIsoDate,
+  roundUsd,
   type AutomationLane,
   type AutomationTriageConfig,
   type AutomationTrigger,
@@ -43,12 +47,7 @@ const TRIGGER_KEYS: Record<AutomationTrigger['kind'], ReadonlySet<string>> = {
   webhook: new Set(['kind']),
   telegram: new Set(['kind']),
 };
-const BRANCH_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
 const DEDUPE_PLACEHOLDERS = new Set(['repo', 'number', 'sha', 'occurrence', 'key']);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
 
 function rejectUnknown(body: Record<string, unknown>, allowed: ReadonlySet<string>, where: string): void {
   for (const key of Object.keys(body)) {
@@ -74,16 +73,16 @@ function int(value: unknown, name: string, min: number, max: number, fallback: n
 function money(value: unknown, name: string, max: number, fallback: number): number {
   if (value === undefined) return fallback;
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > max) return fail(`${name} must be a number from 0 to ${max}.`);
-  return Math.round(value * 100) / 100;
+  return roundUsd(value);
 }
 
-export function slugifyAutomationId(name: string): string {
+function slugifyAutomationId(name: string): string {
   const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-+$/g, '');
   return `au_${slug.length >= 2 ? slug : `automation-${slug}`.slice(0, 40)}`;
 }
 
 export function normaliseTrigger(value: unknown): AutomationTrigger {
-  if (!isRecord(value)) return fail('trigger must be an object with a kind.');
+  if (!isAutomationRecord(value)) return fail('trigger must be an object with a kind.');
   const kind = value['kind'];
   if (typeof kind !== 'string' || !(AUTOMATION_TRIGGER_KINDS as readonly string[]).includes(kind)) {
     return fail(`trigger.kind must be one of ${AUTOMATION_TRIGGER_KINDS.join(', ')}.`);
@@ -123,7 +122,7 @@ export function normaliseTrigger(value: unknown): AutomationTrigger {
       const rawBranch = value['branch'];
       let branch: string | null = null;
       if (rawBranch !== undefined && rawBranch !== null && rawBranch !== '') {
-        if (typeof rawBranch !== 'string' || !BRANCH_RE.test(rawBranch) || rawBranch.includes('..')) return fail('trigger.branch is not a branch name this accepts.');
+        if (typeof rawBranch !== 'string' || !AUTOMATION_BRANCH_PATTERN.test(rawBranch) || rawBranch.includes('..')) return fail('trigger.branch is not a branch name this accepts.');
         branch = rawBranch;
       }
       return { kind: 'ci-red', branch, pollMinutes: poll() };
@@ -144,7 +143,7 @@ export function normaliseTrigger(value: unknown): AutomationTrigger {
         return fail('watch.command must be gh pr|issue view NUMBER --repo OWNER/REPO --json state,number (or mergedAt,closedAt).');
       }
       const condition = value['condition'];
-      if (!isRecord(condition)) return fail('watch.condition must contain path and equals.');
+      if (!isAutomationRecord(condition)) return fail('watch.condition must contain path and equals.');
       rejectUnknown(condition, new Set(['path', 'equals']), 'trigger.condition.');
       if (typeof condition['path'] !== 'string' || !/^\$?(\.[A-Za-z_][A-Za-z0-9_]*|\.[0-9]+)+$/.test(condition['path'])
         || condition['path'].length > 200 || condition['path'].split('.').some((part) => ['__proto__', 'constructor', 'prototype'].includes(part))) return fail('watch.condition.path must be a simple dotted JSON path, e.g. $.state.');
@@ -189,7 +188,7 @@ function normaliseDedupe(value: unknown): string | null {
 
 function normaliseTriage(value: unknown, lane: AutomationLane, playbookId: string | null): AutomationTriageConfig | null {
   if (value === undefined || value === null) return null;
-  if (!isRecord(value)) return fail('triage must be an object or null.');
+  if (!isAutomationRecord(value)) return fail('triage must be an object or null.');
   rejectUnknown(value, TRIAGE_KEYS, 'triage.');
   const rawLanes = value['lanes'] ?? [lane];
   if (!Array.isArray(rawLanes) || rawLanes.length === 0) return fail('triage.lanes must list at least one lane.');
@@ -228,7 +227,7 @@ export function normaliseAutomation(
   body: unknown,
   opts: { now: Date; existing?: AutomationV1 | null; stored?: boolean },
 ): AutomationV1 {
-  if (!isRecord(body)) return fail('An automation must be a JSON object.');
+  if (!isAutomationRecord(body)) return fail('An automation must be a JSON object.');
   rejectUnknown(body, opts.stored ? STORED_KEYS : INPUT_KEYS, '');
   if (opts.stored && body['v'] !== AUTOMATION_SCHEMA_VERSION) return fail('Unsupported automation version.');
 
@@ -272,8 +271,8 @@ export function normaliseAutomation(
 
   const nowIso = opts.now.toISOString();
   const createdAt = opts.existing?.createdAt
-    ?? (opts.stored && typeof body['createdAt'] === 'string' && !Number.isNaN(Date.parse(body['createdAt'])) ? body['createdAt'] : nowIso);
-  const updatedAt = opts.stored && typeof body['updatedAt'] === 'string' && !Number.isNaN(Date.parse(body['updatedAt'])) ? body['updatedAt'] : nowIso;
+    ?? (opts.stored && parseIsoDate(body['createdAt']) ? (body['createdAt'] as string) : nowIso);
+  const updatedAt = opts.stored && parseIsoDate(body['updatedAt']) ? (body['updatedAt'] as string) : nowIso;
 
   return {
     v: AUTOMATION_SCHEMA_VERSION,

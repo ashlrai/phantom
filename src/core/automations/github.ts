@@ -11,7 +11,14 @@
  */
 import { scrubSecrets } from '../util/scrub.js';
 import { cleanText } from './validate.js';
-import { AUTOMATION_LIMITS, type CiRedTrigger, type GithubIssuesTrigger } from './types.js';
+import {
+  AUTOMATION_BRANCH_PATTERN,
+  AUTOMATION_LIMITS,
+  isAutomationRecord,
+  parseIsoDate,
+  type CiRedTrigger,
+  type GithubIssuesTrigger,
+} from './types.js';
 
 export type AutomationGh = (args: string[]) => Promise<{ ok: boolean; stdout: string; stderr: string }>;
 
@@ -42,7 +49,7 @@ const FAILING_CONCLUSIONS = new Set(['failure', 'timed_out', 'startup_failure'])
  */
 const TRUSTED_AUTHORS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 
-export function safeGithubUrl(value: unknown): string | null {
+function safeGithubUrl(value: unknown): string | null {
   return typeof value === 'string' && GITHUB_HTML_URL.test(value) ? value : null;
 }
 
@@ -88,7 +95,8 @@ export async function ghGet(gh: AutomationGh, path: string, params: Record<strin
   const parsed = parseGhInclude(res.stdout);
   if (parsed && (parsed.status === 304 || (parsed.status >= 200 && parsed.status < 300))) return parsed;
   if (/\b304\b/.test(res.stderr) && etag) return { status: 304, etag, body: null };
-  const status = parsed?.status ?? (/HTTP (\d{3})/.exec(res.stderr)?.[1] ? Number(/HTTP (\d{3})/.exec(res.stderr)![1]) : null);
+  const stderrStatus = /HTTP (\d{3})/.exec(res.stderr)?.[1];
+  const status = parsed?.status ?? (stderrStatus ? Number(stderrStatus) : null);
   if (status === 404) return { error: `GitHub answered 404 for ${path.split('/').slice(0, 3).join('/')} (repo missing or not visible to gh).` };
   if (status === 403 || status === 429) return { error: 'GitHub rate-limited or refused the poll; it will retry on the next interval.' };
   return { error: `GitHub poll failed${status ? ` (HTTP ${status})` : ''}; it will retry on the next interval.` };
@@ -163,8 +171,8 @@ export async function pollIssues(
   let since = cursor.since;
   const events: TriggerEvent[] = [];
   for (const raw of list.slice(0, AUTOMATION_LIMITS.issuesPerPoll) as RawIssue[]) {
-    if (!raw || typeof raw !== 'object') continue;
-    const updated = typeof raw.updated_at === 'string' && !Number.isNaN(Date.parse(raw.updated_at)) ? raw.updated_at : null;
+    if (!isAutomationRecord(raw)) continue;
+    const updated = parseIsoDate(raw.updated_at) ? (raw.updated_at as string) : null;
     if (updated && (since === null || updated > since)) since = updated;
     if (typeof raw.number !== 'number' || !Number.isInteger(raw.number) || raw.number <= 0) continue;
     if (raw.state !== undefined && raw.state !== 'open') continue;
@@ -207,7 +215,7 @@ export async function resolveDefaultBranch(gh: AutomationGh, repo: string): Prom
   const res = await ghGet(gh, `repos/${repo}`, {}, null);
   if ('error' in res) return res;
   const name = (res.body as { default_branch?: unknown } | null)?.default_branch;
-  if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(name)) return { error: `GitHub did not say what ${repo}'s default branch is.` };
+  if (typeof name !== 'string' || !AUTOMATION_BRANCH_PATTERN.test(name)) return { error: `GitHub did not say what ${repo}'s default branch is.` };
   return name;
 }
 
@@ -231,17 +239,17 @@ export async function pollRedBranch(
 
   const failing: Array<{ name: string; url: string | null; sha: string }> = [];
   for (const raw of runs as RawCheckRun[]) {
-    if (!raw || typeof raw !== 'object') continue;
+    if (!isAutomationRecord(raw)) continue;
     if (raw.status !== 'completed' || typeof raw.conclusion !== 'string' || !FAILING_CONCLUSIONS.has(raw.conclusion)) continue;
     if (typeof raw.head_sha !== 'string' || !/^[0-9a-f]{40}$/.test(raw.head_sha)) continue;
     failing.push({ name: untrustedTitle(raw.name) || 'a check', url: safeGithubUrl(raw.html_url), sha: raw.head_sha });
   }
   if (failing.length === 0) return { events: [], branch, etag: res.etag ?? cursor.etag, error: null };
   const sha = failing[0]!.sha;
-  const names = [...new Set(failing.filter((f) => f.sha === sha).map((f) => f.name))];
+  const atHead = failing.filter((f) => f.sha === sha);
+  const names = [...new Set(atHead.map((f) => f.name))];
   const shown = names.slice(0, 3).join(', ') + (names.length > 3 ? ` +${names.length - 3} more` : '');
-  const lines = failing
-    .filter((f) => f.sha === sha)
+  const lines = atHead
     .slice(0, 20)
     .map((f) => `- ${f.name}${f.url ? ` — ${f.url}` : ''}`);
   return {
@@ -250,7 +258,7 @@ export async function pollRedBranch(
       vars: { sha },
       title: `Fix red ${branch}: ${shown} failing at ${sha.slice(0, 7)}`.slice(0, AUTOMATION_LIMITS.eventTitleMaxChars),
       text: `The head of ${branch} (${sha}) has failing checks:\n${lines.join('\n')}`,
-      url: failing.find((f) => f.sha === sha && f.url)?.url ?? null,
+      url: atHead.find((f) => f.url)?.url ?? null,
       ref: sha.slice(0, 12),
     }],
     branch,

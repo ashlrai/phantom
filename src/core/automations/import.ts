@@ -1,8 +1,8 @@
 import { assertMetadata } from '../connectors/profile.js';
 import { createAutomation } from './index.js';
-import { parseRrule } from './rrule.js';
+import { parseRrule, RRULE_DAY_CODES } from './rrule.js';
 import { readAutomations } from './store.js';
-import { AUTOMATION_LIMITS, type AutomationV1 } from './types.js';
+import { AUTOMATION_LIMITS, isAutomationRecord, type AutomationV1 } from './types.js';
 import { AutomationInputError, normaliseAutomation } from './validate.js';
 
 const fail = (message: string): never => { throw new AutomationInputError(message); };
@@ -36,11 +36,10 @@ export function cronToRrule(cron: string): string {
   const hours = field(hour, 0, 23);
   const days = field(day, 1, 31);
   const weekdays = field(weekday, 0, 7).map((n) => n === 7 ? 0 : n);
-  const codes = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
   const freq = day !== '*' ? 'MONTHLY' : weekday !== '*' ? 'WEEKLY' : 'DAILY';
   const rule = [`FREQ=${freq}`, `BYHOUR=${hours.join(',')}`, `BYMINUTE=${minutes.join(',')}`];
   if (day !== '*') rule.push(`BYMONTHDAY=${days.join(',')}`);
-  if (weekday !== '*') rule.push(`BYDAY=${[...new Set(weekdays)].map((n) => codes[n]).join(',')}`);
+  if (weekday !== '*') rule.push(`BYDAY=${[...new Set(weekdays)].map((n) => RRULE_DAY_CODES[n]).join(',')}`);
   return rule.join(';');
 }
 
@@ -50,8 +49,8 @@ export async function importRoutines(raw: unknown, dryRun = false): Promise<{ im
   const localZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const candidates: AutomationV1[] = [];
   for (const [index, value] of raw.entries()) {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return fail(`Routine ${index + 1} must be an object.`);
-    const item = value as Record<string, unknown>;
+    if (!isAutomationRecord(value)) return fail(`Routine ${index + 1} must be an object.`);
+    const item = value;
     if (Object.keys(item).some((key) => !['name', 'schedule', 'timezone', 'prompt', 'limits'].includes(key))) return fail(`Routine ${index + 1} has an unknown field.`);
     if (typeof item['timezone'] !== 'string') return fail(`Routine ${index + 1} needs a timezone.`);
     let zone: string;
