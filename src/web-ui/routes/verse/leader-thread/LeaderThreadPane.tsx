@@ -74,6 +74,9 @@ import { EarlierMessages, useEarlierMessages } from './LeaderEarlier.js';
 import { ComposerResultLine } from './ComposerResultLine.js';
 import { AppActionRunView, useThreadAppActions } from './AppActionRun.js';
 import { conversationActions, runCountWords, weaveAppActions } from './thread-app-actions.js';
+import { AskNowPending, useAskNow } from './AskNow.js';
+import { askGate, isAskChord, putBack } from './ask-now-model.js';
+import askStyles from './ask-now.module.css';
 
 /** Shared 'verse-fleet-runs' key so the pane rides the same cache and SSE invalidation as the other fleet panes. */
 const fleetRunsQuery: QueryDef<unknown> = {
@@ -224,7 +227,11 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const [failure, setFailure] = useState<string | null>(null);
   const [held, setHeld] = useState(false);
   const [unlockOpen, setUnlockOpen] = useState(false);
+  /** Which of the two sends the token dialog was opened for, so unlocking finishes that one. */
+  const unlockFor = useRef<'send' | 'ask'>('send');
   const [scrollVersion, setScrollVersion] = useState(0);
+  // Ask now: the thread answers in the same request; the inbox read follows so the line's routing and receipts catch up.
+  const askNow = useAskNow(() => { refetchRuns(); setScrollVersion(version => version + 1); });
   const [addingDirective, setAddingDirective] = useState(false);
   /** Composer command results; local to this session, never sent as messages. */
   const [commandLines, setCommandLines] = useState<LabeledLine[]>([]);
@@ -384,6 +391,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       return;
     }
     if (!hasMutationHold()) {
+      unlockFor.current = 'send';
       setUnlockOpen(true);
       return;
     }
@@ -410,6 +418,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   async function sendToThread() {
     if (inFlight.current || !canSend(draft, sending) || actions.readOnly) return;
     if (!hasMutationHold()) {
+      unlockFor.current = 'send';
       setUnlockOpen(true);
       return;
     }
@@ -431,6 +440,26 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     }
   }
 
+  /** Ask now: the words show at once as a pending line and the box is free while the Leader answers. A command still runs as a command. */
+  function ask() {
+    if (!askGate({ draft, readOnly: actions.readOnly, threadMissing, asking: askNow.asking }).can || sending) return;
+    if (parseComposerDraft(draft).kind === 'command') {
+      void send();
+      return;
+    }
+    if (!hasMutationHold()) {
+      unlockFor.current = 'ask';
+      setUnlockOpen(true);
+      return;
+    }
+    const text = trimReply(draft);
+    setDraft('');
+    setFailure(null);
+    setHeld(false);
+    setScrollVersion(version => version + 1);
+    askNow.ask(text);
+  }
+
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     void send();
@@ -447,6 +476,13 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       if (completed !== null) { event.preventDefault(); setDraft(completed); }
       return;
     }
+    // Cmd/Ctrl+Shift+Enter asks the Leader now instead of leaving the words for its next pass.
+    if (isAskChord(event) && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+      event.preventDefault();
+      event.stopPropagation();
+      ask();
+      return;
+    }
     // A command runs on plain Enter; a message still needs Cmd/Ctrl+Enter.
     const command = !event.shiftKey && parseComposerDraft(draft).kind === 'command';
     if (event.key !== 'Enter' || (!command && !event.metaKey && !event.ctrlKey) || event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -457,7 +493,9 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
 
   const hints = commandHints(draft);
   const threadMissing = read !== undefined && read.value === null;
-  const empty = items.length === 0;
+  const asking = askGate({ draft, readOnly: actions.readOnly, threadMissing, asking: askNow.asking });
+  // An ask that is out is conversation too: it replaces the "All quiet" placeholder.
+  const empty = items.length === 0 && askNow.pending.length === 0;
   const loading = empty && read === undefined && runs.data === undefined && runs.error === undefined;
   const busError = busStatus.error ?? busPage.error;
   const busUnavailable = agentBusMissing() || (busError instanceof ApiError && (busError.status === 404 || busError.status === 503))
@@ -558,6 +596,8 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
         {/* A command's answer; the jobs it names open as conversations. */}
         {commandLines.map(line => <ComposerResultLine key={line.id} text={line.text} at={line.at}
           onOpenConversation={openConversationFromLeader} />)}
+        {/* Asked now and not in the thread yet: Mason's words, then the Leader's typing dots or the reason it did not go. */}
+        <AskNowPending askNow={askNow} onEdit={text => { setDraft(prev => putBack(prev, text)); inputRef.current?.focus(); }} />
       </div>
     </div>
     {/* What the Leader is waiting on Mason for, answerable without scrolling back. */}
@@ -570,8 +610,11 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       <div className={styles.replyRow}>
         <textarea ref={inputRef} aria-label="Reply to the Leader" placeholder="Reply to the Leader…" value={draft} maxLength={6000}
           disabled={sending || actions.readOnly} {...assist.inputProps} onKeyDown={onKeyDown} />
+        <button type="button" className={askStyles.button} disabled={!asking.can || sending} title={asking.why} aria-keyshortcuts="Meta+Shift+Enter Control+Shift+Enter"
+          aria-busy={askNow.asking || undefined} onClick={ask}>Ask now</button>
         <button type="submit" className={styles.send} disabled={!canSend(draft, sending) || actions.readOnly}>Send</button>
       </div>
+      {askNow.notice ? <p className={askStyles.notice} role="status">{askNow.notice}</p> : null}
       {hints.length ? <ul className={styles.note} aria-label="Composer commands">
         {hints.map(hint => <li key={hint.name}><code>{hint.usage}</code> {hint.summary}</li>)}
       </ul> : null}
@@ -589,7 +632,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     </form>
     {/* Under the reply box: when the Leader last read the inbox and when it reads next. */}
     <LeaderPresence visible={visible} />
-    <MutationTokenDialog open={unlockOpen} onClose={() => setUnlockOpen(false)} onUnlocked={() => void send()}
+    <MutationTokenDialog open={unlockOpen} onClose={() => setUnlockOpen(false)} onUnlocked={() => { if (unlockFor.current === 'ask') ask(); else void send(); }}
       reason="Messaging the Leader requires the dispatch token." tokenHelp="the mutation token ashlr verse printed" />
     {actions.dialogs}
   </div>;
