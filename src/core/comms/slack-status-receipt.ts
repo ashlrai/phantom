@@ -9,6 +9,7 @@ export interface SlackStatusReceipt {
   owner: string | null;
   claimReceipt: string | null;
   asOf: string;
+  evidenceAsOf: string;
   source: string;
   text: string;
 }
@@ -26,6 +27,7 @@ export function readSlackStatusReceipt(id: string, options: { root: string; now:
     : sources.claims === 'unavailable' && !['VERIFIED', 'BLOCKED'].includes(classified.state)
       ? 'bus-work-claims/claims.json (unavailable)' : null;
   const state = dependency ? 'BLOCKED' : classified.state;
+  const evidenceAsOf = dependency ? 'unknown' : safe(classified.asOf);
   const source = `bus-inbox/messages.json + bus-work-claims/claims.json; evidence: ${safe(classified.source)}`;
   const owner = evidence.owner ? safe(evidence.owner) : null;
   const claimReceipt = evidence.claimReceipt ? safe(evidence.claimReceipt) : null;
@@ -36,6 +38,7 @@ export function readSlackStatusReceipt(id: string, options: { root: string; now:
     detail = verified.pr && verified.head ? `PR ${verified.pr}; head ${safe(verified.head)}`
       : verified.tests ? `tests ${safe(verified.tests)}` : `artifact ${safe(verified.artifact!)}`;
   } else if (classified.missing.length) detail += `; missing: ${classified.missing.join(', ')}`;
-  const text = `${state} · receipt ${receiptId === null ? 'unavailable' : safe(receiptId)} · as of ${asOf} · source ${source}\n${detail}`;
-  return { receiptId, state, owner, claimReceipt, asOf, source, text };
+  if (dependency) detail += '; dependency observed at read time; onset unknown';
+  const text = `${state} · receipt ${receiptId === null ? 'unavailable' : safe(receiptId)} · as of ${asOf} · source ${source}\nevidence as of ${evidenceAsOf}\n${detail}`;
+  return { receiptId, state, owner, claimReceipt, asOf, evidenceAsOf, source, text };
 }
