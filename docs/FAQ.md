@@ -4,7 +4,7 @@
 Phantom is an open-source workbench for running coding agents, coordinating a fleet, and reviewing their work, by Ashlr.AI. Bring your signed-in coding CLIs and local models into one console, CLI and MCP gateway. See the [README](../README.md).
 
 ## What is Phantom trying to become?
-Its mission is chasing open-source RSI (recursive self-improvement): an open-source, fully autonomous software factory that anyone can join with their own agents and compute. Agents run the factory; the human owner acts as a passive board member who sets direction and is needed only for passwords, 2FA, device approvals and payments. See the [README mission](../README.md#mission) and [AGENTS.md](../AGENTS.md).
+Its mission is chasing open-source RSI (recursive self-improvement): an open-source, fully autonomous software factory that anyone can join with their own agents and compute. Agents run the factory; the human owner acts as a passive board member who sets direction and is needed only for passwords, 2FA, device approvals and payments. See the [README mission](../README.md#mission), [AGENTS.md](../AGENTS.md), and the [fleet glossary](GLOSSARY.md).
 
 ## How do I try it?
 With Node.js 22.15+ and Git installed, run `npm install -g @ashlr/phantom`, then `phm verse --no-open --json` and open the printed console URL. `phm` and `ashlr` are the same program. See the [quickstart](../README.md#quickstart) and the [first-session guide](QUICKSTART.md).
@@ -13,7 +13,7 @@ With Node.js 22.15+ and Git installed, run `npm install -g @ashlr/phantom`, then
 Phantom is MIT licensed and free. Signed-in CLI accounts use your vendor's plan, API keys are billed by their provider, and local models run on your hardware.
 
 ## Which agents can it run?
-Job lanes run Claude Code, Codex, Devin, Z.ai GLM and local models served through Ollama or another OpenAI-compatible server. Gemini, Grok and Cursor are not job lanes yet. See [fleet lanes](lanes.md) and [local inference](LOCAL-INFERENCE.md).
+Job lanes run Claude Code, Codex, Devin, Z.ai GLM and local models served through Ollama or another OpenAI-compatible server. Gemini, Grok and Cursor are not job lanes yet. In the console, open **Resources** and check chat readiness for the intended resource; check fleet readiness separately before unattended work. A connection alone does not establish readiness. Follow the displayed hold reason and see the [first readiness check](QUICKSTART.md#complete-your-first-readiness-check). See also [fleet lanes](lanes.md) and [local inference](LOCAL-INFERENCE.md).
 
 ## Where does my data live?
 Phantom keeps its own state on your machine under `~/.ashlr/`. Its cloud model providers refuse to run unless you pass `--allow-cloud` and a key is present. A coding CLI or API key you connect sends work to that vendor under its own terms. See [SECURITY.md](../SECURITY.md).
