@@ -88,7 +88,7 @@ describe('nodes offload', () => {
     expect(unreadable.summary).toMatch(/ready queue could not be read/);
     expect(unreadable.reasons).toContain('queue unreadable; ready jobs unknown');
     const empty = await readNodesOffload(deps(busy, { jobs: [] }), { dryRun: true });
-    expect(empty.summary).toMatch(/nothing is queued/);
+    expect(empty.summary).toMatch(/Nothing is queued/);
   });
 
   it('host fine: nothing moves', async () => {
@@ -120,6 +120,25 @@ describe('nodes offload', () => {
     const unknown = await readNodesOffload(deps({ load: { load1: null, load5: null, load15: null, cores: null, ratio: null }, admission: { state: 'unknown', why: null, settleSeconds: null, load1: null, ownedLoad1: null }, memory: memory(true) }), { dryRun: true });
     expect(unknown.host.state).toBe('unknown');
     expect(unknown.moves).toEqual([]);
+  });
+
+  it('busy host with only running or already-chosen jobs does not claim they wait', async () => {
+    // Every queued job is already running on this computer or was chosen for
+    // another on an earlier pass, so nothing is waiting — yet stays.length
+    // still counts them. The summary must not say "jobs keep waiting here"
+    // (or "No computer is ready" while node-b sits ready with free slots).
+    const running = [node('node-a', { slots: 2 }), node('node-b', { slots: 4 })];
+    const live = ['RQ-REVIEW-J1', 'RQ-REVIEW-J3'].map(id =>
+      ({ id, state: 'running', claim: { nodeId: 'node-a', session: 1, expiresAt: NOW + 30_000 } }) as unknown as NodesState['jobs'][number]);
+    const report = await readNodesOffload(deps(busy, {
+      nodes: running, running: live, readRecorded: () => new Set(['RQ-REVIEW-J2']),
+      jobs: [ro(1), ro(2), ro(3)],
+    }), { dryRun: true });
+    expect(report.moves).toEqual([]);
+    expect(report.stays).toHaveLength(3);
+    expect(report.summary).not.toMatch(/keep waiting here/);
+    expect(report.summary).not.toMatch(/No computer is ready/);
+    expect(report.summary).toMatch(/No job is waiting to move/);
   });
 
   it('never moves a ready row whose job already runs on a node under the bridge id', async () => {
