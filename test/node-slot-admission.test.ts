@@ -71,6 +71,24 @@ describe('node slot admission', () => {
     expect(nodes.claim(leader, session, 'job')).toBeNull();
   });
 
+  it.each([
+    [0, 3, 0],
+    [1, 3, 1],
+    [3, 1, 1],
+  ])('combines an explicit %i-slot bound with a measured %i-slot sample', (slots, measured, expected) => {
+    const { nodes } = fixture();
+    const session = nodes.join('worker', { owners: ['mason'] })!;
+    const capacity = { hostId: 'host', ramBytes: 8 * 1024 ** 3, sampledAtMs: 1000, slots: measured, held: null };
+    executeNodeFleet('beat', ['--node', 'worker', '--session', String(session.session),
+      '--slots', String(slots), '--capacity', JSON.stringify(capacity)], nodes);
+    expect(nodes.view(['mason']).nodes[0]).toMatchObject({ slots: expected, capacity });
+    nodes.enqueue('first', { owner: 'mason' });
+    nodes.enqueue('second', { owner: 'mason' });
+    expect(nodes.plan().map(route => route.nodeId)).toEqual([expected ? 'worker' : null, null]);
+    expect(nodes.pull(session)?.job.id ?? null).toBe(expected ? 'first' : null);
+    expect(nodes.pull(session)).toBeNull();
+  });
+
   it('keeps existing records without slots compatible', () => {
     const { nodes } = fixture();
     nodes.join('legacy', { owners: ['mason'] });
