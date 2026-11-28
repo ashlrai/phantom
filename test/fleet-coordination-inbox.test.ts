@@ -90,6 +90,17 @@ describe('fleet coordination inbox read filters', () => {
     expect(fromDave.json.messages).toEqual([]);
     expect(fromDave.json.proposals).toEqual([]);
 
+    // --exclude-from is the inverted twin: alice's posts drop while the
+    // senderless proposals stay listed — nothing proves one came from her.
+    const notAlice = await inbox('bob', ['--exclude-from', 'alice']);
+    expect(notAlice.json.messages.map((m: any) => m.id)).toEqual(['m-lunch']);
+    expect(notAlice.json.proposals).toHaveLength(2);
+
+    // Include-then-exclude: a sender both named and excluded matches nothing.
+    const both = await inbox('bob', ['--from', 'alice', '--exclude-from', 'alice']);
+    expect(both.json.messages).toEqual([]);
+    expect(both.json.proposals).toEqual([]);
+
     const deploy = await inbox('bob', ['--contains', 'DEPLOY']);
     expect(deploy.json.messages.map((m: any) => m.id).sort()).toEqual(['m-all', 'm-deploy']);
     // --contains matches a proposal's repo+task text: only the deploy task survives.
@@ -145,6 +156,7 @@ describe('fleet coordination inbox read filters', () => {
     await seed();
     for (const args of [
       ['--from', 'bad label'],
+      ['--exclude-from', 'bad label'],
       ['--since', 'bogus'],
       ['--before', '15x'],
       ['--contains', '   '],

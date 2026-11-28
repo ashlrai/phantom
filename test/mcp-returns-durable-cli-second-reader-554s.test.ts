@@ -58,7 +58,7 @@ describe('durable return across independent MCP lifetimes and CLI (554s)', () =>
           const tool = tools.find(row => row.name === 'fleet_coordination_returns');
           expect(tool?.inputSchema).toMatchObject({ type: 'object', additionalProperties: false });
           expect(Object.keys((tool?.inputSchema as { properties?: Record<string, unknown> }).properties ?? {}).sort())
-            .toEqual(['before', 'claim', 'contains', 'from', 'repo', 'result', 'since']);
+            .toEqual(['before', 'claim', 'contains', 'excludeFrom', 'from', 'repo', 'result', 'since']);
           expect(tool?.annotations).toEqual({ readOnlyHint: true, destructiveHint: false,
             idempotentHint: true, openWorldHint: false });
           const read = async () => {

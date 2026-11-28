@@ -79,6 +79,16 @@ describe('fleet coordination returns filters', () => {
     const from = await returnsRead(['--from', 'agent-b']);
     expect(from.json.returns.map((r: any) => r.claimId)).toEqual(['c2']);
 
+    // --exclude-from is the inverted twin: agent-a's receipts drop.
+    const notA = await returnsRead(['--exclude-from', 'agent-a']);
+    expect(notA.json.returns.map((r: any) => r.claimId)).toEqual(['c2']);
+    expect(notA.json.coverage.matched).toBe(1);
+
+    // Include-then-exclude: a sender both named and excluded matches nothing.
+    const excluded = await returnsRead(['--from', 'agent-a', '--exclude-from', 'agent-a']);
+    expect(excluded.json.returns).toEqual([]);
+    expect(excluded.json.coverage.matched).toBe(0);
+
     // [since, before) on the receipt's at stamp: c2 sits exactly on since,
     // c3 exactly on before and stays out.
     const window = await returnsRead(['--since', String(T0 + 1_000), '--before', String(T0 + 2_000)]);
@@ -138,7 +148,7 @@ describe('fleet coordination returns filters', () => {
   it('rejects malformed filter values before reading the ledger', async () => {
     for (const args of [
       ['--claim', 'has space'], ['--repo', 'no-slash'], ['--result', 'MAYBE'],
-      ['--from', 'bad from'], ['--since', 'not-a-time'], ['--before', 'yesterday-ish'],
+      ['--from', 'bad from'], ['--exclude-from', 'bad from'], ['--since', 'not-a-time'], ['--before', 'yesterday-ish'],
       ['--contains', '   '], ['--contains', 'x'.repeat(513)], ['--unknown-flag', 'x'],
     ]) {
       const result = await cli(['returns', ...args, '--json']);

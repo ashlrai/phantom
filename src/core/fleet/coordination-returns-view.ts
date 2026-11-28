@@ -72,6 +72,10 @@ export interface CoordinationReturnsFilters {
   result?: 'VERIFIED' | 'BLOCKED';
   /** Exact sender label; the ledger's agent labels are coordination names, never resolved through the bus registry. */
   from?: string;
+  /** Exact sender label dropped — the inverted twin of `from`, composing
+   * after it under the same include-then-exclude order every bus read's
+   * sender filter pair applies. */
+  excludeFrom?: string;
   /** Inclusive lower bound on the receipt's `at` stamp, epoch ms. */
   since?: number;
   /** Exclusive upper bound on the receipt's `at` stamp, epoch ms. */
@@ -86,6 +90,7 @@ export interface CoordinationReturnsFilterInput {
   repo?: string;
   result?: string;
   from?: string;
+  excludeFrom?: string;
   /** `15m`, `2h`, `1d`, epoch ms or an ISO time — the shared parseSince grammar. */
   since?: string;
   before?: string;
@@ -126,6 +131,10 @@ export function parseCoordinationReturnsFilters(input: CoordinationReturnsFilter
     if (!IDENT.test(input.from)) return { ok: false };
     filters.from = input.from;
   }
+  if (input.excludeFrom !== undefined) {
+    if (!IDENT.test(input.excludeFrom)) return { ok: false };
+    filters.excludeFrom = input.excludeFrom;
+  }
   if (input.since !== undefined) {
     const since = parseSince(input.since, now);
     if (since === null) return { ok: false };
@@ -147,7 +156,8 @@ const fold = (text: string): string => text.toLowerCase().replace(/\s+/g, ' ');
 /**
  * One parsed receipt against the resolved filters — the same slice rule the
  * inbox projection applies: the [since, before) window on `at`, exact
- * structured matches on claim/repo/result/from, and the needle as a
+ * structured matches on claim/repo/result/from plus the inverted
+ * `excludeFrom` sender drop, and the needle as a
  * case-insensitive substring over the row's repo, verdict, evidence kind and
  * evidence text (the same fields the row displays; ids stay structured).
  */
@@ -157,6 +167,7 @@ function returnsRowMatch(entry: { row: Row; at: number }, filters: CoordinationR
   if (filters.repo !== undefined && row.repo.toLowerCase() !== filters.repo) return false;
   if (filters.result !== undefined && row.result !== filters.result) return false;
   if (filters.from !== undefined && row.from !== filters.from) return false;
+  if (filters.excludeFrom !== undefined && row.from === filters.excludeFrom) return false;
   if (filters.since !== undefined && entry.at < filters.since) return false;
   if (filters.before !== undefined && entry.at >= filters.before) return false;
   if (filters.contains !== undefined &&

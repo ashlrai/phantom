@@ -56,7 +56,7 @@ describe('fleet coordination inbox real MCP handler', () => {
     const tool = tools.find(t => t.name === name);
     expect(tool?.inputSchema).toMatchObject({ type: 'object', additionalProperties: false, required: ['agent'] });
     expect(Object.keys((tool?.inputSchema as { properties?: Record<string, unknown> }).properties ?? {}).sort())
-      .toEqual(['agent', 'before', 'contains', 'from', 'since']);
+      .toEqual(['agent', 'before', 'contains', 'excludeFrom', 'from', 'since']);
     expect(tool?.annotations?.readOnlyHint).toBe(true);
     expect(tool?.annotations).toEqual(tools.find(t => t.name === 'fleet_coordination_returns')?.annotations);
   });
@@ -75,6 +75,16 @@ describe('fleet coordination inbox real MCP handler', () => {
     expect(fromAlice.value.messages.map((m: { id: string }) => m.id).sort()).toEqual(['m-all', 'm-deploy']);
     // Proposals carry no sender, so a sender read drops every proposal.
     expect(fromAlice.value.proposals).toEqual([]);
+
+    const fromCarol = await read({ agent: 'bob', from: 'carol' });
+    expect(fromCarol.value.messages.map((m: { id: string }) => m.id)).toEqual(['m-lunch']);
+    expect(fromCarol.value.proposals).toEqual([]);
+
+    // excludeFrom is the inverted twin: alice's posts drop while the
+    // senderless proposals stay listed.
+    const notAlice = await read({ agent: 'bob', excludeFrom: 'alice' });
+    expect(notAlice.value.messages.map((m: { id: string }) => m.id)).toEqual(['m-lunch']);
+    expect(notAlice.value.proposals).toHaveLength(2);
 
     const deploy = await read({ agent: 'bob', contains: 'DEPLOY' });
     expect(deploy.value.messages.map((m: { id: string }) => m.id).sort()).toEqual(['m-all', 'm-deploy']);
@@ -117,6 +127,8 @@ describe('fleet coordination inbox real MCP handler', () => {
     { agent: 42 },
     { agent: 'bob', from: 'bad from' },
     { agent: 'bob', from: 7 },
+    { agent: 'bob', excludeFrom: 'bad from' },
+    { agent: 'bob', excludeFrom: 7 },
     { agent: 'bob', since: 'not-a-time' },
     { agent: 'bob', before: 'whenever' },
     { agent: 'bob', contains: '' },
