@@ -58,6 +58,29 @@ test('unknown, stale, future and expired reports never become pool capacity; exa
   expect(projectFleetAwareness(legacy.state, legacy.now()).hosts[0]?.freeSlots).toBeNull();
 });
 
+test('a slots-only zero heartbeat invalidates an older positive shared host budget', () => {
+  const f = fixture();
+  const a = f.add('a', { hostId: 'mac', slots: 2 });
+  const b = f.add('b', { hostId: 'mac', slots: 2 });
+  const other = f.add('other', { slots: 1 });
+  f.enqueue();
+  expect(f.plan()[0]?.nodeId).toBe('a');
+
+  f.advance(1);
+  f.run('beat', ['--node', a.nodeId, '--session', String(a.session), '--slots', '0']);
+  const nodes = new DriveNodes(f.store, { now: f.now });
+  expect(projectFleetAwareness(f.state, f.now()).hosts.find(h => h.hostId === 'mac')).toMatchObject({
+    nodeIds: ['a', 'b'], state: 'unknown', slots: null, freeSlots: null,
+  });
+  expect(nodes.pull(b)).toBeNull();
+  expect(nodes.claim(f.state.leader!, b, 'job')).toBeNull();
+  expect(f.plan()[0]?.nodeId).toBe(other.nodeId);
+
+  f.beat('a', { hostId: 'mac', slots: 2 });
+  expect(f.plan()[0]?.nodeId).toBe('a');
+  expect(nodes.pull(a)?.claim.jobId).toBe('job');
+});
+
 test.each([
   { paused: 'disk guard' },
   { admission: { admit: false } },
