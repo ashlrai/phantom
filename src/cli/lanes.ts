@@ -1,5 +1,4 @@
 import { readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readDispatchEventsLog } from '../core/fleet/dispatch-events-read.js';
 import { computeLanesHeld, lanesHeldLines } from '../core/fleet/lane-held.js';
@@ -103,7 +102,7 @@ export async function cmdLanes(args: string[], deps: LanesDeps = {}): Promise<nu
   if (args[0] === 'pool') {
     const flags = args.slice(1);
     if (flags.some(x => x !== '--json') || flags.length > 1) { console.error(USAGE); return 2; }
-    const state = await readFleetRunsDirState();
+    const state = await readFleetRunsDirState({ runsDir });
     const now = Date.now();
     const lanes = state.lanes.map(l => ({ lane: l.lane, ...laneWait(l, now) }));
     if (flags.length) console.log(JSON.stringify(sanitizePublicJson({ schema: 'lanes.pool.v1', lastTick: state.lastTick, lanes })));
@@ -118,7 +117,7 @@ export async function cmdLanes(args: string[], deps: LanesDeps = {}): Promise<nu
   if (args[0] === 'held') {
     const flags = args.slice(1);
     if (flags.some(x => x !== '--json') || flags.length > 1) { console.error(USAGE); return 2; }
-    const report = computeLanesHeld(await readDispatchEventsLog().catch(() => null), Date.now());
+    const report = computeLanesHeld(await readDispatchEventsLog(runsDir).catch(() => null), Date.now());
     if (flags.length) console.log(JSON.stringify(sanitizePublicJson(report)));
     else for (const line of lanesHeldLines(report)) console.log(line);
     return 0;
@@ -132,7 +131,7 @@ export async function cmdLanes(args: string[], deps: LanesDeps = {}): Promise<nu
     const since = sinceText ? parseSince(sinceText, now) : null;
     if (rest.length || flags.filter(x => x === '--json').length > 1 || flags.filter(x => x === '--since').length > 1 || since === null) { console.error(USAGE); return 2; }
     let ledger: string | null;
-    try { ledger = await readFile(join(homedir(), '.ashlr-runs', 'metrics', 'jobs.jsonl'), 'utf8'); } catch { ledger = null; }
+    try { ledger = await readFile(join(runsDir, 'metrics', 'jobs.jsonl'), 'utf8'); } catch { ledger = null; }
     const report = computeLaneYield(ledger);
     const lanes = ledger === null ? [] : laneYieldAll(parseLaneJobs(ledger), ORG_LANES, { since, until: now });
     if (flags.includes('--json')) console.log(JSON.stringify(sanitizePublicJson({ ...report, since: new Date(since).toISOString(), lanes })));
@@ -165,7 +164,7 @@ export async function cmdLanes(args: string[], deps: LanesDeps = {}): Promise<nu
       console.error(USAGE); return 2;
     }
     let text: string | null;
-    try { text = await readFile(join(homedir(), '.ashlr-runs', 'metrics', 'jobs.jsonl'), 'utf8'); } catch { text = null; }
+    try { text = await readFile(join(runsDir, 'metrics', 'jobs.jsonl'), 'utf8'); } catch { text = null; }
     const report = computeLaneFit(text, lane);
     if (flags.includes('--json')) console.log(JSON.stringify(sanitizePublicJson(report)));
     else if (!report.known) console.log('Job history is unavailable. Fit is unknown.');

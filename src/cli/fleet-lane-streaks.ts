@@ -22,7 +22,7 @@ function line(lane: LaneStreak): string {
 }
 
 export interface FleetLaneStreaksDeps {
-  /** Defaults to the dispatch-events.log tail under ~/.ashlr-runs (null when absent). */
+  /** Defaults to the dispatch-events.log tail under ASHLR_RUNS_DIR ?? ~/.ashlr-runs (null when absent). */
   readDispatchEvents?: () => Promise<string | null>;
   now?: () => number;
   out?: (line: string) => void;

@@ -60,6 +60,22 @@ describe('phm lanes yield', () => {
     expect(out.mock.calls.map(c => c[0])).toContain('claude / md: yield 50% (5 merged of 10 launches, 2 reverted), empty 30%; router weight 1.00');
   });
 
+  it('reads the jobs ledger from ASHLR_RUNS_DIR, not the stubbed home', async () => {
+    const runs = await mkdtemp(join(tmpdir(), 'lanes-yield-runs-'));
+    dirs.push(runs);
+    await mkdir(join(runs, 'metrics'), { recursive: true });
+    await writeFile(join(runs, 'metrics', 'jobs.jsonl'), ledger);
+    await home(null);
+    vi.stubEnv('ASHLR_RUNS_DIR', runs);
+    const out = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await cmdLanes(['yield', '--json'])).toBe(0);
+    const report = JSON.parse(out.mock.calls.at(-1)![0]);
+    expect(report.known).toBe(true);
+    expect(report.rows.find((r: { size: string }) => r.size === 'md')).toMatchObject({ lane: 'claude', launches: 10 });
+    expect(await cmdLanes(['fit', '--lane', 'claude', '--json'])).toBe(0);
+    expect(JSON.parse(out.mock.calls.at(-1)![0])).toMatchObject({ schema: 'lanes.fit.v1', lane: 'claude', known: true });
+  });
+
   it('gives every lane a verdict and honours --since', async () => {
     const zai = Array.from({ length: 20 }, (_, i) => [
       JSON.stringify({ event: 'launch', job: `z${i}`, lane: 'zai', size: 'md', ts: '2026-11-19T10:00:00.000Z' }),

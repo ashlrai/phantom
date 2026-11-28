@@ -9,7 +9,8 @@ const DISPATCH_EVENTS_TAIL = 8 * 1024 * 1024;
 
 /** First readable candidate wins (queue first, root second); the logs are never merged. */
 export async function readDispatchEventsLog(runsDir?: string): Promise<string | null> {
-  for (const path of dispatchEventsCandidates(runsDir ?? join(homedir(), '.ashlr-runs'))) {
+  const root = runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  for (const path of dispatchEventsCandidates(root)) {
     const text = await readEventsTail(path);
     if (text !== undefined) return text;
   }
