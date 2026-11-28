@@ -75,12 +75,16 @@ unrouted plan discover it, and the keep-alive beat's `--probe-auth`
 refreshes the verdict.
 
 A computer serving a local model through oMLX needs no `--caps` entry: opt in
-with `~/.ashlr/local-lanes.json` (`{"schemaVersion":1,"enabled":true}`), check
-the plan with `phm node lanes`, and `phm node join` advertises the resulting
-`omlx` caps automatically — the same merge a pool join or worker performs. A
-malformed `local-lanes.json` is named in the standalone join reply
-(`localLanes` under `--json`) instead of being skipped silently; `phm node
-lanes` prints the same parse error. See [OMLX-SMALL-MACS.md](OMLX-SMALL-MACS.md).
+with `local-lanes.json` in the Phantom home — `~/.ashlr/local-lanes.json`, or
+`$ASHLR_HOME/local-lanes.json` when `ASHLR_HOME` is set (the scratch-home
+setup above reads the latter) — containing
+`{"schemaVersion":1,"enabled":true}`. Check the plan with `phm node lanes`;
+when the lane is held its reason names the exact file to write. `phm node
+join` advertises the resulting `omlx` caps automatically — the same merge a
+pool join or worker performs. A malformed `local-lanes.json` is named in the
+standalone join reply (`localLanes` under `--json`) instead of being skipped
+silently; `phm node lanes` prints the same parse error. See
+[OMLX-SMALL-MACS.md](OMLX-SMALL-MACS.md).
 
 ## Verify and stay live
 

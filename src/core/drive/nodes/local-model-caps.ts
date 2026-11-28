@@ -8,7 +8,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { totalmem } from 'node:os';
 import { join } from 'node:path';
-import { ashlrHome } from '../../cloud/store.js';
+import { ashlrHome, ashlrHomePath } from '../../cloud/store.js';
 import { readMacHostHeadroom, type HostHeadroom } from '../../run/host-headroom.js';
 import {
   LANE_MAX_SLOTS, OMLX_MODEL_CATALOG, planOmlxLocalLanes,
@@ -79,6 +79,9 @@ export function localLanePlan(deps: LocalLaneProbeDeps = {}): LocalLaneProbe {
     totalBytes: (deps.totalBytes ?? totalmem)(),
     headroom: config?.enabled === true ? (deps.headroom ?? readMacHostHeadroom)() : null,
     config,
+    // The disabled backoff names the file the probe reads: an $ASHLR_HOME
+    // install gets its real path, not the default ~/.ashlr spelling.
+    configPath: deps.configPath ?? ashlrHomePath('local-lanes.json'),
     platform: deps.platform,
   });
   return { config, configError: error, plan };
