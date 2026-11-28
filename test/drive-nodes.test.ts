@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import { DriveNodes, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
+import { DriveNodes, type NodeProfile, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
 import { executeNodeFleet } from '../src/core/drive/nodes/commands.js';
 import { emptyState, parseState } from '../src/core/drive/nodes/state.js';
 import { versionFromCaps } from '../src/core/drive/nodes/phm-version.js';
@@ -159,6 +159,29 @@ describe('drive node leases', () => {
     expect(f.a.claim(leader, noauth, 'needs-gh')).toBeNull();
     f.a.heartbeat(noauth, { auth: 'ok' });
     expect(f.a.claim(leader, noauth, 'needs-gh')!.jobId).toBe('needs-gh');
+  });
+
+  it('join can carry the probed auth verdict so gh work routes without a beat', () => {
+    const f = fixture();
+    // A join that already measured this machine's gh login records it: the
+    // auth fence lifts at once — no --probe-auth beat has to report it first.
+    const box = f.a.join('box', { owners: ['o'], caps: ['gh'], auth: 'ok' })!;
+    // A join that measured no working login records that verdict too, and the
+    // fence stays up exactly like an unreported auth.
+    f.a.join('nologin', { owners: ['o'], caps: ['gh'], auth: 'missing' });
+    f.a.enqueue('needs-gh', { owner: 'o', requires: ['gh'] });
+    expect(f.a.plan('o')).toEqual([{ jobId: 'needs-gh', owner: 'o', nodeId: 'box' }]);
+    const leader = f.a.heartbeat(f.alice)!.leader!;
+    expect(f.a.claim(leader, box, 'needs-gh')!.jobId).toBe('needs-gh');
+  });
+
+  it('join refuses an auth verdict outside ok/missing/unknown', () => {
+    const f = fixture();
+    // An invalid verdict must never reach the record: parseState rejects the
+    // whole store on it, so the join throws before writing anything.
+    const bad = { owners: ['o'], auth: 'bogus' } as unknown as NodeProfile;
+    expect(() => f.a.join('bad', bad)).toThrow('Invalid drive auth');
+    expect(f.store.state.nodes.map(n => n.nodeId)).toEqual(['alice', 'bob']);
   });
 
   it('does not re-route a released job to the session that declined it', () => {
@@ -629,6 +652,13 @@ describe('standalone join version reporting', () => {
     const joined = executeNodeFleet('join', ['--node', 'worker', '--owner', 'o', '--caps', 'build'], f.a);
     expect(joined['caps']).toEqual(['build']);
   });
+  it('the SSH endpoint join leaves auth unreported — a worker reports it on its own beats', () => {
+    const f = fixture();
+    executeNodeFleet('join', ['--node', 'worker', '--owner', 'o', '--caps', 'gh'], f.a);
+    // joinAuth is a standalone-CLI channel only; the endpoint cannot probe the
+    // worker's gh login, so the record stays unreported until a beat says so.
+    expect(f.store.state.nodes.find(n => n.nodeId === 'worker')!.auth).toBeUndefined();
+  });
 });
 
 describe('standalone join sign-in lanes', () => {
@@ -785,6 +815,76 @@ describe('standalone join gh auth report', () => {
       expect(code).toBe(0);
       expect(JSON.parse(lines.at(-1)!)).toMatchObject({ ghAuth: 'unknown' });
       expect(store.state.nodes.find(n => n.nodeId === 'laptop')!.caps).toContain('gh');
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('records the probed login on the node so a gh job routes at join, no beat needed', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const now = 1_000_000;
+      const deps = { store, now: () => now, phmVersion: () => null, probeAuth: () => 'ok' as const };
+      expect(await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--caps', 'gh', '--json'], deps)).toBe(0);
+      const joined = JSON.parse(lines.at(-1)!) as { session: number; ghAuth: string };
+      expect(joined).toMatchObject({ ghAuth: 'ok' });
+      // The join's own probe is the node's auth report: status sees ok at once
+      // and plan routes the gh job to this node instead of answering nobody.
+      expect(store.state.nodes.find(n => n.nodeId === 'laptop')!.auth).toBe('ok');
+      expect(await cmdNodeFleet('enqueue', ['--job', 'gh-1', '--owner', 'acme', '--requires', 'gh', '--json'], deps)).toBe(0);
+      expect(await cmdNodeFleet('plan', ['--owner', 'acme', '--json'], deps)).toBe(0);
+      const routes = (JSON.parse(lines.at(-1)!) as { routes: { jobId: string; nodeId: string | null; fix?: string }[] }).routes;
+      expect(routes.find(r => r.jobId === 'gh-1')).toMatchObject({ nodeId: 'laptop' });
+      // The node pulls the job under its join session — no --probe-auth beat ran.
+      expect(await cmdNodeFleet('pull', ['--node', 'laptop', '--session', String(joined.session), '--json'], deps)).toBe(0);
+      expect(JSON.parse(lines.at(-1)!)).toMatchObject({ pulled: true, job: { id: 'gh-1' } });
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('a missing gh login is stamped as missing, so plan keeps naming the real fix', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const now = 1_000_000;
+      const deps = { store, now: () => now, phmVersion: () => null, probeAuth: () => 'missing' as const };
+      expect(await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--caps', 'gh', '--json'], deps)).toBe(0);
+      const joined = JSON.parse(lines.at(-1)!) as { session: number };
+      expect(store.state.nodes.find(n => n.nodeId === 'laptop')!.auth).toBe('missing');
+      expect(await cmdNodeFleet('enqueue', ['--job', 'gh-1', '--owner', 'acme', '--requires', 'gh', '--json'], deps)).toBe(0);
+      expect(await cmdNodeFleet('plan', ['--owner', 'acme', '--json'], deps)).toBe(0);
+      const routes = (JSON.parse(lines.at(-1)!) as { routes: { jobId: string; nodeId: string | null; fix?: string }[] }).routes;
+      const route = routes.find(r => r.jobId === 'gh-1')!;
+      expect(route.nodeId).toBeNull();
+      // The verdict was measured, not guessed: the fix still names gh auth
+      // login and the --probe-auth beat that re-reports it.
+      expect(route.fix).toContain('gh auth login');
+      expect(route.fix).toContain(`phm node beat --node laptop --session ${joined.session} --probe-auth`);
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('a join that does not advertise gh records no auth verdict', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const probeAuth = vi.fn((): 'ok' | 'missing' | 'unknown' => 'ok');
+      expect(await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--caps', 'build', '--json'],
+        { store, phmVersion: () => null, probeAuth })).toBe(0);
+      expect(store.state.nodes.find(n => n.nodeId === 'laptop')!.auth).toBeUndefined();
+      expect(probeAuth).not.toHaveBeenCalled();
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('a bare join that auto-detects gh stamps the sign-in probe\'s verdict', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      // providerLanes stands in for the lane probe, so the gh verdict still
+      // comes from the one probeAuth check the reply reports — and now also
+      // from the record the join writes.
+      expect(await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--json'],
+        { store, phmVersion: () => null, providerLanes: () => ['gh'], probeAuth: () => 'ok' as const })).toBe(0);
+      const out = JSON.parse(lines.at(-1)!) as { ghAuth: string; autoCaps: string[] };
+      expect(out).toMatchObject({ ghAuth: 'ok', autoCaps: ['gh'] });
+      expect(store.state.nodes.find(n => n.nodeId === 'laptop')!.auth).toBe('ok');
     } finally { vi.restoreAllMocks(); }
   });
 });

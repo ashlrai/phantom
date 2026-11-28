@@ -316,7 +316,7 @@ function enqueueDiffs(stored: QueueJobV1, requested: JobSpec): EnqueueDiff[] {
 }
 
 export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: DriveNodes, probeAuth: () => NodeAuth,
-  opts: { rejoinWatch?: boolean } = {}): Record<string, unknown> {
+  opts: { rejoinWatch?: boolean; joinAuth?: NodeAuth } = {}): Record<string, unknown> {
   const session = (): { nodeId: string; session: number } => ({ nodeId: needId(flags, '--node'), session: num(flags, '--session') });
   const stale = (nodeId: string, attempted?: number) => {
     const live = liveSession(nodes, nodeId);
@@ -353,7 +353,12 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
       const caps = optCapList(flags, '--caps');
       const nodeId = needId(flags, '--node');
       const slots = flags.has('--slots') ? boundedNum(flags, '--slots', 64, SLOTS_FIX) : undefined;
-      const profile: NodeProfile = { owners, caps, ...(slots === undefined ? {} : { slots }) };
+      // joinAuth is the gh-login verdict the caller already measured for its
+      // reply; recording it here routes gh work from join instead of leaving
+      // the node unreported until a --probe-auth beat. The SSH endpoint never
+      // sets it — a pool join's auth stays self-reported on worker beats.
+      const profile: NodeProfile = { owners, caps, ...(slots === undefined ? {} : { slots }),
+        ...(opts.joinAuth === undefined ? {} : { auth: opts.joinAuth }) };
       // The profile this join replaces is still readable before join swaps it
       // (a live record makes join refuse below, so `prior` only ever describes
       // an expired predecessor or nothing). The read is advisory like

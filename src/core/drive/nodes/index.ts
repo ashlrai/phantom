@@ -24,6 +24,10 @@ export interface NodeProfile {
   caps?: string[];
   /** Zero holds admission; omitted retains legacy unbounded routing. */
   slots?: number;
+  /** Local gh-login verdict the join already measured on this machine — a
+   * status word, never a credential. Beats may refresh it; omitted stays
+   * unreported until one does. */
+  auth?: NodeAuth;
 }
 
 /** Self-reported on each heartbeat. `auth` is the node's own local login status, never a token. */
@@ -178,8 +182,10 @@ export class DriveNodes implements QueueV1 {
   join(nodeId: string, profile?: NodeProfile): NodeSession | null {
     if (!validId(nodeId)) throw new Error('Invalid drive node ID');
     if (profile?.slots !== undefined && !validSlots(profile.slots)) throw new Error('Invalid drive slots (integer 0-64)');
+    if (profile?.auth !== undefined && !['ok', 'missing', 'unknown'].includes(profile.auth)) throw new Error('Invalid drive auth');
     const extra = profile && { owners: names(profile.owners, validId, 'owner scope'), caps: names(profile.caps, validCap, 'capability'),
-      ...(profile.slots === undefined ? {} : { slots: profile.slots }) };
+      ...(profile.slots === undefined ? {} : { slots: profile.slots }),
+      ...(profile.auth === undefined ? {} : { auth: profile.auth }) };
     if (extra && extra.owners.length === 0) throw new Error('Invalid drive owner scope');
     return this.transaction((state, now) => {
       const existing = state.nodes.find(n => n.nodeId === nodeId);
