@@ -3,11 +3,29 @@
  * ready job to another computer when this one would hold the launch.
  *
  * The rule: this computer's guard is busy (over load, or the memory gate says
- * hold) AND another computer passes `phm nodes doctor` with a free slot for the
- * job's lane -> pick that computer, record one typed event with the reason.
- * Otherwise the job keeps waiting here. It never touches a job that is already
- * running, never plans more jobs than a computer has free slots, and shows a
- * fact it cannot read as "unknown" (an unknown host guard offloads nothing).
+ * hold) AND another computer is ready for the job's lane with a free slot ->
+ * pick that computer, record one typed event with the reason. Otherwise the
+ * job keeps waiting here. It never touches a job that is already running,
+ * never plans more jobs than a computer has free slots, and shows a fact it
+ * cannot read as "unknown" (an unknown host guard offloads nothing).
+ *
+ * "Ready" is the evidence the fleet actually routes on, not the full doctor
+ * verdict: a live heartbeat, the lane's advertised cap (the node's own
+ * sign-in probe vouches for it — see docs/NODE-ROUTER.md), free slots and no
+ * KNOWN doctor gap such as measured low disk. Facts only a local probe can
+ * see — repo clones, unchecked lane sign-ins — stay unknown and are named in
+ * `reasons`; they do not block, because the claim bridge offers a node work
+ * on the same advertised caps. Requiring `phm nodes doctor`'s zero-unknown
+ * verdict instead made every remote computer ineligible forever: the shipped
+ * probe is local-only, so a remote node's repo list is always unknown.
+ *
+ * The plan also mirrors the claim bridge's refusals the queue view can see:
+ * host-bound ready rows (`RQ-FIX-MAIN-`, `RQ-REL-`, `RQ-DESK-`, `RQ-BATCH-`)
+ * never move, a code-writing row needs the `<cap>-worktree` pack that is not
+ * shipped yet, and a read-only row needs the node to advertise its
+ * `pack:<cap>-file` cap. Spec-level constraints (`needs`, `data_class`,
+ * `exclusive`) are not in the queue-order view; the bridge enforces them at
+ * claim time.
  *
  * Default is off. Dry-run (and an off setting) records nothing. A recorded
  * event is the decision only: handing the job to the other computer is the
@@ -20,6 +38,7 @@ import type { QueueOrderJob, QueueOrderV1 } from '../queue/order-types.js';
 import { hostLoadTone, type HostLoad } from './host-load.js';
 import type { LoadAdmission } from './load-owners.js';
 import type { EngineAdmissionView } from './engine-admission-view.js';
+import { NODE_BRIDGE_HOST_BOUND, NODE_BRIDGE_WORKTREE_PACK_ENABLED, remotePackFor } from '../drive/nodes/ready-bridge.js';
 import { remoteLaneCap } from './unfed-market.js';
 import { readNodesDoctor, type DoctorNode, type NodesDoctor, type NodesDoctorDeps } from './nodes-doctor.js';
 import { PLAN_JOB_LIMIT } from './nodes-plan.js';
@@ -118,16 +137,25 @@ function servableLanes(row: NodeRow, report: DoctorNode): Set<string> {
   return lanes;
 }
 
-function candidates(view: NodesView, doctor: NodesDoctor, reasons: string[]): Array<{ row: NodeRow; lanes: Set<string>; slots: number }> {
-  const out: Array<{ row: NodeRow; lanes: Set<string>; slots: number }> = [];
+interface OffloadCandidate { row: NodeRow; lanes: Set<string>; slots: number; verified: boolean }
+
+function candidates(view: NodesView, doctor: NodesDoctor, reasons: string[]): OffloadCandidate[] {
+  const out: OffloadCandidate[] = [];
   for (const row of view.nodes) {
     if (row.isSelf) continue;
     const report = doctor.nodes.find(n => n.name === row.name);
     if (!report) continue;
-    if (!report.ready) { reasons.push(`${row.name} does not pass \`phm nodes doctor\` yet${report.unknowns.length ? ' (some facts are unknown)' : ''}`); continue; }
     if (row.stateCode !== 'ready' || row.reachable !== true) { reasons.push(`${row.name} is not ready: ${row.state}`); continue; }
     if (typeof row.freeSlots !== 'number') { reasons.push(`${row.name}: free slots unknown`); continue; }
-    if (row.freeSlots > 0) out.push({ row, lanes: servableLanes(row, report), slots: row.freeSlots });
+    // A known doctor gap — measured low disk, a lane the probe found missing
+    // or signed out — rules the computer out. Unknowns do not: they are facts
+    // only a local probe can see, and the advertised caps already carry the
+    // node's own sign-in verdict.
+    if (report.gaps.length > 0) { reasons.push(...report.gaps); continue; }
+    if (row.freeSlots > 0) {
+      if (report.unknowns.length > 0) reasons.push(`${row.name}: readiness rests on advertised caps and heartbeat; ${report.unknowns.length} doctor fact(s) stay unknown`);
+      out.push({ row, lanes: servableLanes(row, report), slots: row.freeSlots, verified: report.ready });
+    }
   }
   return out;
 }
@@ -159,15 +187,26 @@ export function planOffload(input: OffloadInputs): { moves: OffloadMove[]; stays
     // job.lane is a market lane; candidates hold provider caps. The claim
     // bridge resolves the lane to the cap a remote node needs (remoteLaneCap);
     // a lane that only runs on this host or on an API key never moves.
+    if (NODE_BRIDGE_HOST_BOUND.some(p => job.id.startsWith(p))) { stay('this job is bound to this computer; waiting here'); continue; }
     const remoteCap = remoteLaneCap(job.lane);
-    const open = remoteCap === null ? undefined
-      : pool.filter(c => c.slots > 0 && c.lanes.has(remoteCap)).sort((a, b) => b.slots - a.slots || (a.row.name < b.row.name ? -1 : 1))[0];
+    if (remoteCap === null) { stay(`the ${job.lane} lane cannot run on another computer; waiting here`); continue; }
+    // The bridge's pack rule, mirrored: a code-writing row needs the
+    // <cap>-worktree pack that is not shipped, and a read-only row needs the
+    // node to advertise its <cap>-file pack cap.
+    const pack = remotePackFor(job.id, remoteCap);
+    if (pack.writes && !NODE_BRIDGE_WORKTREE_PACK_ENABLED) { stay(`the ${job.lane} lane cannot run code-writing jobs on another computer yet; waiting here`); continue; }
+    const packCap = `pack:${pack.pack}`;
+    const laneReady = pool.filter(c => c.slots > 0 && c.lanes.has(remoteCap));
+    const open = laneReady.filter(c => c.row.lanes !== UNKNOWN && c.row.lanes.includes(packCap))
+      .sort((a, b) => b.slots - a.slots || (a.row.name < b.row.name ? -1 : 1))[0];
     if (!open) {
-      stay(remoteCap === null ? `the ${job.lane} lane cannot run on another computer; waiting here` : `no ready computer has a free ${job.lane} slot; waiting here`);
+      stay(laneReady.length === 0 ? `no ready computer has a free ${job.lane} slot; waiting here`
+        : `no ready computer advertises ${packCap}; waiting here`);
       continue;
     }
     open.slots -= 1;
-    moves.push({ job: job.id, lane: job.lane, node: open.row.name, reasons: host.reasons, why: `${host.reasons.join(' and ')} on this computer; ${open.row.name} passes the doctor with a free ${job.lane} slot` });
+    const readiness = open.verified ? 'passes the doctor' : 'is ready on advertised caps';
+    moves.push({ job: job.id, lane: job.lane, node: open.row.name, reasons: host.reasons, why: `${host.reasons.join(' and ')} on this computer; ${open.row.name} ${readiness} with a free ${job.lane} slot` });
   }
   return { moves, stays, reasons: [...new Set(reasons)] };
 }
