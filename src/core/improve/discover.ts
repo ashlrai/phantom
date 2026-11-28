@@ -2378,6 +2378,27 @@
  *     tails are stated as lower bounds, and items emit only for
  *     the fleet's own repository since the journal describes this
  *     install's radar and inbox;
+ *   - the genome hub's learned-memory journal: every learned note —
+ *     explicit `phm learn`, M26 playbook distillations, self-improve
+ *     anti-playbook entries, skill-library legacy notes and the
+ *     auto-capture hooks that fire on every terminal run/swarm state —
+ *     appends one GenomeEntry line to ~/.ashlr/genome/hub.jsonl, whose
+ *     only readers were the recall/playbook/export surfaces keeping
+ *     the newest 2000 records, so re-recorded lessons (the capture
+ *     dedupe scans only 50 same-project entries and no other writer
+ *     dedupes), recurring failed/aborted captures that stay
+ *     recall-eligible, and a store that silently outgrew the recall
+ *     window produced evidence only inside an append-only file nobody
+ *     folded (genomeHubBacklogItems below). A duplicates or failures
+ *     cell emits only at the recurring bars of rows across distinct
+ *     UTC days inside the 7-day window; the oversized cell emits when
+ *     the recallable-row count passes the 2000-entry bound, exact
+ *     when the bounded reads saw the whole file and a proven floor
+ *     when they did not; malformed lines are skipped under the same
+ *     four-string-field bar every reader applies, quoted titles are
+ *     scrubbed and capped, and items emit only for the fleet's own
+ *     repository since the hub describes this install's learned
+ *     memory;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -2572,6 +2593,7 @@ import { routerWeightBacklogItems } from './router-weights-backlog.js';
 import { promptVariantBacklogItems } from './prompt-variant-backlog.js';
 import { stewardBacklogItems } from './steward-backlog.js';
 import { modelRadarRunBacklogItems } from './model-radar-run-backlog.js';
+import { genomeHubBacklogItems } from './genome-hub-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -5378,6 +5400,28 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // items since the journal describes this install's radar and
   // inbox and carries no repo column.
   await feed('modelRadarRunBacklogItems', () => modelRadarRunBacklogItems({ repo }));
+
+  // Genome hub learned-memory journal (~/.ashlr/genome/hub.jsonl under
+  // the user's home — hubStorePath resolves it directly, not via
+  // $ASHLR_HOME): appendHubEntry writes one GenomeEntry per learned
+  // note — explicit learns, M26 playbook distillations, self-improve
+  // anti-playbook entries, skill-library legacy notes and the
+  // auto-capture hooks firing on every terminal run/swarm state —
+  // and until now the journal's only readers were the
+  // recall/playbook/export surfaces keeping the newest 2000 records,
+  // so re-recorded lessons, recurring failed/aborted captures that
+  // stay recall-eligible, and a store silently past the recall bound
+  // produced evidence only inside an append-only file nobody folded
+  // (genomeHubBacklogItems below). Rows count only under the same
+  // four-string-field bar recallableHubEntryTimestamp/loadHubEntries
+  // enforce; window cells emit only at the recurring bars across
+  // distinct UTC days inside the 7-day window; the oversized cell
+  // emits when the recallable count passes the bound, exact or a
+  // proven floor; truncated tails are stated as lower bounds; quoted
+  // titles are scrubbed and capped; and only the fleet's own
+  // repository inherits the items since the hub describes this
+  // install's learned memory.
+  await feed('genomeHubBacklogItems', () => genomeHubBacklogItems({ repo }));
   return { items, errors };
 }
 

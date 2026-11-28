@@ -662,6 +662,7 @@
 /test/improve-gateway-activity-backlog.test.ts @masonwyatt23
 /test/improve-gateway-shadow-backlog.test.ts @masonwyatt23
 /test/improve-generator-yield-backlog.test.ts @masonwyatt23
+/test/improve-genome-hub-backlog.test.ts @masonwyatt23
 /test/improve-git-contention-backlog.test.ts @masonwyatt23
 /test/improve-growth-backlog.test.ts @masonwyatt23
 /test/improve-guardian-repair-backlog.test.ts @masonwyatt23
