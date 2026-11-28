@@ -112,7 +112,7 @@ describe('fleet_agent_follow argument parsing', () => {
       agent: 'agent:planner', durationMs: 2_000, after: 3, intervalMs: 100,
       thread: 't-1', from: 'agent:sender', excludeFrom: 'agent:bot', with: 'agent:peer',
       priority: 'P1', kind: 'handoff', job: 'RQ-9',
-      since: '1800000000000', before: '1700000000000', channel: 'ops', contains: '  Parser   Fix ',
+      since: '1800000000000', before: '1700000000000', channel: 'ops', topic: 'deploy', contains: '  Parser   Fix ',
       inReplyTo: 'm-0', id: 'm-9', bodyKind: 'work.result', result: 'failed',
     });
     expect(parsed).toMatchObject({
@@ -120,7 +120,7 @@ describe('fleet_agent_follow argument parsing', () => {
       filters: {
         thread: 't-1', from: 'agent:sender', excludeFrom: 'agent:bot', with: 'agent:peer',
         priority: 'P1', kind: 'handoff', job: 'RQ-9',
-        since: 1800000000000, before: 1700000000000, channel: 'ops', contains: 'parser fix',
+        since: 1800000000000, before: 1700000000000, channel: 'ops', topic: 'deploy', contains: 'parser fix',
         inReplyTo: 'm-0', id: 'm-9', bodyKind: 'work.result', result: 'failed',
       },
     });
@@ -134,6 +134,8 @@ describe('fleet_agent_follow argument parsing', () => {
       { agent: 'a', durationMs: 1, thread: 'has space' }, { agent: 'a', durationMs: 1, thread: '' },
       { agent: 'a', durationMs: 1, priority: 'P9' }, { agent: 'a', durationMs: 1, kind: 'bogus' },
       { agent: 'a', durationMs: 1, result: 'bogus' }, { agent: 'a', durationMs: 1, channel: 'Bad Channel!' },
+      { agent: 'a', durationMs: 1, topic: 'Bad Topic' }, { agent: 'a', durationMs: 1, topic: 'deploy:extra' },
+      { agent: 'a', durationMs: 1, topic: '' }, { agent: 'a', durationMs: 1, topic: 'x'.repeat(33) },
       { agent: 'a', durationMs: 1, since: 'never' }, { agent: 'a', durationMs: 1, before: 'never' },
       { agent: 'a', durationMs: 1, contains: '' }, { agent: 'a', durationMs: 1, contains: '   ' },
       { agent: 'a', durationMs: 1, id: 'has space' }, { agent: 'a', durationMs: 1, inReplyTo: 5 },
@@ -180,13 +182,13 @@ describe('fleet_agent_follow reader', () => {
       agent: 'a', durationMs: 1_000,
       thread: 't-9', from: 'agent:sender', excludeFrom: 'agent:bot', with: 'agent:peer',
       priority: 'P0', kind: 'channel', job: 'RQ-1', since: '1800000000000', before: '1700000000000',
-      channel: 'ops', contains: 'Parser Fix', inReplyTo: 'm-0', id: 'm-9', bodyKind: 'wake', result: 'complete',
+      channel: 'ops', topic: 'deploy', contains: 'Parser Fix', inReplyTo: 'm-0', id: 'm-9', bodyKind: 'wake', result: 'complete',
     })!, undefined, { follow });
     expect(seenRequest).toMatchObject({
       agent: 'a', durationMs: 1_000,
       thread: 't-9', from: 'agent:sender', excludeFrom: 'agent:bot', with: 'agent:peer',
       priority: 'P0', kind: 'channel', job: 'RQ-1', since: 1800000000000, before: 1700000000000,
-      channel: 'ops', contains: 'parser fix', inReplyTo: 'm-0', id: 'm-9', bodyKind: 'wake', result: 'complete',
+      channel: 'ops', topic: 'deploy', contains: 'parser fix', inReplyTo: 'm-0', id: 'm-9', bodyKind: 'wake', result: 'complete',
     });
   });
 

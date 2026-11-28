@@ -50,9 +50,9 @@ ashlr agents bus channel list [--agent <agent>]
 ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--exclude-from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--matched] [--after <cursor>] [--limit <1..100>] [--frame <cli>]
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
-ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--matched] [--frame <cli>]
-ashlr agents bus follow [<agent>] [--after <cursor>] --duration-ms <1..3600000> [--interval-ms <100..60000>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] --json
-ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--frame <cli>]
+ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--topic <topic>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--matched] [--frame <cli>]
+ashlr agents bus follow [<agent>] [--after <cursor>] --duration-ms <1..3600000> [--interval-ms <100..60000>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--topic <topic>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] --json
+ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--topic <topic>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--frame <cli>]
 ashlr agents bus dead-letters [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--priority P0..P3] [--id <id>] [--reason <${BUS_DEAD_LETTER_REASONS.join('|')}>] [--from <agent>] [--exclude-from <agent>] [--to <agent>] [--channel <name>] [--topic <topic>] [--body-kind <kind>] [--limit <1-100>] [--frame <cli>]
 ashlr agents bus show <id>
 ashlr agents bus thread <id> [--to <ref>] [--from <ref>] [--exclude-from <ref>] [--channel <name>] [--topic <topic>] [--job <id>] [--priority P0..P3] [--thread <t>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--frame <cli>]
@@ -181,7 +181,20 @@ channel's group:<name>:* addresses — channel posts and channel-addressed
 handoffs alike — so an agent in several rooms reads one room's pending
 mail in one filtered read; it composes with --kind to separate a room's
 direct mail from its assignments, and a channel the agent is not a
-member of simply has no mail to show. --contains on inbox and channel
+member of simply has no mail to show. --topic on inbox, follow and wakes
+keeps only rows addressed under that exact topic component of a
+well-formed group:<room>:<topic> address — the same groupAddressTopicOf
+verdict channel read --topic, phm messages --topic, work feed --topic,
+work claim-next --topic, work next --topic, dead-letters --topic,
+thread --topic and work mine --topic apply, decided on the row's own to
+label rather than the room name, so it composes with --channel into one
+room AND one topic and a DM, legacy label or deeper group: label parses
+to no topic and never matches; on wakes the verdict is the hint's own to
+label like --channel — a claim-holder wh-… hint's bare owner label
+parses to no topic — so it counts in matched inside the queue-tail
+match and needs no referent resolution. "Which of my pending mail /
+which wake hints concern group:eng:alerts" is one filtered read on each.
+--contains on inbox and channel
 read keeps only rows whose scrubbed one-line summary — the same text
 the frame renders per row — carries the needle as a case-insensitive
 substring, so "did anyone send me mail about X" and "has anyone posted
@@ -550,12 +563,12 @@ naming no resolved message never lists), deadLetters keep reports whose
 ORIGINAL recipient parses to it, the thread sections keep threads whose
 latest message is addressed to the topic, and work-board requests keep
 those whose to parses to it — a board item naming no provable to never
-lists; wakes and inbox delegate to reads carrying no topic filter of
-their own, so the digest applies the same verdict to the rows they
-return — wakes filtering the resolved page's own to labels (matched
-exact on a complete queue-tail read, a proven lower bound under
-truncated) while inbox pages the delegated read to the store's end and
-reports the true topic-filtered total; board, channels, sessions,
+lists; wakes and inbox delegate to reads that carry the same
+group-topic filter, so the digest forwards topic to both — wakes
+counting the topic-matched hints inside the bounded queue-tail match
+(matched exact on a complete tail read, a proven lower bound under
+truncated) while inbox's matched:true read reports the true
+topic-filtered total across the retained store; board, channels, sessions,
 coordination and seats carry no per-item topic and stay unfiltered, and
 every count stays the filtered total. --from on work mine keeps only pending items provably sent by the
 named agent — the same sender rule every bus read's --from applies, so
@@ -1265,6 +1278,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const page = readAgentInbox(agent, { after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit'),
         thread: one('--thread'), from: one('--from'), excludeFrom: one('--exclude-from'), with: one('--with'), priority: priorityArg(),
         kind: kindArg(), job: one('--job'), since: sinceArg(), before: beforeArg(), channel: one('--channel'),
+        topic: one('--topic'),
         contains: one('--contains'), inReplyTo: one('--in-reply-to'), id: one('--id'), bodyKind: one('--body-kind'),
         result: resultArg(),
         matched: p.bools.has('--matched') }, options);
@@ -1298,7 +1312,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         agent, after: integer(one('--after'), '--after'), durationMs, intervalMs: integer(one('--interval-ms'), '--interval-ms'),
         thread: one('--thread'), from: one('--from'), excludeFrom: one('--exclude-from'), with: one('--with'),
         priority: priorityArg(), kind: kindArg(), job: one('--job'), since: sinceArg(), before: beforeArg(),
-        channel: one('--channel'), contains: one('--contains'), inReplyTo: one('--in-reply-to'), id: one('--id'),
+        channel: one('--channel'), topic: one('--topic'), contains: one('--contains'), inReplyTo: one('--in-reply-to'), id: one('--id'),
         bodyKind: one('--body-kind'), result: resultArg(),
       };
       const controller = new AbortController();
@@ -1360,7 +1374,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
     if (verb === 'wakes') {
       noExtra(2);
       const filter = { job: one('--job'), from: one('--from'), excludeFrom: one('--exclude-from'),
-        channel: one('--channel'), contains: one('--contains'), priority: priorityArg(), before: beforeArg(), id: one('--id'),
+        channel: one('--channel'), topic: one('--topic'), contains: one('--contains'), priority: priorityArg(), before: beforeArg(), id: one('--id'),
         thread: one('--thread'), inReplyTo: one('--in-reply-to'), bodyKind: one('--body-kind'), result: resultArg() };
       const since = sinceArg();
       let page: WakePage | AllWakesPage;
