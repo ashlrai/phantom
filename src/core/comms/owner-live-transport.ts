@@ -55,10 +55,12 @@ export async function proveOwnerDirectMessage(call: SlackProbe, channelRef: stri
   if (!ref || !ref.channelId.startsWith('D') || !isSlackUserId(ownerId)) return false;
   try {
     const info = await call('conversations.info', { channel: ref.channelId });
+    if (info.ok !== true) return false;
     const channel = info.channel;
     if (!record(channel) || channel.id !== ref.channelId || channel.is_im !== true || channel.is_mpim === true ||
         channel.is_shared === true || channel.is_ext_shared === true || channel.is_pending_ext_shared === true) return false;
     const members = await call('conversations.members', { channel: ref.channelId, limit: 100 });
+    if (members.ok !== true) return false;
     const meta = members.response_metadata;
     const cursor = record(meta) ? meta.next_cursor : '';
     if (typeof cursor === 'string' && cursor.trim() !== '') return false;
@@ -66,7 +68,7 @@ export async function proveOwnerDirectMessage(call: SlackProbe, channelRef: stri
     if (!Array.isArray(ids) || ids.length !== 2 || ids.some(id => typeof id !== 'string') || !ids.includes(ownerId)) return false;
     const other = ids.find(id => id !== ownerId);
     const auth = await call('auth.test');
-    return other === auth.user_id || other === auth.bot_id;
+    return auth.ok === true && (other === auth.user_id || other === auth.bot_id);
   } catch {
     return false;
   }
