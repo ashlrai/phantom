@@ -344,7 +344,9 @@ machine's version (or `--target x.y.z`) and prints a plan. It is plan only: it
 never updates or restarts a node. A node showing `unreported` predates this or
 has not rejoined; a node showing `unknown` reported a build but no comparable
 target exists (this machine's version is unreadable and no `--target` was
-given), so drift is unmeasured rather than assumed current. Update primary and
+given), so drift is unmeasured rather than assumed current. A scope with no
+reporting nodes reads drift as unmeasured too — never "no drift" — and the plan
+names the `phm node join` that creates the first node. Update primary and
 backup first, then workers.
 
 ## One fleet across enrolled Macs

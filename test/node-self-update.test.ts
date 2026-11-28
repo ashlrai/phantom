@@ -30,8 +30,16 @@ describe('node phm version reporting and drift plan', () => {
     expect(plan.drifted).toEqual(['w2', 'w3']);
     expect(plan).toMatchObject({ dryRun: true, executable: false });
   });
-  it('reports no drift for an empty or matching pool', () => {
-    expect(planNodeSelfUpdate([], '3.30.34').drifted).toEqual([]);
+  it('reports drift unmeasured, never no-drift, for an empty pool', () => {
+    const plan = planNodeSelfUpdate([], '3.30.34');
+    expect(plan.nodes).toEqual([]);
+    expect(plan.drifted).toEqual([]);
+    const steps = plan.steps.join(' ');
+    expect(steps).toContain('unmeasured');
+    expect(steps).toContain('phm node join');
+    expect(steps).not.toContain('matches the target');
+  });
+  it('reports no drift for a matching pool', () => {
     expect(planNodeSelfUpdate([node('a', ['phm-3.30.34'])], '3.30.34').steps).toEqual(['No drift: every reporting node matches the target.']);
   });
   it('reads reported versions unknown, never current, when no target can be judged', () => {
@@ -88,6 +96,19 @@ describe('phm node self-update', () => {
     expect(plan.nodes.map((n: { status: string }) => n.status)).toEqual(['unknown', 'unreported']);
     expect(plan.drifted).toEqual(['w2']);
     expect(plan.steps.join(' ')).not.toContain('matches the target');
+  });
+  it('tells a first-run scope drift is unmeasured and names the join, in text and JSON', async () => {
+    const { code, out } = await run(['--owner', 'ashlr'], []);
+    expect(code).toBe(0);
+    expect(out).toContain('unmeasured');
+    expect(out).toContain('phm node join --owner <scope> --watch');
+    expect(out).not.toContain('matches the target');
+    const { code: jsonCode, out: jsonOut } = await run(['--owner', 'ashlr', '--json'], []);
+    expect(jsonCode).toBe(0);
+    const plan = JSON.parse(jsonOut);
+    expect(plan.nodes).toEqual([]);
+    expect(plan.drifted).toEqual([]);
+    expect(plan.steps.join(' ')).toContain('unmeasured');
   });
   it('prints the advertised slot bound in text mode: a number, or unbounded — never the empty-list dash', async () => {
     const out: string[] = [];

@@ -60,6 +60,14 @@ interface ViewedNode { nodeId: string; live: boolean; caps: string[]; slots?: nu
 
 /** Pure: reports drift from pool-view nodes against a target build. Never touches a node. */
 export function planNodeSelfUpdate(nodes: readonly ViewedNode[], target: string | null): SelfUpdatePlan {
+  // An empty scope has no reporting nodes at all, so drift is unmeasured —
+  // never the "no drift" verdict a matching pool earns. Name the join that
+  // creates the first node, the same first-run pointer `phm node status` prints.
+  if (nodes.length === 0) {
+    return { schemaVersion: 1, dryRun: true, executable: false, target, nodes: [], drifted: [],
+      steps: ['Plan only: this command never updates, restarts or edits any node.',
+        'No nodes are reporting in this scope — drift is unmeasured. Join a node first: phm node join --owner <scope> --watch, then re-run this plan.'] };
+  }
   // Only a parseable release version can judge drift. compareVersions returns
   // 0 for input it cannot order, so an absent or unparseable target (a build
   // that cannot name itself, or a --target compareVersions rejects) must not
