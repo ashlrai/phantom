@@ -46,6 +46,12 @@ or `gh` and join again, or pass `--caps` to choose the advertisement
 yourself — an explicit list replaces the sign-in detection entirely
 (local-model and version caps still merge in), and a `--caps` that names no
 capability is refused: omit the flag to auto-detect or name at least one.
+Capability names are open, not a fixed list: a job's `--requires` is matched
+against the caps a node advertises, so name the agent CLIs this computer can
+run — `codex`, `claude`, `aider`, `gemini`, `copilot`, `goose`, `droid` and the
+other measured harnesses — and a job that requires one routes here.
+`phm node capacity` measures this machine per harness and reports how many
+agent sessions each can start right now (unmeasured stays unknown).
 Either way, advertise only
 what this computer
 can actually do: jobs select nodes that advertise all their required
