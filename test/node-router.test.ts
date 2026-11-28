@@ -153,6 +153,26 @@ describe('job leases: no job runs twice', () => {
 });
 
 describe('owner scope isolation', () => {
+  it('keeps a scoped preview consistent with pull when owners share a worker slot', () => {
+    const f = fixture();
+    const worker = f.box.join('shared', { owners: ['A', 'B'], slots: 1 })!;
+    f.box.enqueue('first', { owner: 'B' });
+    f.box.enqueue('second', { owner: 'A' });
+
+    const scoped = f.box.plan('A');
+    expect(scoped).toEqual([
+      { jobId: 'second', owner: 'A', nodeId: null, fix: expect.stringContaining('no free job slots') },
+    ]);
+    expect(f.box.view(['A']).routes).toEqual(scoped);
+    const pulled = f.box.pull(worker)!;
+    expect(pulled.job.id).toBe('first');
+    expect(f.box.plan('A')).toEqual(scoped);
+
+    expect(f.box.complete(pulled.claim, 'done')).toBe(true);
+    expect(f.box.plan('A')).toEqual([{ jobId: 'second', owner: 'A', nodeId: 'shared' }]);
+    expect(f.box.pull(worker)?.job.id).toBe('second');
+  });
+
   function two() {
     const f = fixture();
     const a = f.box.join('node-a', { owners: ['A'], caps: ['gh'] })!;

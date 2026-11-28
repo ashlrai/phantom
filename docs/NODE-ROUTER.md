@@ -128,6 +128,10 @@ job carries one, the lease token pair and expiry, and paste-ready `renew`,
 `complete` and `release` commands — the last names `--decline` for a job this
 node can never run.
 
+`phm node plan --owner <scope>` shows that owner's rows from the same
+shared-queue allocation used by `pull`. Earlier jobs from other owners can
+reserve slots on a shared node, and their job details stay outside the preview.
+
 `phm node plan` prints one `job -> node` line per routable job, or `nobody`
 with the fix when no live node can take it. An empty route set is not the
 same as an empty queue, so the text answer reads the scope once more: with no
