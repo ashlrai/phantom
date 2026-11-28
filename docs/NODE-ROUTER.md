@@ -370,7 +370,9 @@ Standalone legacy queues retain their existing compatibility policy.
 Workers reporting the same host share the minimum fresh slot budget. Active
 claims and planned assignments consume it once; a fresh pressure hold blocks
 that host. Placement ranks remaining slots divided by the median accepted
-claim-to-completion duration over 24 hours; a producer withdrawal is a fence,
+claim-to-completion duration over 24 hours. A sample requires the execution
+host recorded at claim time because worker IDs can move between hosts.
+A producer withdrawal is a fence,
 not an execution, and adds no sample. Missing latency uses the mean of
 measured host medians (equal weights when none exist). Unknown duration is never
 reported as zero. Among eligible workers on the same host, placement prefers
