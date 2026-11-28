@@ -96,7 +96,7 @@ export type UnfedClaims = {
   /** overridden count by hinted->launched lane and reason, largest first. */
   lanes: UnfedClaimLane[];
 } & (
-  | { available: false; truncated: false; claimed: null; overridden: null }
+  | { available: false; truncated: false; claimed: null; overridden: null; unclaimedLaunches: null }
   | {
     available: true;
     /** True when the ledger exceeded the retained tail: counts are a lower bound. */
@@ -105,6 +105,15 @@ export type UnfedClaims = {
     claimed: number;
     /** Of those, launches that left their hinted lane (a lane_override was recorded). */
     overridden: number;
+    /**
+     * `launch` receipts in the window no claim record could pair with —
+     * launches the ledger proves happened but whose hint/override detail was
+     * never journaled (a dispatcher predating claim journaling, or a launch
+     * outside the market's claim path). `claimed: 0` beside a positive
+     * count here means launch activity is real and override accounting is
+     * unknown — never that nothing launched.
+     */
+    unclaimedLaunches: number;
   }
 );
 
@@ -662,18 +671,23 @@ export function foldMarketOverrides(jsonl: string | null, nowMs: number, windowH
  * Each re-launched job attempt counts again. Timestamps are
  * the ledger's ISO strings (parseLedgerTs handles dispatchd's %z offset);
  * rows outside the window, malformed fields and non-claim events are skipped.
- * Null text means the file was absent or unreadable. Counts and lane/reason
- * codes only; no job ids, task text or credentials.
+ * A `launch` receipt no claim record can pair with still counts, as
+ * `unclaimedLaunches`: every dispatcher version writes `launch`, but only
+ * the dedupe protocol writes `claim`, so a ledger from an older pinned
+ * dispatcher shows real launch activity here while `claimed` stays zero —
+ * override accounting unknown, never "nothing launched". Null text means
+ * the file was absent or unreadable. Counts and lane/reason codes only; no
+ * job ids, task text or credentials.
  */
 export function foldClaimOverrides(
   jsonl: string | null, nowMs: number, windowHours: number, truncated = false,
 ): UnfedClaims {
   if (jsonl === null) {
-    return { available: false, truncated: false, claimed: null, overridden: null, byReason: {}, lanes: [] };
+    return { available: false, truncated: false, claimed: null, overridden: null, unclaimedLaunches: null, byReason: {}, lanes: [] };
   }
   const tally: UnfedClaims = {
     available: true, truncated,
-    claimed: 0, overridden: 0, byReason: {}, lanes: [],
+    claimed: 0, overridden: 0, unclaimedLaunches: 0, byReason: {}, lanes: [],
   };
   const since = nowMs - windowHours * 3_600_000;
   const pairs = new Map<string, UnfedClaimLane>();
@@ -701,7 +715,13 @@ export function foldClaimOverrides(
     }
     if (at < since || (event === 'launch' && !supersedes)) continue;
     const claim = event === 'launch' ? pending?.row : row;
-    if (!claim || claim.lane !== lane) continue;
+    if (!claim || claim.lane !== lane) {
+      // Only a `launch` receipt reaches this branch — claim/batch_claim rows
+      // always pair with themselves — so it is launch activity the claim
+      // fold cannot attribute rather than a row to drop.
+      if (event === 'launch') tally.unclaimedLaunches++;
+      continue;
+    }
     tally.claimed++;
     const reason = claim.lane_override;
     if (typeof reason !== 'string' || !CODE.test(reason)) continue;
@@ -1055,9 +1075,18 @@ export function renderUnfed(report: UnfedReport): string[] {
   if (!c.available) {
     lines.push(`Last ${h.windowHours}h: claim counts unknown — metrics/jobs.jsonl is missing or unreadable.`);
   } else {
-    if (c.claimed === 0) lines.push(`Last ${h.windowHours}h: no claims recorded${c.truncated ? ' (ledger tail only)' : ''}.`);
-    else {
-      lines.push(`Last ${h.windowHours}h: ${c.claimed} claim(s) launched, ${c.overridden} left their hinted lane${c.truncated ? ' (ledger tail only)' : ''}.`);
+    const tail = c.truncated ? ' (ledger tail only)' : '';
+    if (c.claimed === 0 && c.unclaimedLaunches === 0) {
+      lines.push(`Last ${h.windowHours}h: no claims recorded${tail}.`);
+    } else if (c.claimed === 0) {
+      // Launch receipts exist but no claim record covers them: launches are
+      // real, their hint/override detail was never journaled — unknown, not zero.
+      lines.push(`Last ${h.windowHours}h: ${c.unclaimedLaunches} launch(es) recorded without claim detail${tail}; whether they left their hinted lane is unknown.`);
+    } else {
+      lines.push(`Last ${h.windowHours}h: ${c.claimed} claim(s) launched, ${c.overridden} left their hinted lane${tail}.`);
+      if (c.unclaimedLaunches > 0) {
+        lines.push(`  ${c.unclaimedLaunches} further launch(es) carry no claim record${tail}; their lane overrides are unknown.`);
+      }
       if (c.overridden > 0) {
         lines.push(`  claim override reasons: ${topCodes(c.byReason)}`);
         for (const l of c.lanes.slice(0, 3)) {

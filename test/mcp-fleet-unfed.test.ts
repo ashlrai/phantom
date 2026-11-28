@@ -52,7 +52,7 @@ const report = (over: Partial<UnfedReport> = {}): UnfedReport => ({
   marketTruncated: false,
   history: { windowHours: 24, available: false, ticks: 0, lanes: [] },
   overrides: { available: false, decided: 0, overridden: 0, byReason: {}, lanes: [] },
-  claims: { available: false, truncated: false, claimed: null, overridden: null, byReason: {}, lanes: [] },
+  claims: { available: false, truncated: false, claimed: null, overridden: null, unclaimedLaunches: null, byReason: {}, lanes: [] },
   decisionOutcomes: {
     available: false, jobsAvailable: false, jobsTruncated: false, decided: 0,
     hinted: { decided: 0, known: 0, merged: 0, unmerged: 0, reverted: 0, unresolved: 0 },

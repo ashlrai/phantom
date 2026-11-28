@@ -557,6 +557,7 @@ describe('foldClaimOverrides', () => {
       available: true, truncated: false,
       claimed: 9, // RQ-A, RQ-B x2, RQ-C, RQ-D, RQ-J through RQ-M — events, not distinct jobs
       overridden: 4, // RQ-B x2, RQ-C, RQ-D
+      unclaimedLaunches: 0, // no `launch` receipts in this journal
       byReason: { preferred_lane_fallback: 2, batch_session: 1, resource_fit: 1 },
       lanes: [
         { from: 'codex-personal', to: 'claude', reason: 'preferred_lane_fallback', claims: 2 },
@@ -599,6 +600,10 @@ describe('foldClaimOverrides', () => {
     expect(foldClaimOverrides(journal, now, 24)).toMatchObject({
       claimed: 2,
       overridden: 2,
+      // Launch receipts with no usable claim pair: RQ-A's second receipt, RQ-B's
+      // post-terminal receipt, and RQ-C's lane-mismatched receipt. RQ-D's launch
+      // is future-dated and never reaches pairing.
+      unclaimedLaunches: 3,
       byReason: { preferred_lane_fallback: 2 },
       lanes: [
         { from: 'codex-personal', to: 'claude', reason: 'preferred_lane_fallback', claims: 1 },
@@ -610,8 +615,32 @@ describe('foldClaimOverrides', () => {
   it('marks a tail-truncated ledger as a lower bound', () => {
     const journal = claim('RQ-A', iso(now - 1000));
     expect(foldClaimOverrides(journal, now, 24, true)).toMatchObject({ available: true, truncated: true, claimed: 1 });
-    expect(foldClaimOverrides(null, now, 24, true)).toEqual({ available: false, truncated: false, claimed: null, overridden: null, byReason: {}, lanes: [] });
-    expect(foldClaimOverrides('', now, 24)).toEqual({ available: true, truncated: false, claimed: 0, overridden: 0, byReason: {}, lanes: [] });
+    expect(foldClaimOverrides(null, now, 24, true)).toEqual({ available: false, truncated: false, claimed: null, overridden: null, unclaimedLaunches: null, byReason: {}, lanes: [] });
+    expect(foldClaimOverrides('', now, 24)).toEqual({ available: true, truncated: false, claimed: 0, overridden: 0, unclaimedLaunches: 0, byReason: {}, lanes: [] });
+  });
+
+  it('counts launch receipts no claim record covers as unclaimedLaunches', () => {
+    const launch = (job: string, at: number, lane = 'claude') =>
+      JSON.stringify({ event: 'launch', job, ts: iso(at), lane });
+    const journal = [
+      // A dispatcher predating claim journaling writes launch receipts only:
+      // real launch activity the override fold cannot attribute.
+      launch('RQ-A', now - 100_000),
+      launch('RQ-B', now - 90_000, 'codex-cmp'),
+      // A failed spawn is not a launch; the synthetic batch session receipt is
+      // excluded like its claim; out-of-window, future-adjacent and malformed
+      // receipts never count.
+      JSON.stringify({ event: 'launch_terminal', job: 'RQ-C', ts: iso(now - 80_000), lane: 'claude' }),
+      launch('RQ-BATCH-9', now - 70_000),
+      launch('RQ-D', now - 25 * 3_600_000),
+      JSON.stringify({ event: 'launch', job: 'RQ-E', ts: iso(now - 60_000), lane: 'bad lane!' }),
+      // A reservation-confirmed launch counts as claimed, not unclaimed.
+      claim('RQ-F', iso(now - 50_000), { launch_dedupe: true }),
+      launch('RQ-F', now - 40_000),
+    ].join('\n');
+    expect(foldClaimOverrides(journal, now, 24)).toMatchObject({
+      claimed: 1, overridden: 0, unclaimedLaunches: 2,
+    });
   });
 });
 
@@ -1165,7 +1194,7 @@ describe('phm fleet unfed', () => {
     });
     // Claims count launch events in the window: RQ-J4 is outside it, RQ-J1 ran on-hint.
     expect(report.claims).toEqual({
-      available: true, truncated: false, claimed: 3, overridden: 2,
+      available: true, truncated: false, claimed: 3, overridden: 2, unclaimedLaunches: 0,
       byReason: { batch_session: 1, preferred_lane_fallback: 1 },
       lanes: [
         { from: 'codex-personal', to: 'codex-cmp', reason: 'preferred_lane_fallback', claims: 1 },
@@ -1400,6 +1429,30 @@ describe('renderUnfed', () => {
     // which must not render identically to lane b's confirmed-fed state.
     expect(text).toContain('a  0/2 running (0%), unknown hinted here  UNFED?: 2 free, elsewhere rows unknown');
     expect(text).toContain('b  2/2 running (100%), unknown hinted here\n');
+  });
+
+  it('reports launch activity the claim fold cannot attribute instead of "no claims"', () => {
+    const base = { ...currentUnfed('{"lanes":{}}', ''), marketTruncated: false,
+      history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24),
+      decisionOutcomes: foldDecisionOutcomes('', '', 0, 24), rejections: foldRouteRejections('', 0, 24), reroutes: foldReroutes('', 0, 24) };
+    const at = (ms: number) => new Date(ms).toISOString();
+    // Launch receipts only — the shape an older pinned dispatcher's ledger has.
+    const bare = foldClaimOverrides([
+      JSON.stringify({ event: 'launch', job: 'RQ-A', ts: at(-100_000), lane: 'claude' }),
+      JSON.stringify({ event: 'launch', job: 'RQ-B', ts: at(-90_000), lane: 'codex-cmp' }),
+    ].join('\n'), 0, 24);
+    const text = renderUnfed({ ...base, claims: bare }).join('\n');
+    expect(text).toContain('Last 24h: 2 launch(es) recorded without claim detail; whether they left their hinted lane is unknown.');
+    expect(text).not.toContain('no claims recorded');
+    // Claim-attributed launches keep their line; unattributed receipts get their own.
+    const mixed = foldClaimOverrides([
+      JSON.stringify({ event: 'claim', job: 'RQ-C', ts: at(-50_000), lane: 'claude', launch_dedupe: true }),
+      JSON.stringify({ event: 'launch', job: 'RQ-C', ts: at(-40_000), lane: 'claude' }),
+      JSON.stringify({ event: 'launch', job: 'RQ-D', ts: at(-30_000), lane: 'devin' }),
+    ].join('\n'), 0, 24);
+    const mixedText = renderUnfed({ ...base, claims: mixed }).join('\n');
+    expect(mixedText).toContain('Last 24h: 1 claim(s) launched, 0 left their hinted lane.');
+    expect(mixedText).toContain('1 further launch(es) carry no claim record; their lane overrides are unknown.');
   });
 });
 
