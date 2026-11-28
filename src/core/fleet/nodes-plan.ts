@@ -51,6 +51,15 @@ export interface NodesPlan {
   reasons: string[];
 }
 
+/** The clause nodes-view appends when a live node's slot count is unmeasured
+ * ("Phantom running; free slots unknown"). `why` must not repeat it: the plan
+ * row read "…; free slots unknown; free slots unknown" on every joined computer
+ * that had not reported slots yet. */
+const FREE_SLOTS_UNKNOWN = 'free slots unknown';
+function unknownSlotsWhy(state: string): string {
+  return state.endsWith(FREE_SLOTS_UNKNOWN) ? state : `${state}; ${FREE_SLOTS_UNKNOWN}`;
+}
+
 export function planNode(node: NodeRow): PlanNode {
   const down = node.reachable === false || node.stateCode === 'offline';
   // An unconfirmed state (stateCode 'unknown': e.g. a live registry heartbeat
@@ -60,7 +69,7 @@ export function planNode(node: NodeRow): PlanNode {
   const slots: number | Unknown = down || node.phantom === 'not-running' || node.stateCode === 'held' ? 0
     : node.stateCode === 'unknown' ? UNKNOWN : node.freeSlots;
   const why = down ? `${node.state}; no jobs suggested`
-    : slots === UNKNOWN ? `${node.state}; free slots unknown`
+    : slots === UNKNOWN ? unknownSlotsWhy(node.state)
       : slots === 0 ? node.state
         : `${node.state}; room for ${slots} more ${slots === 1 ? 'job' : 'jobs'}`;
   return { name: node.name, online: node.reachable, free_mem_pct: node.freeMemoryPercent, load: node.load, lanes: node.lanes, suggested_slots: slots, why };
