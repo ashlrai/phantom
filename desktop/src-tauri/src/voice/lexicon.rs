@@ -234,6 +234,19 @@ fn is_word_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_' || b >= 0x80
 }
 
+/// Backtick fences may be indented by up to three spaces.
+fn at_fence_indent(before: &[u8]) -> bool {
+    let mut left = before.iter().rev();
+    for b in left.by_ref().take(3) {
+        match b {
+            b'\n' => return true,
+            b' ' => {}
+            _ => return false,
+        }
+    }
+    matches!(left.next(), None | Some(b'\n'))
+}
+
 /// Replace aliases with canonicals, whole words only, longest alias first,
 /// never inside `inline code` / ``` fences. A canonical is never re-matched.
 pub fn apply_terms(text: &str, map: &TermMap) -> String {
@@ -264,16 +277,41 @@ pub fn apply_terms(text: &str, map: &TermMap) -> String {
     let lower_bytes = lower.as_bytes();
     let mut out = String::with_capacity(text.len());
     let mut i = 0;
-    let mut in_code = false;
+    let mut code_delimiter = None;
     while i < bytes.len() {
         if bytes[i] == b'`' {
-            in_code = !in_code;
-            out.push('`');
-            i += 1;
+            let run = bytes[i..].iter().take_while(|&&b| b == b'`').count();
+            let end = i + run;
+            match code_delimiter {
+                None => {
+                    let fence = run >= 3
+                        && at_fence_indent(&bytes[..i])
+                        // A backtick fence's info string can't contain backticks.
+                        && !bytes[end..]
+                            .iter()
+                            .take_while(|&&b| b != b'\n')
+                            .any(|&b| b == b'`');
+                    code_delimiter = Some((run, fence));
+                }
+                Some((width, false)) if run == width => code_delimiter = None,
+                Some((width, true))
+                    if run >= width
+                        && at_fence_indent(&bytes[..i])
+                        && bytes[end..]
+                            .iter()
+                            .take_while(|&&b| b != b'\n')
+                            .all(|b| matches!(b, b' ' | b'\t' | b'\r')) =>
+                {
+                    code_delimiter = None;
+                }
+                _ => {}
+            }
+            out.push_str(&text[i..end]);
+            i = end;
             continue;
         }
         let at_word_start = i == 0 || !is_word_byte(bytes[i - 1]);
-        if !in_code && at_word_start {
+        if code_delimiter.is_none() && at_word_start {
             let hit = rules.iter().find(|(alias, alias_lower, _, cs)| {
                 let n = alias.len();
                 if i + n > bytes.len() || !text.is_char_boundary(i + n) {
@@ -763,6 +801,27 @@ mod tests {
         assert_eq!(apply_terms("café ashler — ok", &m), "café Ashlr.AI — ok");
         assert_eq!(apply_terms("", &m), "");
         assert_eq!(apply_terms("anything", &TermMap::default()), "anything");
+    }
+
+    #[test]
+    fn cached_aliases_preserve_code_with_nested_backticks() {
+        let m = map();
+        assert_eq!(
+            apply_terms("ashler ``ashler `ashler` ashler`` ashler", &m),
+            "Ashlr.AI ``ashler `ashler` ashler`` Ashlr.AI"
+        );
+        assert_eq!(
+            apply_terms(
+                "ashler\n  ````md\n`ashler` ashler ```\n```` not a closer\n  `````\nashler",
+                &m
+            ),
+            "Ashlr.AI\n  ````md\n`ashler` ashler ```\n```` not a closer\n  `````\nAshlr.AI"
+        );
+        assert_eq!(
+            apply_terms("```ashler``` ashler", &m),
+            "```ashler``` Ashlr.AI"
+        );
+        assert_eq!(apply_terms("ashler ``ashler", &m), "Ashlr.AI ``ashler");
     }
 
     #[test]
