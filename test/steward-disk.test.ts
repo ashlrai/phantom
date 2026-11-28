@@ -24,6 +24,16 @@ describe('steward disk guardrails', () => {
     expect(existsSync(old)).toBe(true);
   });
 
+  it('stamps the report with the measurement time and stays honest on a broken clock', () => {
+    const r = runSteward(defaultStewardPolicy(home), { home, now });
+    expect(r.generatedAt).toBe(new Date(now).toISOString());
+    // A non-finite clock still returns a report — roots measure nothing and
+    // the stamp is null rather than a fabricated or crashing timestamp.
+    const broken = runSteward(defaultStewardPolicy(home), { home, now: Number.NaN });
+    expect(broken.generatedAt).toBeNull();
+    expect(broken.roots.every((x) => x.bytes === 0)).toBe(true);
+  });
+
   it('deletes Phantom-owned logs by retention + quota, keeps recent/live, never follows symlinks', () => {
     const old = file('.ashlr/logs/old.log', 10, 30);
     const mid = file('.ashlr/logs/mid.log', 600, 3);

@@ -9,6 +9,11 @@
  * Safety: only allowlisted roots under the user's home are ever touched; it
  * never follows symlinks, never deletes directories it did not empty, never
  * reads file contents, and skips files modified in the last 24 hours (live logs).
+ *
+ * Every report carries `generatedAt`, the measurement's own timestamp: the
+ * scheduled job's stdout sink (~/.ashlr/logs/steward.jsonl) is consumed
+ * evidence, and a journaled measurement without its time cannot be windowed
+ * or aged honestly. Null only when the caller's clock is unusable.
  */
 import { lstatSync, readdirSync, rmdirSync, unlinkSync, existsSync, mkdirSync, readFileSync, writeFileSync,
   realpathSync, readSync, openSync, closeSync, fstatSync, fsyncSync, constants, type Stats } from 'node:fs';
@@ -28,7 +33,7 @@ export type StewardAction = 'delete' | 'archive' | 'report';
 export interface StewardRoot { id: string; path: string; retentionDays: number; quotaMB: number; action: StewardAction; nativeHint?: string }
 export interface StewardPolicy { roots: StewardRoot[]; minAgeMinutes: number; archiveDir: string }
 export interface RootReport { id: string; path: string; exists: boolean; files: number; bytes: number; quotaBytes: number; overQuota: boolean; reclaimable: { files: number; bytes: number }; action: StewardAction; nativeHint?: string }
-export interface StewardReport { applied: boolean; roots: RootReport[]; totalBytes: number; reclaimableBytes: number; deleted: { files: number; bytes: number }; archived: { files: number; bytes: number } }
+export interface StewardReport { applied: boolean; roots: RootReport[]; totalBytes: number; reclaimableBytes: number; deleted: { files: number; bytes: number }; archived: { files: number; bytes: number }; generatedAt: string | null }
 
 export function defaultStewardPolicy(home = homedir()): StewardPolicy {
   const r = (id: string, rel: string, retentionDays: number, quotaMB: number, action: StewardAction, nativeHint?: string): StewardRoot => ({ id, path: join(home, rel), retentionDays, quotaMB, action, ...(nativeHint ? { nativeHint } : {}) });
@@ -159,7 +164,7 @@ export function runSteward(policy: StewardPolicy, opts: { apply?: boolean; now?:
   let boundary: Boundary;
   try { boundary = { home, physicalHome: realpathSync(home), directories: new Map() }; }
   catch { boundary = { home, physicalHome: home, directories: new Map() }; }
-  const report: StewardReport = { applied: !!opts.apply, roots: [], totalBytes: 0, reclaimableBytes: 0, deleted: { files: 0, bytes: 0 }, archived: { files: 0, bytes: 0 } };
+  const report: StewardReport = { applied: !!opts.apply, roots: [], totalBytes: 0, reclaimableBytes: 0, deleted: { files: 0, bytes: 0 }, archived: { files: 0, bytes: 0 }, generatedAt: Number.isFinite(now) ? new Date(now).toISOString() : null };
   for (const root of policy.roots) {
     const quotaBytes = root.quotaMB * 1024 * 1024;
     const rr: RootReport = { id: root.id, path: root.path, exists: existsSync(root.path), files: 0, bytes: 0, quotaBytes, overQuota: false, reclaimable: { files: 0, bytes: 0 }, action: root.action, ...(root.nativeHint ? { nativeHint: root.nativeHint } : {}) };
