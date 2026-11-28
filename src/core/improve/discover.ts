@@ -2115,6 +2115,25 @@
  *     stays 'unknown' when it does not, truncated tails are stated as
  *     lower bounds, and items emit only for the fleet's own repository
  *     since the ledger has no repo column;
+ *   - the jobs ledger's pool detection receipts: the per-tick
+ *     ratelimited() scan dispatchd runs over each lane's fresh job
+ *     logs appends one {"event":"pool","lane","job","kind",
+ *     "mem_free_pct","swap_gb"} row per (job, class) provider-wall
+ *     detection — the detection itself, recorded before the lane
+ *     hold or target halving it triggers (poolDetectBacklogItems
+ *     below). Until now the row's only reader was the router outcome
+ *     fold's pool_kind context, tallied inside the weight report's
+ *     unknown-outcome cohort, and the friction fold saw only the
+ *     detector's reactions blended into one quota score — so a lane
+ *     whose running jobs kept matching walls looked like ordinary
+ *     provider churn. A (lane, kind) cell emits only at the recurring
+ *     bars of three distinct job ids across two distinct UTC days
+ *     inside the 7-day window; kind stays inside the producer's
+ *     closed CLS vocabulary, unparseable stamps and foreign shapes
+ *     never count, host memory readings quote as recorded context
+ *     (null stays unrecorded, never zero), truncated tails are stated
+ *     as lower bounds, and items emit only for the fleet's own
+ *     repository since the ledger has no repo column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -2293,6 +2312,7 @@ import { multimodelOutcomesBacklogItems } from './multimodel-outcomes-backlog.js
 import { prDeltaBacklogItems } from './pr-delta-backlog.js';
 import { busDeadLetterBacklogItems } from './bus-dead-letter-backlog.js';
 import { jobNotesBacklogItems } from './job-notes-backlog.js';
+import { poolDetectBacklogItems } from './pool-detect-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -4847,6 +4867,24 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // own repository inherits the item since the ledger has no repo
   // column.
   await feed('jobNotesBacklogItems', () => jobNotesBacklogItems({ repo }));
+
+  // Pool wall detections: dispatchd's per-tick ratelimited() scan
+  // appends one {"event":"pool", lane, job, kind, mem_free_pct,
+  // swap_gb} row per (job, class) provider-limit match on a lane's
+  // fresh job logs — the detection itself, capped at one row per pair
+  // by the .<class>.seen marker, recorded before the hold or target
+  // halving it triggers. Until now the row's only reader was the
+  // router outcome fold's pool_kind context (tallied inside the
+  // weight report's unknown-outcome cohort) and the friction fold saw
+  // only the detector's reactions blended into one quota score, so a
+  // lane whose running jobs kept matching walls never became work.
+  // Cells emit only at the recurring bars of distinct jobs across
+  // distinct UTC days, kind stays inside the producer's closed CLS
+  // vocabulary, host readings quote as recorded context, truncated
+  // tails are stated as lower bounds, and only the fleet's own
+  // repository inherits the items since jobs.jsonl carries no repo
+  // column.
+  await feed('poolDetectBacklogItems', () => poolDetectBacklogItems({ repo }));
   return { items, errors };
 }
 

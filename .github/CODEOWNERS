@@ -701,6 +701,7 @@
 /test/improve-outside-pr-review-backlog.test.ts @masonwyatt23
 /test/improve-pick-grade-backlog.test.ts @masonwyatt23
 /test/improve-playbook-outcome-backlog.test.ts @masonwyatt23
+/test/improve-pool-detect-backlog.test.ts @masonwyatt23
 /test/improve-postmerge-backlog.test.ts @masonwyatt23
 /test/improve-postrun-backlog.test.ts @masonwyatt23
 /test/improve-pr-delta-backlog.test.ts @masonwyatt23
