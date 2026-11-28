@@ -754,6 +754,42 @@
  *               fold itself never throws and skips torn lines by
  *               contract. Act: `phm fleet stuck-fixes`, `phm fleet
  *               main-health`.
+ *   stranded-work  finished work in kept worktrees that never became a
+ *               pull request — the same `readStrandedWork`/
+ *               `findStrandedWork` fold `phm fleet stranded` serves,
+ *               over `<runsDir>/queue/status.json`'s kept list, the
+ *               `metrics/jobs.jsonl` finish events, each job's
+ *               `.publish` sidecar and the queue run markers, so this
+ *               source and that surface can never disagree. Until now
+ *               finished-but-unshipped work had no item-level surface
+ *               here: the jobs-stuck source reads open run markers,
+ *               the queue sources read ready/router rows, the
+ *               stuck-fixes source reads published fix PRs, and every
+ *               bus/feed/board read looks at work not yet claimed —
+ *               while a job that finished with real changes and then
+ *               stopped short of a PR (a publish abort, a safety-gate
+ *               stop, an unexplained result) sat invisible in a kept
+ *               worktree, its diff at risk of being reaped or
+ *               forgotten. Each unrecovered stranded row lists once as
+ *               a warn `stranded-worktree` naming the job id, `since`
+ *               the recorded finish time (null when the ledger kept
+ *               none — unknown stays unknown) and `expiresAt` null: a
+ *               stranded job waits for a republish or re-run, never a
+ *               guessed deadline; the job id is the item's own
+ *               citation, so `--job` matches. Rows a later job already
+ *               recovered — or a verify already proved on main — never
+ *               list: their own next step says there is nothing to do.
+ *               The kept-list rule `phm fleet stranded` itself reports
+ *               applies — a verified-absent `queue/status.json` is
+ *               'missing' (no kept worktree can be listed, so no
+ *               finished work can be stranded), a kept list that
+ *               exists but cannot be read, or a throwing read, is
+ *               'unavailable' — the stranded set is unknown, never an
+ *               empty list passed off as fact — and a known read with
+ *               gaps (an unreadable metrics ledger leaves finish times
+ *               and sizes unknown, so the listed rows are a floor) is
+ *               'degraded'. Act: `phm fleet stranded`, `phm fleet
+ *               republish`, `phm fleet kept-worktrees`.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -833,6 +869,7 @@ import { readKillSwitch, type KillSwitchReadResult } from '../sandbox/policy.js'
 import { readStuckQueue, type StuckJob } from '../queue/stuck.js';
 import { readStuckJobs, type StuckJob as RunningStuckJob, type StuckJobsReport } from '../fleet/running-stuck.js';
 import { readStuckFixes, type StuckFixRow } from '../fleet/stuck-fixes.js';
+import { readStrandedWork, type StrandedItem } from '../fleet/stranded-work.js';
 import { isDependencyParkedReason, readFleetQueue, type FleetQueueV1, type ParkedGroup, type ParkedMetDep, type ParkedUnmetDep } from '../fleet/runs-parked-queue.js';
 import { readChannelHealth } from '../fleet/channel-health.js';
 import { readTelegramHealth, telegramEnabled } from '../integrations/telegram.js';
@@ -851,7 +888,7 @@ export const UNIFIED_INBOX_SOURCES = [
   'peer-dispatch', 'peer-inbox', 'session-handoff', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
   'slack-sends', 'leader-delivery', 'leader-network', 'leader-replies', 'coordination', 'claim-drift',
   'send-gate', 'router-queue', 'jobs-stuck', 'channel-health', 'queue-parked',
-  'stuck-fixes',
+  'stuck-fixes', 'stranded-work',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -885,6 +922,7 @@ export const UNIFIED_INBOX_KINDS = [
   'stuck-ghost', 'stuck-job',
   'channel-blocked', 'channel-degraded', 'channel-unknown',
   'parked-dep-waiting', 'parked-dep-stale', 'parked-group', 'stuck-fix',
+  'stranded-worktree',
 ] as const;
 export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
 export const isUnifiedInboxKind = (value: string): value is UnifiedInboxKind =>
@@ -1080,6 +1118,22 @@ export interface StuckFixesSourceRead {
   stuck: readonly StuckFixRow[];
 }
 
+/** The resolved stranded-work read: `readStrandedWork`'s kept-worktree
+ * fold mapped onto the unified source states — 'missing' a
+ * verified-absent `queue/status.json` (no kept worktree can be listed,
+ * so no finished work can be stranded), 'unavailable' a kept list that
+ * exists but cannot be read or a throwing read (the stranded set is
+ * unknown, never an empty list), 'degraded' a known read carrying gaps
+ * (an unreadable metrics ledger leaves finish times and sizes unknown —
+ * the listed rows are a floor), 'healthy' the full read. `items` stays
+ * the projection's own stranded rows — recovered and already-on-main
+ * rows included — so the item builder, not the seam, decides which rows
+ * list as pending. */
+export interface StrandedWorkSourceRead {
+  state: UnifiedInboxSourceState;
+  items: readonly StrandedItem[];
+}
+
 /** The resolved shared-board read: `BusBoard.pendingAll`'s fleet-wide digest
  * when the store could be read — 'missing' is a verified-empty board (no
  * `state.json` ever written), 'unavailable' an unreadable one, never an
@@ -1242,6 +1296,11 @@ export interface UnifiedInboxOptions {
    * main-health`, the verse runs-history route and the web-ui needs-you
    * strip serve. */
   readStuckFixes?: (options: { runsDir?: string; now?: () => number }) => Promise<StuckFixesSourceRead>;
+  /** Stranded-work seam; default reads kept worktrees through
+   * `readStrandedWork` — the same fold `phm fleet stranded` serves, over
+   * `<runsDir>/queue/status.json`, `metrics/jobs.jsonl`, the `.publish`
+   * sidecars and the queue run markers. */
+  readStrandedWork?: (options: { runsDir?: string; now?: () => number }) => Promise<StrandedWorkSourceRead>;
   /** Channel-health seam; default reads `readChannelHealth` — the same
    * slack/imessage bridge projection `phm fleet channel-health` and
    * `phm channels` serve. */
@@ -4373,6 +4432,95 @@ async function readStuckFixesSource(options: { runsDir?: string; now?: () => num
   return report.known ? { state: 'healthy', stuck: report.stuck } : { state: 'unavailable', stuck: [] };
 }
 
+/**
+ * Finished work in kept worktrees that never became a pull request — the
+ * same `readStrandedWork`/`findStrandedWork` fold `phm fleet stranded`
+ * serves, over `<runsDir>/queue/status.json`'s kept list, the
+ * `metrics/jobs.jsonl` finish events, each job's `.publish` sidecar and
+ * the queue run markers, so this source and that surface can never
+ * disagree. Until now finished-but-unshipped work had no item-level
+ * surface here: the jobs-stuck source reads open run markers, the queue
+ * sources read ready/router rows, the stuck-fixes source reads published
+ * fix PRs, and every bus/feed/board read looks at work not yet claimed —
+ * while a job that finished with real changes and then stopped short of
+ * a PR (a publish abort, a safety-gate stop, an unexplained result) sat
+ * invisible in a kept worktree, its diff at risk of being reaped or
+ * forgotten. Each unrecovered stranded row lists once as a warn
+ * `stranded-worktree` naming the job id, `since` the recorded finish
+ * time (null when the ledger kept none — unknown stays unknown) and
+ * `expiresAt` null: a stranded job waits for a republish or re-run,
+ * never a guessed deadline; the job id is the item's own citation, so
+ * `--job` matches. Rows a later job already recovered — or a verify
+ * already proved on main — never list: their own next step says there
+ * is nothing to do. The kept-list rule `phm fleet stranded` itself
+ * reports applies — a verified-absent `queue/status.json` is 'missing'
+ * (no kept worktree can be listed, so no finished work can be
+ * stranded), a kept list that exists but cannot be read or a throwing
+ * read is 'unavailable' — the stranded set is unknown, never an empty
+ * list passed off as fact — and a known read with gaps (an unreadable
+ * metrics ledger leaves finish times and sizes unknown, so the listed
+ * rows are a floor) is 'degraded'.
+ */
+async function strandedWorkItems(read: NonNullable<UnifiedInboxOptions['readStrandedWork']>,
+  options: UnifiedInboxOptions): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let result: StrandedWorkSourceRead;
+  try { result = await read({ runsDir: dir, now: options.now }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  if (result.state === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  if (result.state === 'unavailable') return { report: { state: 'unavailable', pending: null }, items: [] };
+  const items = result.items
+    .filter((item) => item.recovered_by === null && item.verify !== 'already_on_main')
+    .map((item): Omit<UnifiedInboxItem, 'priority'> => {
+      const cause = item.cause.replaceAll('_', ' ');
+      const size = item.diff_files === null ? 'size unknown'
+        : `${item.diff_files} files, ${item.diff_lines === null ? 'lines unknown' : `${item.diff_lines} lines`}`;
+      return {
+        id: `stranded-work:${item.job}`,
+        source: 'stranded-work',
+        kind: 'stranded-worktree',
+        severity: 'warn',
+        blocking: false,
+        title: oneLine(`Job ${item.job} finished with changes but no pull request`, TITLE_MAX),
+        detail: oneLine(`${item.repo} · ${item.lane} lane · ${cause} · ${size} — ${item.next_step}`, DETAIL_MAX) || null,
+        since: item.finished_at,
+        expiresAt: null,
+        jobIds: [item.job],
+        act: item.cause === 'abort_after_push'
+          ? ['phm fleet stranded', 'phm fleet republish', 'phm fleet kept-worktrees']
+          : ['phm fleet stranded', 'phm fleet kept-worktrees'],
+      };
+    });
+  return { report: { state: result.state, pending: pendingCount(result.state, items.length) }, items };
+}
+
+/** The real stranded-work read: `readStrandedWork` on the shared runs
+ * dir, its kept-worktree fold mapped onto the unified source states —
+ * the same existence probe `jobs-stuck`/`stuck-fixes` apply: a
+ * verified-absent `queue/status.json` means no kept worktree can be
+ * listed, so no finished work can be stranded ('missing',
+ * verified-empty); a status file that exists but whose kept list cannot
+ * be read is 'unavailable' — the stranded set is unknown, never an
+ * empty list passed off as fact; and a known read carrying gaps — an
+ * unreadable metrics ledger leaves finish times and sizes unknown — is
+ * 'degraded', the listed rows a floor. The read itself never throws on
+ * missing files; a throwing read is 'unavailable' all the same. */
+async function readStrandedWorkSource(options: { runsDir?: string; now?: () => number }): Promise<StrandedWorkSourceRead> {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  try {
+    lstatSync(join(dir, 'queue', 'status.json'));
+  } catch (error) {
+    return { state: (error as NodeJS.ErrnoException | null)?.code === 'ENOENT' ? 'missing' : 'unavailable', items: [] };
+  }
+  try {
+    const report = await readStrandedWork({ runsDir: dir, now: options.now?.() });
+    if (!report.known) return { state: 'unavailable', items: [] };
+    return { state: report.gaps.length > 0 ? 'degraded' : 'healthy', items: report.items };
+  } catch {
+    return { state: 'unavailable', items: [] };
+  }
+}
+
 /** Display label and deep links per channel-health leg; telegram's acts differ because its diagnostic is `phm comms health`, not `phm fleet channel-health`. */
 const channelHealthPresentation = (channel: string): { label: string; acts: readonly string[] } =>
   channel === 'slack'
@@ -4700,6 +4848,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const channelHealth = await channelHealthItems(options);
   const queueParked = await queueParkedItems(options.readQueueParked ?? readQueueParkedSource, options);
   const stuckFixes = await stuckFixItems(options.readStuckFixes ?? readStuckFixesSource, options);
+  const strandedWork = await strandedWorkItems(options.readStrandedWork ?? readStrandedWorkSource, options);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -4742,8 +4891,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'channel-health': channelHealth.report,
     'queue-parked': queueParked.report,
     'stuck-fixes': stuckFixes.report,
+    'stranded-work': strandedWork.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...drafts.items, ...commsMail.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...peerInbox.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...jobsStuck.items, ...channelHealth.items, ...queueParked.items, ...stuckFixes.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...drafts.items, ...commsMail.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...peerInbox.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...jobsStuck.items, ...channelHealth.items, ...queueParked.items, ...stuckFixes.items, ...strandedWork.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

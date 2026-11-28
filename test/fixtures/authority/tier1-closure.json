@@ -1003,6 +1003,7 @@
     "src/core/fleet/standing-merge-pass.ts",
     "src/core/fleet/status.ts",
     "src/core/fleet/stop-file.ts",
+    "src/core/fleet/stranded-work.ts",
     "src/core/fleet/stray-slots.ts",
     "src/core/fleet/stuck-fixes.ts",
     "src/core/fleet/subscription-usage.ts",
