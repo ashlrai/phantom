@@ -1,9 +1,10 @@
-import { defaultGh, type Gh } from '../autopilot/github.js';
+import { defaultGh, queuePrMerge, type Gh } from '../autopilot/github.js';
 
 export const ARM_SWEEP_REPOS = ['phantom', 'phantom-secrets', 'ashlr-plugin', 'ashlr-stack', 'locus', 'lexicon', 'ashlr-md'].map(name => `ashlrai/${name}`);
 const HOLDS: Record<string, number[]> = { 'ashlrai/phantom': [197, 878, 743, 725, 738, 744, 693, 1228], 'ashlrai/phantom-secrets': [140, 197, 375, 168, 418, 136], 'ashlrai/ashlr-plugin': [152, 157] };
 interface Pull {
   number: number; title: string; body: string; updatedAt: string; isDraft: boolean; mergeable: string;
+  headRefOid: string; baseRefName: string;
   autoMergeRequest: object | null;
   statusCheckRollup: Array<{ conclusion?: string; state?: string; status?: string }> | null;
 }
@@ -16,8 +17,13 @@ export async function armSweep({ repos = ARM_SWEEP_REPOS, sinceMs = 86_400_000, 
   const closeCandidates: Array<{ repo: string; number: number; title: string; supersededBy: number }> = [];
   for (const repo of repos) {
     let pulls: Pull[];
+    let defaultBranch: string;
     try {
-      const value: unknown = JSON.parse(await gh(['pr', 'list', '--state', 'open', '--limit', '10000', '-R', repo, '--json', 'number,title,body,updatedAt,isDraft,mergeable,autoMergeRequest,statusCheckRollup']));
+      const metadata = JSON.parse(await gh(['repo', 'view', repo, '--json', 'defaultBranchRef'])) as { defaultBranchRef?: { name?: unknown } | null } | null;
+      const branch = metadata?.defaultBranchRef?.name;
+      if (typeof branch !== 'string' || !branch || /\s/.test(branch)) throw new Error('Default branch unavailable');
+      defaultBranch = branch;
+      const value: unknown = JSON.parse(await gh(['pr', 'list', '--state', 'open', '--limit', '10000', '-R', repo, '--json', 'number,title,body,updatedAt,isDraft,mergeable,autoMergeRequest,statusCheckRollup,headRefOid,baseRefName']));
       if (!Array.isArray(value) || value.length >= 10000 || value.some(p => !p || !Number.isSafeInteger(p.number) || p.number < 1
         || typeof p.title !== 'string' || typeof p.body !== 'string' || typeof p.isDraft !== 'boolean' || typeof p.mergeable !== 'string'
         || typeof p.updatedAt !== 'string' || !Number.isFinite(Date.parse(p.updatedAt)) || !Object.hasOwn(p, 'autoMergeRequest')
@@ -32,17 +38,19 @@ export async function armSweep({ repos = ARM_SWEEP_REPOS, sinceMs = 86_400_000, 
         if (original && number !== p.number) closeCandidates.push({ repo, number, title: original.title, supersededBy: p.number });
       }
       const reason = (HOLDS[repo] ?? []).includes(p.number) ? 'Owner hold'
+        : p.baseRefName !== defaultBranch ? 'Base is not the default branch'
+        : typeof p.headRefOid !== 'string' || !/^[a-f0-9]{40}$/i.test(p.headRefOid) ? 'Head unknown'
         : Date.parse(p.updatedAt) < now - sinceMs ? 'Updated before the time window'
         : p.isDraft ? 'Draft'
         : p.autoMergeRequest !== null ? 'Already armed'
         : p.mergeable === 'CONFLICTING' ? 'Conflicting'
         : p.mergeable !== 'MERGEABLE' ? 'Mergeability unknown'
-        : p.statusCheckRollup === null ? 'Checks unknown'
+        : !p.statusCheckRollup?.length ? 'Checks unknown'
         : p.statusCheckRollup.some(c => [c.conclusion, c.state].some(s => ['FAILURE', 'ERROR', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE', 'STALE'].includes(s ?? ''))) ? 'Failing checks'
         : p.statusCheckRollup.some(c => ![c.conclusion, c.state, c.status].some(s => ['SUCCESS', 'NEUTRAL', 'SKIPPED', 'PENDING', 'IN_PROGRESS', 'QUEUED', 'WAITING', 'REQUESTED', 'EXPECTED'].includes(s ?? ''))) ? 'Checks unknown' : undefined;
       const row: ArmSweepRow = { repo, number: p.number, title: p.title, action: reason ? 'skipped' : 'would arm', ...(reason ? { reason } : {}) };
       if (!reason && apply) {
-        try { await gh(['pr', 'merge', String(p.number), '--auto', '-R', repo]); row.action = 'armed'; }
+        try { await queuePrMerge(repo, p.number, p.headRefOid, gh); row.action = 'armed'; }
         catch { row.action = 'skipped'; row.reason = 'Auto-merge request failed'; }
       }
       rows.push(row);

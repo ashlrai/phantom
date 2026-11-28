@@ -2,7 +2,7 @@
 
 ## Fleet overview illustration
 
-[Phantom Fleet overview](phantom-fleet-overview.png) is the 1920 × 1422 editorial PNG also used on the [AshlrAI organization profile](https://github.com/ashlrai). It is a product illustration, not a capture from a running build. Provider balances, agent and session counts, and trends are synthetic. The source asset is the [approved organization-profile PNG](https://github.com/ashlrai/.github/blob/580712464e934f7024348cedbd4ac6b8970dd5d5/profile/assets/portable/phantom-fleet-overview.png). The three browser captures below remain available for comparison.
+[Phantom Fleet overview](phantom-fleet-overview.png) is the 1920 × 1422 editorial PNG also used on the [AshlrAI organization profile](https://github.com/ashlrai). It is a product illustration, not a capture from a running build. Provider balances and throughput are synthetic: 362 merges in 24 hours, 28 running sessions, and 336 active subagents. The single owner inbox depicts a cross-channel Leader thread, a microphone for dictation, and illustrative model and context indicators. The source asset is the [approved organization-profile PNG](https://github.com/ashlrai/.github/blob/0cfe776857b2b800c8c7e3ec9319698f696f4aca/profile/assets/portable/phantom-fleet-overview.png). The three browser captures below remain available for comparison.
 
 ## Current-source browser captures
 
