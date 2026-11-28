@@ -113,8 +113,11 @@ phm channels --json   # schema phantom.channels.v1, same as GET /api/channels
 
 The desktop app's **Channels** pane (⌘K → "Open pane: Channels") draws the
 same JSON as one card per channel. A value no source can prove reads
-`unknown`, never a guessed zero; last outbound is `unknown` for channels
-without a per-channel delivery receipt yet. A `~/.ashlr/config.json` that
+`unknown`, never a guessed zero; last outbound is the newest proven send —
+the channel's own reply records merged with the owner-thread delivery
+receipts `phm comms thread` joins — and stays `unknown` only where no
+receipt source exists (mobile, the Phantom page, the terminal). A
+`~/.ashlr/config.json` that
 exists but cannot be read makes the facts it feeds — Telegram's setup state
 and the iMessage verified-sender count — read `unknown` as well, never a
 guessed "not set up" or 0; the iMessage count itself is the size of the

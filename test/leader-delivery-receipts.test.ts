@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadOwnerThreadSettings, type OwnerChannelTransport } from '../src/core/comms/owner-channel.js';
 import { acceptOwnerInbound, readOwnerThread, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
-import { MAX_READ_LINES, readReceipts, recordDelivery } from '../src/core/leader/delivery-receipts.js';
+import { MAX_READ_LINES, readLatestDeliveredAt, readReceipts, recordDelivery } from '../src/core/leader/delivery-receipts.js';
 
 const roots: string[] = [];
 afterEach(() => { roots.splice(0).forEach(r => rmSync(r, { recursive: true, force: true })); });
@@ -38,6 +38,54 @@ describe('delivery receipts store', () => {
     const read = readReceipts(dir, ['old', 'new']);
     expect(read.old).toBeUndefined();
     expect(read.new?.desktop?.state).toBe('delivered');
+  });
+});
+
+describe('readLatestDeliveredAt', () => {
+  const writeRows = (dir: string, rows: (Record<string, unknown> | string)[]) => {
+    const file = join(dir, 'leader', 'delivery-receipts.jsonl');
+    mkdirSync(join(dir, 'leader'), { recursive: true });
+    writeFileSync(file, `${rows.map((r) => (typeof r === 'string' ? r : JSON.stringify(r))).join('\n')}\n`);
+  };
+
+  it('folds the newest delivered `at` per channel; pending, failed, undated and off-contract rows never claim a time', () => {
+    const dir = tmp();
+    writeRows(dir, [
+      { messageId: 'a', channel: 'telegram', state: 'delivered', at: '2026-02-01T00:00:00.000Z' },
+      // An older delivered row written later must not win — the fold is by time, not file order.
+      { messageId: 'b', channel: 'telegram', state: 'delivered', at: '2026-01-01T00:00:00.000Z' },
+      { messageId: 'c', channel: 'telegram', state: 'failed', at: '2026-04-01T00:00:00.000Z' },
+      { messageId: 'd', channel: 'telegram', state: 'pending', at: '2026-05-01T00:00:00.000Z' },
+      { messageId: 'e', channel: 'telegram', state: 'delivered' },
+      { messageId: 'f', channel: 'mobile', state: 'delivered', at: '2026-06-01T00:00:00.000Z' },
+      { messageId: 'g', channel: 'slack', state: 'delivered', at: 'not-a-date' },
+      { messageId: 'h', channel: 'desktop', state: 'delivered', at: '2026-03-15T12:30:00.000Z' },
+      'junk line',
+    ]);
+    expect(readLatestDeliveredAt(dir)).toEqual({
+      telegram: '2026-02-01T00:00:00.000Z',
+      desktop: '2026-03-15T12:30:00.000Z',
+    });
+  });
+
+  it('answers {} — never a throw — when the journal is absent or holds no delivered rows', () => {
+    const dir = tmp();
+    expect(readLatestDeliveredAt(dir)).toEqual({});
+    writeRows(dir, [
+      { messageId: 'a', channel: 'desktop', state: 'failed', at: '2026-01-01T00:00:00.000Z' },
+      { messageId: 'b', channel: 'desktop', state: 'delivered' },
+    ]);
+    expect(readLatestDeliveredAt(dir)).toEqual({});
+  });
+
+  it('stays inside the same bounded tail readReceipts uses', () => {
+    const dir = tmp();
+    recordDelivery(dir, 'old', 'desktop', 'delivered');
+    const file = join(dir, 'leader', 'delivery-receipts.jsonl');
+    for (let i = 0; i < MAX_READ_LINES; i++) appendFileSync(file, `${JSON.stringify({ messageId: 'new', channel: 'telegram', state: 'delivered', at: '2026-01-01T00:00:00.000Z' })}\n`);
+    const out = readLatestDeliveredAt(dir);
+    expect(out.desktop).toBeUndefined();
+    expect(out.telegram).toBe('2026-01-01T00:00:00.000Z');
   });
 });
 
