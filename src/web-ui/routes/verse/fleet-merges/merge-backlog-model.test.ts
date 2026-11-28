@@ -25,3 +25,16 @@ it('reports unknown age without inventing zero for missing or invalid timestamps
     expect(view.rows[0]?.ageText).toBe('age unknown');
   }
 });
+
+it('labels a capped page as a sample and does not escalate a sample-only hot file', () => {
+  const view = backlogView({ ...snapshot, coverage: { limit: 3, scanned: 3, discarded: 0, complete: false } }, 0);
+  expect(view.countsLine).toContain('3 sampled PRs');
+  expect(view.coverageLine).toBe('Read 3 of up to 3 records. Total open PRs unknown.');
+  expect(view.danger).toBe(false);
+});
+
+it('does not infer an empty backlog from missing coverage metadata', () => {
+  const view = backlogView({ ...snapshot, items: [], coverage: undefined }, 0);
+  expect(view.complete).toBe(false);
+  expect(view.coverageLine).toContain('Total open PRs unknown');
+});

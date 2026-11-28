@@ -27,7 +27,7 @@ it('maps ok, 404 and 503 repos and requests only index names', async () => {
   });
   const result = await readRepoBacklogs();
   expect(result).toEqual([
-    { repo: 'example-org/alpha', state: 'ok', open: 4, dirty: 2, behind: 1, clean: 1, oldestDirtyAt: '2026-11-08T10:00:00Z' },
+    { repo: 'example-org/alpha', state: 'ok', complete: false, open: 4, dirty: 2, behind: 1, clean: 1, oldestDirtyAt: '2026-11-08T10:00:00Z' },
     expect.objectContaining({ repo: 'example-org/beta', state: 'not-enrolled' }),
     expect.objectContaining({ repo: 'example-org/gamma', state: 'unavailable' }),
   ]);
