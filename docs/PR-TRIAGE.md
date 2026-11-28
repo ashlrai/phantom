@@ -11,3 +11,24 @@ The read-only `prs.triage.v1` report contains `repo`, `generatedAt`, `complete` 
 For known verdicts, `evidence` contains the full fetched `headSha`, the tested `baseTipSha`, and their common `mergeBaseSha`. `proof` is `"reverse-patch"` only for `superseded`; it is otherwise null. When the observed head moves, inspection fails, or the verdict is unknown, `evidence` is null. These IDs describe the inspection, not current branch tips. Revalidate both tips before using a report to make any repository-management decision.
 
 A report freezes one fetched base tip per branch and fetches PR heads in groups of up to 25. If Git identifies a missing head in a batch, the remaining heads are retried individually against the same base. A timeout or unclassified fetch failure leaves the affected batch unknown. The report does not update, close, or merge any PR.
+
+## Offline three-way triage for a large queue
+
+When a trusted local checkout already has the exact PR commit objects, the
+batch utility avoids network calls and disposable checkouts. Save an explicit
+JSON snapshot of `[{"number":123,"headSha":"<40 lowercase hex>"}]` and pin the
+observed default-branch SHA:
+
+```sh
+python3 scripts/pr-tree-triage.py --repo /path/to/phantom --base "$BASE_SHA" --snapshot pr-heads.json
+```
+
+Each result binds the PR head SHA and the shared base SHA. The script writes
+only temporary Git objects, never updates refs, and never contacts GitHub.
+`clean-file-change` means the trial tree differs from base and Git reported
+no conflicts; it says nothing about tests, approval, or policy.
+`no-file-change` means the successful trial tree equals base, not that the
+PR is authorized to close: confirm the current exact revisions and rule out
+intentional reverts, history-only work and dependencies. A conflict remains a
+conflict even if the Git subprocess returned zero. Missing local objects,
+timed-out batches, and unrecognized output remain `unknown`.
