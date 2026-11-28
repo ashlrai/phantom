@@ -761,7 +761,8 @@ function budgetCredit(view: PoolBudgetView): FleetLaneCreditView {
 }
 
 function usageCredit(row: UsageJournalRow, nowMs: number): FleetLaneCreditView {
-  const fresh = row.pctUsed !== null && readingIsFresh({
+  const expired = row.resetAt !== null && Date.parse(row.resetAt) <= nowMs;
+  const fresh = !expired && row.pctUsed !== null && readingIsFresh({
     observedAt: row.observedAt, staleAfter: row.staleAfter, nowMs,
   });
   return {
@@ -771,8 +772,8 @@ function usageCredit(row: UsageJournalRow, nowMs: number): FleetLaneCreditView {
     remainingCredits: null,
     creditsUnit: null,
     resetAt: row.resetAt,
-    burnPerHour: row.burnPerHour,
-    projectedExhaustionAt: row.projectedExhaustionAt,
+    burnPerHour: expired ? null : row.burnPerHour,
+    projectedExhaustionAt: expired ? null : row.projectedExhaustionAt,
     observedAt: row.observedAt,
     source: fresh ? 'usage-journal' : null,
   };
