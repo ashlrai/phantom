@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   AGENT_CHAT_FRAME_BEGIN, AGENT_CHAT_FRAME_END, BUS_FEED_FRAME_BEGIN, BUS_FEED_FRAME_END,
   BUS_INBOX_FRAME_BEGIN, BUS_INBOX_FRAME_END,
-  BUS_INBOX_FRAME_MAX, MASON_INBOX_FRAME_BEGIN, MASON_INBOX_FRAME_END,
+  BUS_INBOX_FRAME_MAX, COMMS_DRAFTS_FRAME_BEGIN, COMMS_DRAFTS_FRAME_END,
+  MASON_INBOX_FRAME_BEGIN, MASON_INBOX_FRAME_END,
   OWNER_THREAD_FRAME_BEGIN, OWNER_THREAD_FRAME_END,
   frameAgentChat, frameBusChannelRead, frameBusInbox, frameBusWakes, frameBusWorkFeed,
-  frameCommsBusRead, frameMasonInboxRead, frameOwnerThread,
+  frameCommsBusRead, frameCommsDrafts, frameMasonInboxRead, frameOwnerThread,
 } from '../src/core/agents/bus-cli-adapters.js';
 import type { AgentWakeRow, ChannelReadMessage, InboxMessage } from '../src/core/agents/bus-unified.js';
 import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
@@ -38,6 +39,16 @@ describe('bus frame UTF-8 byte budget', () => {
     ['mason-inbox', MASON_INBOX_FRAME_BEGIN, MASON_INBOX_FRAME_END,
       (text: string) => frameMasonInboxRead('codex',
         Array(200).fill(`[2026-11-28 09:14 cli (cli-a1b2c3d4e5f6g7h8) P2] ${text}`))],
+    // 199 drafts plus the matched/shown/truncated summary tail make the
+    // 200 rows the omission-count assertion below is written against.
+    ['comms-drafts', COMMS_DRAFTS_FRAME_BEGIN, COMMS_DRAFTS_FRAME_END, (text: string) => frameCommsDrafts('codex', {
+      ok: true, matched: 199, truncated: false,
+      drafts: Array.from({ length: 199 }, (_, index) => ({
+        id: `d-${index}`, status: 'pending' as const, transport: 'email' as const,
+        recipient: 'reader@example.com', subject: `Draft ${index}`, body: text,
+        messageId: `m-${index}`, createdAt: '2026-01-01T00:00:00.000Z',
+      })),
+    })],
   ] as const;
 
   function envelope(text: string): BusEnvelope {
