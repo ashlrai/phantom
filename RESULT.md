@@ -1,20 +1,39 @@
-# RQ-DRAIN-PHX-REB-01 outcomes
+# RQ-DRAIN-PHX-REB-20 outcomes
 
-All six PRs were open and matched their supplied heads when inspected on 2026-11-24. Master used for merge-tree analysis: `11a917d5c872c86a2acd15f742a1f24efc2b4723`.
+No remote mutations were performed. All six PRs were verified OPEN at the supplied heads. No commit, push, tag, publication, merge-queue entry, auto-merge change, closure, or PR comment was made. The final no-commit/no-push instruction overrides the earlier delivery steps.
 
-| PR | Action | New head SHA | Hosted check status at unchanged head | Replacement URL if closed |
+The requested handoff directory could not be created: the filesystem returned Operation not permitted. This is the local fallback copy.
+
+| PR | Action | New head SHA | Check status | Replacement URL if closed |
 | --- | --- | --- | --- | --- |
-| [8564](https://github.com/ashlrai/phantom/pull/8564) | blocked | none; unchanged `0c6d0d4069e74411737b72ad0ffa0cd0c83a7c17` | Merge Gate and Fast gate success; merge conflicts | n/a |
-| [8544](https://github.com/ashlrai/phantom/pull/8544) | blocked | none; unchanged `a3d7c3469e4e50387b7ced6c82169ba692e169bf` | Merge Gate and Fast gate failure; merge conflicts | n/a |
-| [8491](https://github.com/ashlrai/phantom/pull/8491) | blocked | none; unchanged `787e7dd47e0768516e8e10b4c8affad368f4ba48` | Merge Gate and Fast gate success; merge conflicts | n/a |
-| [8376](https://github.com/ashlrai/phantom/pull/8376) | blocked | none; unchanged `bd9fccf1ce616f8876dddbd15f3afe133779ba6a` | Merge Gate and Fast gate success; merge conflicts | n/a |
-| [8319](https://github.com/ashlrai/phantom/pull/8319) | blocked | none; unchanged `787834a312e47348910e744bb27f2dcbe1227859` | Merge Gate and Fast gate failure; merge conflicts | n/a |
-| [8316](https://github.com/ashlrai/phantom/pull/8316) | blocked | none; unchanged `ec300acd1fef8fbcd6188fbd2f62fd175dc963d9` | Merge Gate, Fast gate and Quick typecheck failure; merge conflicts | n/a |
+| [7212](https://github.com/ashlrai/phantom/pull/7212) | blocked | unchanged: 3403a027c1c6f11ebfd9fe0b2d2d6aa8f6c638da | Superseded; shared UI validation 72 passed; closure unavailable | None: not closed |
+| [7197](https://github.com/ashlrai/phantom/pull/7197) | blocked | unchanged: e95bd97653b8bd8136088b784f0f5d850f58f580 | Local resolution: typecheck and targeted lint pass; API 2 passed, 57 failed on loopback EPERM | None |
+| [7193](https://github.com/ashlrai/phantom/pull/7193) | blocked | unchanged: 793172ea490766f1dcb27bcf60ac6f52604f1156 | Superseded; shared UI validation 72 passed; closure unavailable | None: not closed |
+| [7178](https://github.com/ashlrai/phantom/pull/7178) | blocked | unchanged: 6b472075a84bfdf73aa4fb04ba3cded1d0e5a561 | Superseded; shared UI validation 72 passed; closure unavailable | None: not closed |
+| [7171](https://github.com/ashlrai/phantom/pull/7171) | blocked | unchanged: 77cc17cb7451b08874916768bccbaf4b3f607bf7 | Superseded; shared UI validation 72 passed; closure unavailable | None: not closed |
+| [7169](https://github.com/ashlrai/phantom/pull/7169) | blocked | unchanged: 76d8df1c42a1b2ea531ac1367bb1b3617b4d1459 | Local resolution: 15 passed, typecheck and targeted lint pass; authority suite 9 passed, 1 failed (inherited CODEOWNERS drift) | None |
 
-Secret-shape scan, Secret scan (diff), generated-files and authority-drift checks succeeded at all six inspected heads. No check-run named exactly `secret-shape` or `clean-tree` appeared in these responses; no required-check configuration was read or changed. The separate Vercel commit status failed on all six; this is not a Merge Gate verdict.
+Hosted required-check status was not verified. No local result is a hosted Merge Gate, secret-shape, or clean-tree result.
 
-The final task instruction forbids commits, pushes, tags and publishing. No merge commit, push, auto-merge update, closure or PR comment was performed. The GitHub CLI could not read its protected configuration; connected tools available here provide GitHub reads only. Blocker comments could not be posted through those tools. All six remain open.
+## Verified supersession and ready closure text
 
-Supersession is not fully established. Merged [8569](https://github.com/ashlrai/phantom/pull/8569) replaces desktop-error recurrence with different IDs and validation. Open [8415](https://github.com/ashlrai/phantom/pull/8415) recovers the worker-session slice of 8376, including identical session-test blobs. Open [8409](https://github.com/ashlrai/phantom/pull/8409) explicitly covers only the skill-revert slice of 8316. None justifies claiming complete preservation of every change without further accounting. Conflict details are in notes.md.
+- #7212: `Superseded by https://github.com/ashlrai/phantom/pull/7661.` The added catch-up components, models, CSS and regression tests are identical; master already has the documentation and integration. Resolving the documentation conflict in master's favor leaves master's tree.
+- #7193: `Superseded by https://github.com/ashlrai/phantom/pull/7654.` The roster implementation, models and regression tests were recovered there; master contains newer session-thread following and beside-layout behavior.
+- #7178: `Superseded by https://github.com/ashlrai/phantom/pull/7201.` Readings implementation, model, CSS and regression tests are identical; newer Home integration and documentation are retained.
+- #7171: `Superseded by https://github.com/ashlrai/phantom/pull/7670.` Delivery implementation, model, CSS, tests and shared throughput queries are identical; newer throughput presentation remains.
 
-The requested external handoff directory could not be created: OS permission denied. This worktree-local RESULT.md is the fallback. No credentials were read or copied to work around access restrictions.
+These are verified replacement recommendations, not recorded closures. The GitHub app exposed read tools only. GitHub CLI initialization failed while reading its configuration. No credentials were copied and no authentication configuration was changed.
+
+## Unique changes prepared locally
+
+- #7197: [review-patches/7197.patch](review-patches/7197.patch), 4 files, +81/-3, net +78. Master's Router pane supersedes the old UI through #7651, but does not contain the single-reading batch budget-routes endpoint. Kept that endpoint, its types, contract and regression coverage. No authority guard or baseline was changed for this resolution.
+- #7169: [review-patches/7169.patch](review-patches/7169.patch), 12 files, +682/-1, net +681. Preserved outcome-based cohorts, bounded advisory weights, deduplicated append journal, CLI, tests and docs. Kept master's router outcomes dispatcher and merged tune alongside it. Regenerated CLI references and llms documentation with the repository generator. Retained the PR's pre-existing CODEOWNERS addition; it fails current generated-block drift. No authority regeneration, baseline change, closure allowlist change, or security-test weakening was used to repair that failure.
+
+The patches are independent diffs against master 587bb0ec9e9211c1d32d8ae1b693e313cc663c15. Both are also applied, uncommitted, in the final worktree on that detached master snapshot. They must remain separate PR updates. No merge is pending.
+
+Ready blocker comments, not posted:
+
+- #7197: `Blocked: batch routing endpoint resolved locally, but loopback EPERM prevents API verification and this job prohibits commits/pushes.`
+- #7169: `Blocked: local tests pass, but inherited CODEOWNERS drift remains; this job prohibits authority metadata fixes and commits/pushes.`
+
+Companion toolsUsed: []. GitHub app reads were used for PR metadata.

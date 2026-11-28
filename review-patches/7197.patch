@@ -1,0 +1,163 @@
+diff --git a/docs/VERSE-CONTRACT-V1.md b/docs/VERSE-CONTRACT-V1.md
+index 7647d8198c..c08d8ca645 100644
+--- a/docs/VERSE-CONTRACT-V1.md
++++ b/docs/VERSE-CONTRACT-V1.md
+@@ -325,7 +325,7 @@ only mounts them. Each module's header comment lists its own routes and is the a
+ | health (`verse/health-api.ts`) | `GET /api/verse/health` → `VerseHealthResponse`; `POST /api/verse/health/refresh`; `POST /api/verse/health/reconnect {seatId}` → 202 | Zero spend: status commands only. Reconnect opens the seat's own login in Terminal (10 s cooldown per seat; 501 off macOS). Readiness refusals elsewhere are 409 `{ error, code: 'seat-not-ready', readiness }`. |
+ | reasoning (`reasoning/reasoning-api.ts`) | `GET /api/reasoning/digest[?days=1..180]`; `GET /api/reasoning/steps?q=&sessionId=&limit=` | Read-only. The only reader of the local reasoning store outside the process; the store never feeds a prompt. Note the prefix is `/api/reasoning`, not `/api/verse`. |
+ | fleet history (`verse/fleet-history.ts`) | `GET /api/verse/fleet/history` | Daily projection (runs, proposals, verdicts, verification, authenticated merges) + scorecard trend. Incremental, async, time-sliced readers. |
+-| budget (`routing/budget-api.ts`) | `GET /api/verse/budget`; `POST /api/verse/budget` (one of `{mode}` \| `{seatId, policy}`); `GET /api/verse/budget/preview?task=&difficulty=&autonomous=[&contextTokens=]`; `GET /api/verse/budget/decisions[?limit=]`; `GET /api/verse/budget/history[?days=1..14]` (3.10.1, default 8) → `CapacityHistoryResponse`; `GET /api/verse/budget/readiness` (3.14) → `ResourceReadinessResponse` (`routing/readiness-types.ts`): per resource, ready for chat / for the fleet, with the one fix | Nothing spends. A read refreshes `~/.ashlr/routing/capacity.json` (throttled) so the daemon sees current windows — but only while this server's account collector is live (owned and running); otherwise it writes nothing and the daemon's own publisher samples (3.14). `/history` (`routing/capacity-history-api.ts`, wire shape in `routing/capacity-history-types.ts`) serves per-seat window series from `~/.ashlr/routing/capacity-history.jsonl` (rows kept 8 days), bounded to ≤ 32 series × ≤ 720 points; `days` outside 1..14 is a 400. It mounts inside the `budget` entry (`withCapacityHistory`), so the family's id and mount order are unchanged, and a 200 `GET /api/verse/budget` also records the snapshot it refreshed (throttled, after the response). |
++| budget (`routing/budget-api.ts`) | `GET /api/verse/budget`; `POST /api/verse/budget` (one of `{mode}` \| `{seatId, policy}`); `GET /api/verse/budget/preview?task=&difficulty=&autonomous=[&contextTokens=]`; `GET /api/verse/budget/routes[?autonomous=]` → `BudgetRoutesResponse` (`routing/types.ts`, schema `budget.routes.v1`: the preview's `SeatDecision` for every task at low, medium and high, routed against one capacity reading; not logged); `GET /api/verse/budget/decisions[?limit=]`; `GET /api/verse/budget/history[?days=1..14]` (3.10.1, default 8) → `CapacityHistoryResponse`; `GET /api/verse/budget/readiness` (3.14) → `ResourceReadinessResponse` (`routing/readiness-types.ts`): per resource, ready for chat / for the fleet, with the one fix | Nothing spends. A read refreshes `~/.ashlr/routing/capacity.json` (throttled) so the daemon sees current windows — but only while this server's account collector is live (owned and running); otherwise it writes nothing and the daemon's own publisher samples (3.14). `/history` (`routing/capacity-history-api.ts`, wire shape in `routing/capacity-history-types.ts`) serves per-seat window series from `~/.ashlr/routing/capacity-history.jsonl` (rows kept 8 days), bounded to ≤ 32 series × ≤ 720 points; `days` outside 1..14 is a 400. It mounts inside the `budget` entry (`withCapacityHistory`), so the family's id and mount order are unchanged, and a 200 `GET /api/verse/budget` also records the snapshot it refreshed (throttled, after the response). |
+ 
+ ### Workbench families (Track C)
+ 
+diff --git a/src/core/routing/budget-api.ts b/src/core/routing/budget-api.ts
+index 305fd7bbc7..c147c01fae 100644
+--- a/src/core/routing/budget-api.ts
++++ b/src/core/routing/budget-api.ts
+@@ -8,6 +8,8 @@
+  *                                            {mode} | {seatId, policy}
+  *   GET  /api/verse/budget/preview        → SeatDecision for a hypothetical
+  *        ?task=&difficulty=&autonomous=[&contextTokens=]
++ *   GET  /api/verse/budget/routes         → BudgetRoutesResponse: the preview for
++ *        [?autonomous=]                      every task and difficulty, one reading
+  *   GET  /api/verse/budget/decisions      → { decisions: ShadowDecisionRecord[] }
+  *        [?limit=]
+  *   GET  /api/verse/budget/readiness      → ResourceReadinessResponse (3.14): per
+@@ -91,6 +93,8 @@ import { VERSE_RESOURCE_READINESS_PATH, type ResourceReadinessResponse } from '.
+ import {
+   VERSE_BUDGET_PATH,
+   type BudgetPolicy,
++  type BudgetRoute,
++  type BudgetRoutesResponse,
+   type RoutingDifficulty,
+   type RoutingRequest,
+   type RoutingTask,
+@@ -104,6 +108,13 @@ export type { CapacityReading, CapacitySource };
+ export const VERSE_BUDGET_PREVIEW_PATH = `${VERSE_BUDGET_PATH}/preview`;
+ export { VERSE_RESOURCE_READINESS_PATH };
+ export const VERSE_BUDGET_DECISIONS_PATH = `${VERSE_BUDGET_PATH}/decisions`;
++export const VERSE_BUDGET_ROUTES_PATH = `${VERSE_BUDGET_PATH}/routes`;
++
++/** The pure router run once per task and difficulty. Decides nothing new and logs nothing. */
++export function buildBudgetRoutes(seats: CapacityReading['seats'], policy: BudgetPolicy, autonomous: boolean, nowMs: number): BudgetRoute[] {
++  return ROUTING_TASKS.flatMap((task) => ROUTING_DIFFICULTIES.map((difficulty) => (
++    { task, difficulty, decision: routeSeat({ task, difficulty, autonomous }, seats, policy, { nowMs }) })));
++}
+ 
+ /** The capacity snapshot is rewritten at most this often by request traffic. */
+ const SNAPSHOT_MIN_INTERVAL_MS = 15_000;
+@@ -364,7 +375,7 @@ function parsePreview(params: URLSearchParams): RoutingRequest | string {
+  */
+ export const handleBudgetApi: ApiModule = async (ctx, req, res, path, method) => {
+   if (path !== VERSE_BUDGET_PATH && path !== VERSE_BUDGET_PREVIEW_PATH && path !== VERSE_BUDGET_DECISIONS_PATH
+-    && path !== VERSE_RESOURCE_READINESS_PATH) {
++    && path !== VERSE_BUDGET_ROUTES_PATH && path !== VERSE_RESOURCE_READINESS_PATH) {
+     return false;
+   }
+   try {
+@@ -440,6 +451,24 @@ export const handleBudgetApi: ApiModule = async (ctx, req, res, path, method) =>
+       return true;
+     }
+ 
++    if (path === VERSE_BUDGET_ROUTES_PATH) {
++      const params = readQuery(req, res, ['autonomous']);
++      if (!params) return true;
++      const autonomous = params.get('autonomous') ?? 'true';
++      if (autonomous !== 'true' && autonomous !== 'false') {
++        sendInvalid(res, 'autonomous must be true or false');
++        return true;
++      }
++      const policy = loadPolicyForPanel();
++      const reading = await readCapacity(ctx.cfg);
++      const body: BudgetRoutesResponse = {
++        schema: 'budget.routes.v1', sampledAt: reading.sampledAt, autonomous: autonomous === 'true',
++        routes: buildBudgetRoutes(reading.seats, policy, autonomous === 'true', Date.now()),
++      };
++      sendJson(res, 200, body);
++      return true;
++    }
++
+     // VERSE_BUDGET_DECISIONS_PATH
+     const params = readQuery(req, res, ['limit']);
+     if (!params) return true;
+diff --git a/src/core/routing/types.ts b/src/core/routing/types.ts
+index 92338c88af..90620db3c7 100644
+--- a/src/core/routing/types.ts
++++ b/src/core/routing/types.ts
+@@ -211,6 +211,23 @@ export interface RoutingRequest {
+   autonomous: boolean;
+ }
+ 
++/** One cell of the route table: the router's answer for one kind of work. */
++export interface BudgetRoute {
++  task: RoutingTask;
++  difficulty: RoutingDifficulty;
++  decision: SeatDecision;
++}
++
++/** `GET /api/verse/budget/routes`: every task and difficulty routed against ONE capacity reading. */
++export interface BudgetRoutesResponse {
++  schema: 'budget.routes.v1';
++  /** When the usage the answers rest on was read. */
++  sampledAt: string;
++  autonomous: boolean;
++  /** Tasks in `ROUTING_TASKS` order, each at low, medium, high. */
++  routes: BudgetRoute[];
++}
++
+ /**
+  * Live headroom for one seat, as shown next to its budget policy. Every
+  * percent is 0–100 of that window; null = unknown (and therefore ineligible).
+diff --git a/test/routing-budget-api.test.ts b/test/routing-budget-api.test.ts
+index 1f6c1ab938..2d06efe891 100644
+--- a/test/routing-budget-api.test.ts
++++ b/test/routing-budget-api.test.ts
+@@ -30,7 +30,7 @@ import { defaultBudgetPolicy } from '../src/core/routing/policy.js';
+ import { capacitySnapshotPath, readCapacitySnapshot, readShadowDecisions } from '../src/core/routing/budget-store.js';
+ import type { SeatCapacity } from '../src/core/routing/headroom.js';
+ import type { BudgetView } from '../src/core/routing/policy.js';
+-import type { SeatDecision } from '../src/core/routing/types.js';
++import type { BudgetRoutesResponse, SeatDecision } from '../src/core/routing/types.js';
+ import type { AshlrConfig } from '../src/core/types.js';
+ import type { VerseApiContext } from '../src/core/verse/verse-api.js';
+ import { sanitizePublicJson } from '../src/core/util/public-json.js';
+@@ -339,6 +339,38 @@ describe('GET /api/verse/budget/preview', () => {
+   });
+ });
+ 
++describe('GET /api/verse/budget/routes', () => {
++  it('routes every task and difficulty on one reading, agreeing with the preview, without logging', async () => {
++    const { status, body } = await get<BudgetRoutesResponse>('/api/verse/budget/routes');
++    expect(status).toBe(200);
++    expect(body).toMatchObject({ schema: 'budget.routes.v1', autonomous: true, sampledAt: reading.sampledAt });
++    expect(body.routes.map((r) => `${r.task}/${r.difficulty}`)).toEqual(['code', 'review', 'plan', 'bulk', 'leader']
++      .flatMap((task) => ['low', 'medium', 'high'].map((difficulty) => `${task}/${difficulty}`)));
++    for (const route of body.routes.filter((r) => r.difficulty === 'medium')) {
++      const preview = await get<SeatDecision>(`/api/verse/budget/preview?task=${route.task}&difficulty=medium&autonomous=true`);
++      expect(route.decision).toEqual(preview.body);
++    }
++    expect(sourceCalls).toBeGreaterThan(0);
++    expect(readShadowDecisions(10)).toEqual([]);
++  });
++
++  it('routes for Mason\'s own request when autonomous=false', async () => {
++    const { body } = await get<BudgetRoutesResponse>('/api/verse/budget/routes?autonomous=false');
++    expect(body.autonomous).toBe(false);
++    const preview = await get<SeatDecision>('/api/verse/budget/preview?task=code&difficulty=high&autonomous=false');
++    expect(body.routes.find((r) => r.task === 'code' && r.difficulty === 'high')!.decision).toEqual(preview.body);
++  });
++
++  it.each(['autonomous=yes', 'task=code', 'autonomous=true&autonomous=false'])('refuses %s', async (query) => {
++    expect((await get(`/api/verse/budget/routes?${query}`)).status).toBe(400);
++  });
++
++  it('is GET only', async () => {
++    const res = await fetch(`${base}/api/verse/budget/routes`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-ashlr-token': TOKEN }, body: '{}' });
++    expect(res.status).toBe(404);
++  });
++});
++
+ describe('shadow decisions', () => {
+   it('routeSeatShadow logs a decision the decisions route then serves', async () => {
+     const decision = await routeSeatShadow({} as AshlrConfig, { task: 'code', difficulty: 'high', autonomous: true }, 'daemon',

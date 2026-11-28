@@ -8,6 +8,8 @@
  *                                            {mode} | {seatId, policy}
  *   GET  /api/verse/budget/preview        → SeatDecision for a hypothetical
  *        ?task=&difficulty=&autonomous=[&contextTokens=]
+ *   GET  /api/verse/budget/routes         → BudgetRoutesResponse: the preview for
+ *        [?autonomous=]                      every task and difficulty, one reading
  *   GET  /api/verse/budget/decisions      → { decisions: ShadowDecisionRecord[] }
  *        [?limit=]
  *   GET  /api/verse/budget/readiness      → ResourceReadinessResponse (3.14): per
@@ -91,6 +93,8 @@ import { VERSE_RESOURCE_READINESS_PATH, type ResourceReadinessResponse } from '.
 import {
   VERSE_BUDGET_PATH,
   type BudgetPolicy,
+  type BudgetRoute,
+  type BudgetRoutesResponse,
   type RoutingDifficulty,
   type RoutingRequest,
   type RoutingTask,
@@ -104,6 +108,13 @@ export type { CapacityReading, CapacitySource };
 export const VERSE_BUDGET_PREVIEW_PATH = `${VERSE_BUDGET_PATH}/preview`;
 export { VERSE_RESOURCE_READINESS_PATH };
 export const VERSE_BUDGET_DECISIONS_PATH = `${VERSE_BUDGET_PATH}/decisions`;
+export const VERSE_BUDGET_ROUTES_PATH = `${VERSE_BUDGET_PATH}/routes`;
+
+/** The pure router run once per task and difficulty. Decides nothing new and logs nothing. */
+export function buildBudgetRoutes(seats: CapacityReading['seats'], policy: BudgetPolicy, autonomous: boolean, nowMs: number): BudgetRoute[] {
+  return ROUTING_TASKS.flatMap((task) => ROUTING_DIFFICULTIES.map((difficulty) => (
+    { task, difficulty, decision: routeSeat({ task, difficulty, autonomous }, seats, policy, { nowMs }) })));
+}
 
 /** The capacity snapshot is rewritten at most this often by request traffic. */
 const SNAPSHOT_MIN_INTERVAL_MS = 15_000;
@@ -364,7 +375,7 @@ function parsePreview(params: URLSearchParams): RoutingRequest | string {
  */
 export const handleBudgetApi: ApiModule = async (ctx, req, res, path, method) => {
   if (path !== VERSE_BUDGET_PATH && path !== VERSE_BUDGET_PREVIEW_PATH && path !== VERSE_BUDGET_DECISIONS_PATH
-    && path !== VERSE_RESOURCE_READINESS_PATH) {
+    && path !== VERSE_BUDGET_ROUTES_PATH && path !== VERSE_RESOURCE_READINESS_PATH) {
     return false;
   }
   try {
@@ -437,6 +448,24 @@ export const handleBudgetApi: ApiModule = async (ctx, req, res, path, method) =>
       const policy = loadPolicyForPanel();
       const reading = await readCapacity(ctx.cfg);
       sendJson(res, 200, routeSeat(request, reading.seats, policy, { nowMs: Date.now() }));
+      return true;
+    }
+
+    if (path === VERSE_BUDGET_ROUTES_PATH) {
+      const params = readQuery(req, res, ['autonomous']);
+      if (!params) return true;
+      const autonomous = params.get('autonomous') ?? 'true';
+      if (autonomous !== 'true' && autonomous !== 'false') {
+        sendInvalid(res, 'autonomous must be true or false');
+        return true;
+      }
+      const policy = loadPolicyForPanel();
+      const reading = await readCapacity(ctx.cfg);
+      const body: BudgetRoutesResponse = {
+        schema: 'budget.routes.v1', sampledAt: reading.sampledAt, autonomous: autonomous === 'true',
+        routes: buildBudgetRoutes(reading.seats, policy, autonomous === 'true', Date.now()),
+      };
+      sendJson(res, 200, body);
       return true;
     }
 

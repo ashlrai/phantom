@@ -30,7 +30,7 @@ import { defaultBudgetPolicy } from '../src/core/routing/policy.js';
 import { capacitySnapshotPath, readCapacitySnapshot, readShadowDecisions } from '../src/core/routing/budget-store.js';
 import type { SeatCapacity } from '../src/core/routing/headroom.js';
 import type { BudgetView } from '../src/core/routing/policy.js';
-import type { SeatDecision } from '../src/core/routing/types.js';
+import type { BudgetRoutesResponse, SeatDecision } from '../src/core/routing/types.js';
 import type { AshlrConfig } from '../src/core/types.js';
 import type { VerseApiContext } from '../src/core/verse/verse-api.js';
 import { sanitizePublicJson } from '../src/core/util/public-json.js';
@@ -336,6 +336,38 @@ describe('GET /api/verse/budget/preview', () => {
   ])('refuses %s', async (query) => {
     const { status } = await get(`/api/verse/budget/preview?${query}`);
     expect(status).toBe(400);
+  });
+});
+
+describe('GET /api/verse/budget/routes', () => {
+  it('routes every task and difficulty on one reading, agreeing with the preview, without logging', async () => {
+    const { status, body } = await get<BudgetRoutesResponse>('/api/verse/budget/routes');
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ schema: 'budget.routes.v1', autonomous: true, sampledAt: reading.sampledAt });
+    expect(body.routes.map((r) => `${r.task}/${r.difficulty}`)).toEqual(['code', 'review', 'plan', 'bulk', 'leader']
+      .flatMap((task) => ['low', 'medium', 'high'].map((difficulty) => `${task}/${difficulty}`)));
+    for (const route of body.routes.filter((r) => r.difficulty === 'medium')) {
+      const preview = await get<SeatDecision>(`/api/verse/budget/preview?task=${route.task}&difficulty=medium&autonomous=true`);
+      expect(route.decision).toEqual(preview.body);
+    }
+    expect(sourceCalls).toBeGreaterThan(0);
+    expect(readShadowDecisions(10)).toEqual([]);
+  });
+
+  it('routes for Mason\'s own request when autonomous=false', async () => {
+    const { body } = await get<BudgetRoutesResponse>('/api/verse/budget/routes?autonomous=false');
+    expect(body.autonomous).toBe(false);
+    const preview = await get<SeatDecision>('/api/verse/budget/preview?task=code&difficulty=high&autonomous=false');
+    expect(body.routes.find((r) => r.task === 'code' && r.difficulty === 'high')!.decision).toEqual(preview.body);
+  });
+
+  it.each(['autonomous=yes', 'task=code', 'autonomous=true&autonomous=false'])('refuses %s', async (query) => {
+    expect((await get(`/api/verse/budget/routes?${query}`)).status).toBe(400);
+  });
+
+  it('is GET only', async () => {
+    const res = await fetch(`${base}/api/verse/budget/routes`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-ashlr-token': TOKEN }, body: '{}' });
+    expect(res.status).toBe(404);
   });
 });
 
