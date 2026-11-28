@@ -136,6 +136,25 @@ describe('readNodesDoctor', () => {
     expect(report.nodes.find(n => n.name === 'node-c')!.lanes.find(l => l.lane === 'local-model')!.status).toBe('unknown');
   });
 
+  it('a computer with no node records reports an unknown advertisement, not "not advertised"', async () => {
+    // node-c is on the tailnet but never joined this registry, so its lane
+    // advertisement is unknown — distinct from node-b, which joined and
+    // advertises codex only. The two must not share the "not advertised"
+    // wording: that asserts a negative we cannot see for node-c.
+    const pool: NodesRegistry = { source: 'pool-witness', selfNode: 'home-mac',
+      pool: { owner: 'acme', primary: 'primary-mac', backup: 'backup-mac' }, state: {
+        version: 'drive.nodes.v1', sequence: 1, observedAt: NOW - 1_000,
+        nodes: [{ nodeId: 'node-b', session: 1, heartbeatAt: NOW - 2_000, expiresAt: NOW + 30_000, caps: ['codex'], slots: 2 }],
+        leader: null, jobs: [] } };
+    const viewDeps: NodesViewDeps = { ...deps([['node-b', true], ['node-c', true]]), readRegistry: () => pool };
+    const report = await readNodesDoctor({ view: viewDeps, probe: fake({ 'home-mac': healthy() }) });
+    const b = report.nodes.find(n => n.name === 'node-b')!;
+    const c = report.nodes.find(n => n.name === 'node-c')!;
+    expect(b.lanes.find(l => l.lane === 'claude')!.reason).toContain('is not advertised');
+    expect(c.lanes.every(l => l.status === 'unknown' && l.reason?.includes('no node records in this registry'))).toBe(true);
+    expect(c.lanes.every(l => !l.reason?.includes('is not advertised'))).toBe(true);
+  });
+
   it('an expired record never vouches for disk; only a live session does', async () => {
     // node-b's only registry record is an expired session: the nodes view
     // already reports its memory/load as unknown, so the doctor's disk
