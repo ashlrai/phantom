@@ -2,9 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-const deps = vi.hoisted(() => ({ read: vi.fn(), configure: vi.fn(), call: vi.fn(), capacity: vi.fn(), worker: vi.fn() }));
+const deps = vi.hoisted(() => ({ read: vi.fn(), configure: vi.fn(), call: vi.fn(), capacity: vi.fn(), worker: vi.fn(), lanes: vi.fn() }));
 vi.mock('../src/core/drive/nodes/pool-host.js', () => ({ readPoolConfig: deps.read, configurePool: deps.configure, callPool: deps.call }));
-vi.mock('../src/core/drive/nodes/worker.js', () => ({ probeNodeLanes: () => ['codex'], runNodeWorker: deps.worker }));
+vi.mock('../src/core/drive/nodes/worker.js', () => ({ probeNodeLanes: deps.lanes, runNodeWorker: deps.worker }));
 vi.mock('../src/core/drive/nodes/capacity.js', () => ({ readNodeCapacity: deps.capacity }));
 import { cmdNode } from '../src/cli/node.js';
 import { cmdNodePool } from '../src/cli/node-pool.js';
@@ -14,6 +14,7 @@ beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
   deps.read.mockReturnValue(config);
   deps.capacity.mockReturnValue({ slots: 2, held: null });
+  deps.lanes.mockReturnValue(['codex']);
   deps.call.mockImplementation((_config, verb) => ({ demoted: false, result: verb === 'join' ? { session: 3 } : { left: true } }));
 });
 describe('repeatable Mac enrollment', () => {
@@ -243,5 +244,36 @@ describe('repeatable Mac enrollment', () => {
     expect(await cmdNodePool('join', ['--primary', 'primary-mac', '--backup', 'backup-mac', '--owner', 'mason', '--json'])).toBe(1);
     const out = JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]);
     expect(out).toMatchObject({ registered: true, configured: false, error: { code: 'error' } });
+  });
+  it('names why a registered join is not ready when no sign-in lanes were detected', async () => {
+    deps.lanes.mockReturnValue([]);
+    expect(await cmdNodePool('join', ['--json'])).toBe(0);
+    const out = JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]);
+    expect(out).toMatchObject({ registered: true, ready: false, lanes: [] });
+    expect(out.note).toContain('no capabilities');
+    expect(out.note).toContain('phm node join --json');
+  });
+  it('names the capacity hold keeping a registered join from taking work', async () => {
+    deps.capacity.mockReturnValue({ slots: 0, held: 'memory-pressure' });
+    expect(await cmdNodePool('join', ['--json'])).toBe(0);
+    const out = JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]);
+    expect(out).toMatchObject({ registered: true, ready: false });
+    expect(out.note).toContain('memory pressure');
+    expect(out.note).toContain('phm node measure');
+  });
+  it('keeps a ready join quiet and still warns when the probe release fails', async () => {
+    expect(await cmdNodePool('join', ['--json'])).toBe(0);
+    const ready = JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]);
+    expect(ready).toMatchObject({ registered: true, ready: true });
+    expect(ready.note).toBeUndefined();
+    deps.call.mockImplementation((_config, verb) => {
+      if (verb === 'leave') throw new Error('offline');
+      return { demoted: false, result: verb === 'join' ? { session: 3 } : { nodes: [] } };
+    });
+    deps.lanes.mockReturnValue([]);
+    expect(await cmdNodePool('join', ['--json'])).toBe(0);
+    const both = JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]);
+    expect(both.note).toContain('node-already-live once');
+    expect(both.note).toContain('no capabilities');
   });
 });

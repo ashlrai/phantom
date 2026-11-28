@@ -2725,6 +2725,18 @@ with valid outcome counts. Otherwise they are `null`, and the placement
 score uses the neutral prior. See
 [measured capacity and routing](docs/NODE-ROUTER.md#measured-capacity-and-node-provider-model-routing).
 
+## Node pool join readiness note
+
+`src/core/drive/nodes/pool-readiness.ts` exports
+`poolJoinReadinessNote(lanes, capacity)`. A pool `phm node join` enrollment
+that registers but reports `ready: false` carries a `note` naming why the
+node will sit idle: no detected codex/claude sign-in or enabled local model
+lane (the join advertised no capabilities), a reported capacity hold, or
+both — each with its fix (`phm node join --json` again after signing in or
+configuring a lane, `phm node measure` for the hold). A ready join carries
+no readiness note; when both apply it shares the reply's `note` field with
+the probe-session release warning.
+
 ## Router calibration
 
 `src/core/routing/calibration.ts` returns schema-version-1 calibration reports.
