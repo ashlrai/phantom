@@ -141,9 +141,13 @@ describe('phm fleet launches and its route', () => {
     const { code, out } = await run('--runs-dir', runs, '--json');
     expect(code).toBe(0);
     const report = JSON.parse(out) as LaunchRateReport;
-    expect(Object.keys(report)).toEqual(['schema', 'as_of', 'hours', 'metrics', 'plans', 'waste_rule', 'starts', 'starts_per_hour', 'longest_gap', 'wasted_starts', 'lanes', 'headline', 'recommendations']);
+    expect(Object.keys(report)).toEqual(['schema', 'as_of', 'hours', 'metrics', 'plans', 'waste_rule', 'starts', 'starts_per_hour', 'longest_gap', 'wasted_starts', 'lanes', 'relaunches', 'repeat_jobs', 'headline', 'recommendations']);
     expect(report).toMatchObject({ schema: 'fleet.launches.v1', hours: 24, metrics: 'ok', plans: 'ok', waste_rule: { merged_per_start_under: 0.1, min_starts_24h: 10 }, starts: 20, wasted_starts: 12 });
-    expect(Object.keys(report.lanes[0]!)).toEqual(['lane', 'starts', 'merged', 'merged_per_start', 'starts_24h', 'merged_24h', 'merged_per_start_24h', 'wasted', 'used_frac', 'reset_hours']);
+    expect(Object.keys(report.lanes[0]!)).toEqual(['lane', 'starts', 'merged', 'merged_per_start', 'starts_24h', 'merged_24h', 'merged_per_start_24h', 'starts_per_merged_pr', 'wasted', 'used_frac', 'reset_hours']);
+    expect(report.repeat_jobs).toEqual([]);
+    expect(report.relaunches['RQ-C0']?.launches).toBe(1);
+    expect(laneOf(report, 'claude')?.starts_per_merged_pr).toBe(2);
+    expect(laneOf(report, 'zai')?.starts_per_merged_pr).toBeNull();
     expect(Object.keys(report.longest_gap!)).toEqual(['from', 'to', 'minutes']);
     expect(report.recommendations[0]).toBe('zai took 12 of 20 starts in 24 h and merged 0; send its rows to claude (9% used, 48 h left).');
     const text = await run('--runs-dir', runs, '--hours', '6');
