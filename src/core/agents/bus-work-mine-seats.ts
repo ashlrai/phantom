@@ -17,26 +17,11 @@
  * bare synchronous result rather than reporting a section it never read.
  */
 import { agentLabels, readAgentRegistry, resolveAgent } from './bus-identity.js';
-import { planSeatHandoffs, type SeatHandoff, type SeatHandoffsPlan, type SeatOptions } from '../bots/seats.js';
-import { scrubSecrets } from '../util/scrub.js';
+import { planSeatHandoffs, seatHandoffContainsMatch, type SeatHandoffsPlan, type SeatOptions } from '../bots/seats.js';
 import { readBusWorkMine, type BusWorkMineOptions, type BusWorkMineResult, type BusWorkMineSeat, type BusWorkMineSeats } from './bus-work-mine.js';
 
 /** Seats with pending handoffs a digest shows; `matched` keeps the true total. */
 const WORK_MINE_SEATS_MAX = 20;
-
-/**
- * The `--contains` verdict for one pending seat handoff, decided on the only
- * descriptive fields the record carries — the held work's ref, branch and
- * pull request, scrubbed and normalized like every other bus `--contains`
- * haystack. Seat id, participant, state and handoff id are routing labels,
- * statuses and record ids, never search text; a handoff whose fields name
- * no match drops out and `matched` recounts, so every count stays the
- * filtered total.
- */
-function seatHandoffContainsMatch(handoff: SeatHandoff, needle: string): boolean {
-  return scrubSecrets(`${handoff.work.ref} ${handoff.branch ?? ''} ${handoff.pr ?? ''}`)
-    .toLowerCase().replace(/\s+/g, ' ').includes(needle);
-}
 
 /**
  * Shape one seat-handoff plan into the digest section. `denotes` is the

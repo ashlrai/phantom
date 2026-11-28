@@ -456,6 +456,91 @@ export interface SeatHandoffsPlan {
   schema: 'phantom-bot-handoffs-plan.v1';
   apply: false;
   seats: SeatHandoffPlanEntry[];
+  /** Echo of the read filter a filtered view applied — absent on the
+   * whole-roster plan `planSeatHandoffs` returns unfiltered, present on
+   * every `filterSeatHandoffsPlan` result that named at least one
+   * predicate, so a consumer can always tell a slice from the roster. */
+  filter?: SeatHandoffsFilter;
+}
+
+/** The read filters `filterSeatHandoffsPlan` applies to a
+ * `planSeatHandoffs` snapshot. Each field narrows the seat slice it names;
+ * nothing fabricates seats or records, and a filter that matches nothing is
+ * an honestly empty `seats` list, never an error or an invented roster. */
+export interface SeatHandoffsFilter {
+  /** Exact seat id or bus participant label; absent keeps every seat. */
+  seat?: string;
+  /** Projected lifecycle state; absent keeps every state. */
+  state?: SeatState['state'];
+  /** Keep only seats with this eligibility verdict — `true` the seats
+   * apply would accept, `false` the seats it would refuse; absent keeps
+   * both. */
+  eligible?: boolean;
+  /** Keep only seats still carrying at least one pending handoff record,
+   * evaluated after `contains` narrows each seat's records; `false` keeps
+   * only seats with none. */
+  pending?: boolean;
+  /** Normalized case-insensitive needle over each record's held-work text;
+   * a seat stays only while at least one of its records matches, and its
+   * `handoffs` list narrows to the matches. */
+  contains?: string;
+}
+
+/**
+ * Whether one pending handoff record's held-work text carries the needle —
+ * `work.ref`, `branch` and `pr` scrubbed and normalized like every other bus
+ * `--contains` haystack. Seat id, participant, state and handoff id are
+ * routing labels, statuses and record ids, never search text; a record whose
+ * fields name no match drops out, the same rule `work mine`'s seats section
+ * applies.
+ */
+export function seatHandoffContainsMatch(handoff: SeatHandoff, needle: string): boolean {
+  return scrubSecrets(`${handoff.work.ref} ${handoff.branch ?? ''} ${handoff.pr ?? ''}`)
+    .toLowerCase().replace(/\s+/g, ' ').includes(needle);
+}
+
+/**
+ * Narrow a `planSeatHandoffs` snapshot to the seats a read filter names —
+ * the same projection `phm bots handoffs` serves under its filter flags, so
+ * the CLI and any programmatic caller share one rule. `seat` matches the
+ * config seat id or the bus participant label exactly; `state`, `eligible`
+ * and `pending` are seat-level predicates; `contains` is record-level — it
+ * keeps only matching handoff records and drops seats left with none, the
+ * same slice `work mine`'s seats section and the unified inbox's seat items
+ * already compute. Read-only: the input plan is not mutated and no store is
+ * touched; the result echoes the applied `filter` whenever at least one
+ * predicate was named.
+ */
+export function filterSeatHandoffsPlan(plan: SeatHandoffsPlan, filter: SeatHandoffsFilter): SeatHandoffsPlan {
+  // Resolve the filter once: `contains` normalizes to the same
+  // case-insensitive, whitespace-collapsed needle every bus `--contains`
+  // read applies, and a needle that normalizes to nothing is no predicate
+  // at all — dropped from the applied filter rather than matching every
+  // record while echoing an empty search.
+  const applied: SeatHandoffsFilter = {};
+  if (filter.seat !== undefined) applied.seat = filter.seat;
+  if (filter.state !== undefined) applied.state = filter.state;
+  if (filter.eligible !== undefined) applied.eligible = filter.eligible;
+  if (filter.pending !== undefined) applied.pending = filter.pending;
+  const needle = filter.contains?.toLowerCase().replace(/\s+/g, ' ').trim();
+  if (needle !== undefined && needle !== '') applied.contains = needle;
+  const seats = plan.seats.flatMap(entry => {
+    const handoffs = applied.contains === undefined ? entry.handoffs
+      : entry.handoffs.filter(h => seatHandoffContainsMatch(h, applied.contains!));
+    // A contains query asks "who holds this work": a seat left with no
+    // matching record has nothing to show and drops out, the same slice
+    // `work mine`'s seats section computes.
+    if (applied.contains !== undefined && handoffs.length === 0) return [];
+    if (applied.seat !== undefined && entry.seatId !== applied.seat && entry.participantId !== applied.seat) return [];
+    if (applied.state !== undefined && entry.state !== applied.state) return [];
+    if (applied.eligible !== undefined && entry.eligible !== applied.eligible) return [];
+    if (applied.pending !== undefined && (handoffs.length > 0) !== applied.pending) return [];
+    return [{ ...entry, handoffs }];
+  });
+  const filtered: SeatHandoffsPlan = { schema: plan.schema, apply: plan.apply, seats,
+    ...(Object.keys(applied).length === 0 ? {} : { filter: applied }) };
+  assertMetadata(JSON.stringify({ ...filtered, seats: filtered.seats.map(({ handoffs, ...rest }) => ({ ...rest, handoffs: handoffs.map(({ handoffId: _id, ...h }) => h) })) }));
+  return filtered;
 }
 
 /**
