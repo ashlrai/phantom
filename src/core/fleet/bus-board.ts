@@ -167,8 +167,10 @@ export interface BusBoardOptions {
  * `sinceMs`/`beforeMs` are the same `[since, before)` window on each
  * delivery's `createdAt` every bus read's `--since`/`--before` applies,
  * `contains` the same normalized `--contains` needle over the post text
- * `busBoardDeliveryText` extracts, and `from`/`excludeFrom` the same
- * `--from`/`--exclude-from` sender rule. Peer labels compare exactly: a label no board peer carries
+ * `busBoardDeliveryText` extracts, `from`/`excludeFrom` the same
+ * `--from`/`--exclude-from` sender rule, and `id` the same exact
+ * retained-envelope match `board pending --id` applies. Peer labels
+ * compare exactly: a label no board peer carries
  * simply matches nothing under `from` and excludes nothing under
  * `excludeFrom`.
  */
@@ -178,12 +180,22 @@ export interface BusBoardDeliveryFilter {
   contains?: string;
   from?: string;
   excludeFrom?: string;
+  /** Keep only the delivery whose stored `id` — the wire envelope id `hops`
+   * reports as `envelopeId` and `ack` consumes — strictly equals this value. */
+  id?: string;
 }
 
-/** Optional read slice for `receipts`: the same `[since, before)` window on each receipt's `receivedAt`. */
+/**
+ * Optional read slice for `receipts`: the same `[since, before)` window on
+ * each receipt's `receivedAt`, plus `id` keeping only receipts whose
+ * `deliveryId` — the wire envelope id of the acknowledged delivery —
+ * strictly equals it, the sender-side "was that delivery acknowledged"
+ * read `board pending --id` answers fleet-wide.
+ */
 export interface BusBoardReceiptFilter {
   sinceMs?: number;
   beforeMs?: number;
+  id?: string;
 }
 
 /**
@@ -465,14 +477,19 @@ export class BusBoard {
    * The threads `actor` joined. `contains`, when given, is the normalized
    * `--contains` needle `board pending` applies — a thread stays only when
    * its stored title carries it under the same scrubbed display-text rule;
-   * threads record no timestamp, so no time bound applies here.
+   * threads record no timestamp, so no time bound applies here. `jobId`,
+   * when given, is the same fleet-item citation `board pending --job`
+   * applies — a thread stays only when it carries a task whose `itemId`
+   * equals it.
    */
-  listThreads(actor: string, contains?: string): BusThreadView[] {
+  listThreads(actor: string, contains?: string, jobId?: string): BusThreadView[] {
     actor = this.peer(actor);
     const textHit = boardContainsMatcher(contains);
     return this.transaction(false, (state) => state.threads
       .filter((thread) => thread.members.includes(actor) &&
-        (textHit === undefined || textHit(thread.title)))
+        (textHit === undefined || textHit(thread.title)) &&
+        (jobId === undefined || state.tasks.some((task) =>
+          task.threadId === thread.id && task.itemId === jobId)))
       .map((thread) => ({
         id: thread.id, members: [...thread.members],
         content: { trust: 'untrusted', text: presentBusBoardText(thread.title) },
@@ -517,8 +534,9 @@ export class BusBoard {
    * optional filters — `sinceMs`/`beforeMs` keep only
    * deliveries whose `createdAt` falls inside the `[since, before)` window,
    * `contains` keeps only posts whose `busBoardDeliveryText` carries the
-   * normalized needle, and `from`/`excludeFrom` keep or drop deliveries by
-   * the stored `sender` peer label — so a thread read narrows exactly the
+   * normalized needle, `from`/`excludeFrom` keep or drop deliveries by
+   * the stored `sender` peer label, and `id` keeps only the delivery whose
+   * stored `id` strictly equals it — so a thread read narrows exactly the
    * way the digest does. `content.text` still returns the re-wrapped
    * untrusted display frame; filtering never acknowledges anything.
    */
@@ -533,6 +551,7 @@ export class BusBoard {
           (!pendingOnly || !acknowledged.has(delivery.id)) &&
           boardTimeWindowHit(delivery.createdAt, filter?.sinceMs, filter?.beforeMs) &&
           boardSenderHit(delivery.sender, filter?.from, filter?.excludeFrom) &&
+          (filter?.id === undefined || delivery.id === filter.id) &&
           (textHit === undefined || textHit(busBoardDeliveryText(delivery))))
         .map((delivery) => ({
           ...delivery,
@@ -560,7 +579,9 @@ export class BusBoard {
   /**
    * Only the sender sees receipt metadata for its own deliveries.
    * `filter.sinceMs`/`beforeMs` keep only receipts whose `receivedAt` falls
-   * inside the same `[since, before)` window every bus read applies.
+   * inside the same `[since, before)` window every bus read applies, and
+   * `filter.id` keeps only receipts whose `deliveryId` — the wire envelope
+   * id of the acknowledged delivery — strictly equals it.
    */
   receipts(actor: string, threadId: string, filter?: BusBoardReceiptFilter): BoardReceipt[] {
     actor = this.peer(actor);
@@ -569,7 +590,8 @@ export class BusBoard {
       const sent = new Set(state.deliveries.filter((row) => row.threadId === threadId && row.sender === actor).map((row) => row.id));
       return (state.receipts ?? [])
         .filter((row) => sent.has(row.deliveryId) &&
-          boardTimeWindowHit(row.receivedAt, filter?.sinceMs, filter?.beforeMs))
+          boardTimeWindowHit(row.receivedAt, filter?.sinceMs, filter?.beforeMs) &&
+          (filter?.id === undefined || row.deliveryId === filter.id))
         .map((row) => ({ ...row }));
     });
   }
@@ -900,15 +922,18 @@ export class BusBoard {
    * The thread's tasks. `contains`, when given, is the normalized
    * `--contains` needle `board pending` applies — a task stays only when
    * its stored title carries it under the same scrubbed display-text rule;
-   * tasks record no timestamp, so no time bound applies here.
+   * tasks record no timestamp, so no time bound applies here. `jobId`,
+   * when given, is the same fleet-item citation `board pending --job`
+   * applies — a task stays only when its `itemId` equals it.
    */
-  listTasks(actor: string, threadId: string, contains?: string): BusTaskView[] {
+  listTasks(actor: string, threadId: string, contains?: string, jobId?: string): BusTaskView[] {
     actor = this.peer(actor);
     const textHit = boardContainsMatcher(contains);
     return this.transaction(false, (state) => {
       this.member(state, threadId, actor);
       return state.tasks
         .filter((task) => task.threadId === threadId &&
+          (jobId === undefined || task.itemId === jobId) &&
           (textHit === undefined || textHit(task.title)))
         .map((task) => this.taskView(task));
     });
