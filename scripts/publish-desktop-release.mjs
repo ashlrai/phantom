@@ -156,9 +156,7 @@ export async function applyDesktopReleasePublication(result, dependencies) {
   unchangedArtifacts(observed);
   let releaseId = plan.releaseId;
   if (plan.create) {
-    const latest = await transport.githubReadOrNull(`${base}/releases/latest`);
-    const fields = { tag_name: tag, target_commitish: m.source.revision, name: `Phantom ${m.version}`, draft: true, prerelease: false, generate_notes: true };
-    if (object(latest) && TAG.test(latest.tag_name ?? '')) fields.notes_start_tag = latest.tag_name;
+    const fields = { tag_name: tag, target_commitish: m.source.revision, name: `Phantom ${m.version}`, draft: true, prerelease: false, generate_release_notes: true };
     let created = null;
     try { created = await transport.githubWrite('POST', `${base}/releases`, fields); }
     catch (error) {
