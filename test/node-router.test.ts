@@ -725,6 +725,27 @@ describe('phm node CLI', () => {
     expect(bootstrapHelp.out).not.toContain('phm node bridge [--owner');
   });
 
+  it('replica sync with no configured leader names the missing precondition', async () => {
+    // `replica` needs no pool enrollment, so a machine that never ran join or
+    // pool can reach sync. With nothing configured every status field stays
+    // null; the reply must say why it failed and how to fix it like every
+    // other node refusal, not exit 1 on a silent all-null object.
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
+    vi.stubEnv('ASHLR_HOME', dir);
+    const synced = await cli('replica', 'sync', '--json');
+    expect(synced.code).toBe(1);
+    const out = JSON.parse(synced.out);
+    expect(out).toMatchObject({ schema: 'fleet.replica.status.v1', leader: null, lastAttemptAt: null });
+    expect(out.error).toMatchObject({ code: 'no-leader', fix: expect.stringContaining('--leader') });
+
+    // `status` stays a plain read: the same all-null view, exit 0, no error.
+    const status = await cli('replica', 'status', '--json');
+    expect(status.code).toBe(0);
+    const view = JSON.parse(status.out);
+    expect(view).toMatchObject({ leader: null });
+    expect(view.error).toBeUndefined();
+  });
+
   it('help advertises the embedded-task enqueue flags a producer needs', async () => {
     // The codex-file task path is how a job carries real work to a node; it
     // must be discoverable from `phm node --help`, not only from source.
