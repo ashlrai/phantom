@@ -852,6 +852,39 @@
  *               degraded ready read still lists every event-proven job
  *               but marks the source 'degraded' — lane attribution is a
  *               floor, never a complete set.
+ *   apps-recovery  apps-watch supervision runs whose retained verdict is
+ *               still an open incident — the same
+ *               `readAppsRecoveryInvocations`/`appsRecoveryVerdict` fold
+ *               `phm fleet apps-recovery-state`, `apps-recovery-check`,
+ *               `apps-recovery-wait`, `apps-recovery-batch` and `phm fleet
+ *               glance` serve, over the runs bus-inbox's retained
+ *               `apps-watch.*` events, so this source and those surfaces
+ *               can never disagree. Until now a failing or silent
+ *               supervision run had no item-level surface here: the bus
+ *               source lists only pending envelopes, and the glance is a
+ *               status line an agent had to already know to run — while a
+ *               watch cycling against dead apps or one that stopped
+ *               reporting sat invisible in the one view an agent checks
+ *               for work. A live invocation whose last observation failed
+ *               lists as warn `apps-recovery-retrying` naming the apps
+ *               still down, a live one silent past the 30-minute freshness
+ *               bound as warn `apps-recovery-silent`, and a terminal
+ *               `failed` outcome inside the same 24-hour window its bus
+ *               announcement TTL carries as high `apps-recovery-failed` —
+ *               `since` the invocation's latest retained event time and
+ *               `expiresAt` null for live rows (an unhealthy or silent
+ *               run waits for repair, never a guessed deadline) or the
+ *               announcement window's end for a failed one. Completed and
+ *               cancelled runs, healthy and unknown verdicts never list:
+ *               a finished run is history its summary already announced,
+ *               and an unproven verdict is unknown, never a fabricated
+ *               incident. A history read that is not 'available' — an
+ *               unreadable or invalid-cursor store — is 'unavailable'
+ *               (pending null), a truncated scan 'degraded' with the
+ *               proven verdicts still listed as a floor. No item names a
+ *               job and none is Mason-blocking. Act: `phm fleet
+ *               apps-recovery-check --invocation <id> --max-age-ms
+ *               1800000 --json`, `phm fleet apps-recovery-state --json`.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -939,6 +972,8 @@ import type { StuckJob as DispatchStuckJob } from '../fleet/stuck-jobs.js';
 import { isDependencyParkedReason, readFleetQueue, type FleetQueueV1, type ParkedGroup, type ParkedMetDep, type ParkedUnmetDep } from '../fleet/runs-parked-queue.js';
 import { readChannelHealth } from '../fleet/channel-health.js';
 import { readTelegramHealth, telegramEnabled } from '../integrations/telegram.js';
+import { readAppsRecoveryInvocations } from '../fleet/apps-recovery-invocations.js';
+import { appsRecoveryVerdict } from '../fleet/apps-recovery-verdict.js';
 
 export const UNIFIED_INBOX_MAX_ITEMS = 200;
 /** Longest `--contains` needle the unified view accepts; the title/detail text it matches is already bounded far shorter. */
@@ -960,7 +995,7 @@ export const UNIFIED_INBOX_SOURCES = [
   'peer-dispatch', 'peer-inbox', 'session-handoff', 'org-outbox', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack',
   'slack-sends', 'leader-delivery', 'leader-network', 'leader-replies', 'coordination', 'claim-drift',
   'send-gate', 'router-queue', 'jobs-stuck', 'channel-health', 'queue-parked',
-  'stuck-fixes', 'stranded-work', 'dispatch-stuck',
+  'stuck-fixes', 'stranded-work', 'dispatch-stuck', 'apps-recovery',
 ] as const;
 export type UnifiedInboxSource = (typeof UNIFIED_INBOX_SOURCES)[number];
 export const isUnifiedInboxSource = (value: string): value is UnifiedInboxSource =>
@@ -995,6 +1030,7 @@ export const UNIFIED_INBOX_KINDS = [
   'channel-blocked', 'channel-degraded', 'channel-unknown',
   'parked-dep-waiting', 'parked-dep-stale', 'parked-group', 'stuck-fix',
   'stranded-worktree', 'dispatch-stuck',
+  'apps-recovery-retrying', 'apps-recovery-silent', 'apps-recovery-failed',
 ] as const;
 export type UnifiedInboxKind = (typeof UNIFIED_INBOX_KINDS)[number];
 export const isUnifiedInboxKind = (value: string): value is UnifiedInboxKind =>
@@ -1230,6 +1266,13 @@ export interface DispatchStuckSourceRead {
   jobs: readonly DispatchStuckJob[];
 }
 
+/** The resolved apps-recovery read: `readAppsRecoveryInvocations`'s retained
+ * apps-watch projection verbatim — `availability` 'unavailable' or
+ * 'invalid-cursor' leaves the invocation set unknown ('unavailable',
+ * pending null), 'available' with `truncated` a partial scan ('degraded',
+ * the proven verdicts a floor), 'available' untruncated the full read. */
+export type AppsRecoverySourceRead = ReturnType<typeof readAppsRecoveryInvocations>;
+
 /** The resolved shared-board read: `BusBoard.pendingAll`'s fleet-wide digest
  * when the store could be read — 'missing' is a verified-empty board (no
  * `state.json` ever written), 'unavailable' an unreadable one, never an
@@ -1406,6 +1449,12 @@ export interface UnifiedInboxOptions {
    * `readDispatchStuckJobs` — the same bounded read `phm fleet stuck`
    * and the `fleet.stuck.v1` row of `phm fleet vitals` serve. */
   readDispatchStuck?: (options: { runsDir?: string; now?: () => number }) => Promise<DispatchStuckSourceRead>;
+  /** Apps-recovery seam; default reads `<runsDir>/bus-inbox` through
+   * `readAppsRecoveryInvocations` — the same retained apps-watch projection
+   * `phm fleet apps-recovery-state`, `apps-recovery-check`,
+   * `apps-recovery-wait`, `apps-recovery-batch` and `phm fleet glance`
+   * serve. */
+  readAppsRecovery?: (options: { runsDir?: string; now?: () => number }) => AppsRecoverySourceRead;
   /** Channel-health seam; default reads `readChannelHealth` — the same
    * slack/imessage bridge projection `phm fleet channel-health` and
    * `phm channels` serve. */
@@ -4757,6 +4806,130 @@ async function readDispatchStuckSource(options: { runsDir?: string; now?: () => 
   }
 }
 
+/** The freshness bound a live invocation's verdict is judged against — the
+ * same 30-minute `maxAgeMs` `phm fleet apps-recovery-check` callers and the
+ * operator glance pass by convention: older than this with no terminal
+ * outcome, the run is 'stale' (silent), never 'healthy'. */
+const APPS_RECOVERY_MAX_AGE_MS = 30 * 60_000;
+/** A terminal-'failed' verdict lists only inside the same 24-hour window the
+ * apps-watch/apps-recovery-bus announcement envelopes carry as their TTL —
+ * the failure stays a pending incident while its announcement would still be
+ * live on the bus, then ages out of the view like the envelope itself. */
+const APPS_RECOVERY_FAILED_WINDOW_MS = 24 * 3_600_000;
+
+/** The app names an incident line carries — the same rule
+ * `appsRecoveryIncident` applies: apps whose retained observation is not
+ * provably running, falling back to the observed list, first three names
+ * plus a "+N" tail, 'apps' when the store kept none. */
+function appsRecoveryIncidentApps(row: AppsRecoverySourceRead['invocations'][number]): string {
+  const down = row.retainedObservedState?.filter(item => item.observedRunning !== true).map(item => item.app);
+  const names = down !== undefined && down.length > 0 ? down : row.observedApps ?? [];
+  return names.length === 0 ? 'apps'
+    : names.slice(0, 3).join(', ') + (names.length > 3 ? ` +${names.length - 3}` : '');
+}
+
+/**
+ * Apps-watch supervision runs whose retained verdict is still an open
+ * incident — the same `readAppsRecoveryInvocations`/`appsRecoveryVerdict`
+ * fold `phm fleet apps-recovery-state`, `apps-recovery-check`,
+ * `apps-recovery-wait`, `apps-recovery-batch` and `phm fleet glance` serve,
+ * over `<runsDir>/bus-inbox`'s retained `apps-watch.*` events, so this
+ * source and those surfaces can never disagree. Until now a failing or
+ * silent supervision run had no item-level surface here: the bus source
+ * lists only pending envelopes, and the glance is a status line an agent
+ * had to already know to run — while a watch cycling against dead apps or
+ * one that stopped reporting sat invisible in the one view an agent checks
+ * for work. A live invocation (`terminalOutcome` null) whose verdict is
+ * 'unhealthy' lists as warn `apps-recovery-retrying` naming the apps still
+ * down, one 'stale' — silent past the freshness bound — as warn
+ * `apps-recovery-silent`; a 'terminal' verdict lists only on
+ * `terminalOutcome === 'failed'` inside the announcement window as high
+ * `apps-recovery-failed` — 'completed'/'cancelled' runs are finished
+ * history their summary already announced, and 'healthy'/'unknown'
+ * verdicts never fabricate an incident. `since` is the invocation's latest
+ * retained event time (null when none parses — unknown stays unknown);
+ * `expiresAt` is null for live rows — an unhealthy or silent run waits for
+ * repair, never a guessed deadline — or the announcement window's end for
+ * a failed one. The verdict is computed with the same `maxAgeMs` the
+ * check CLI and glance use; a truncated projection already answers
+ * 'unknown' for every live row, so only proven verdicts list. The
+ * invocation id is embedded in each act so one copy-paste probes exactly
+ * this run. No item names a job and none is Mason-blocking.
+ */
+function appsRecoveryItems(read: NonNullable<UnifiedInboxOptions['readAppsRecovery']>,
+  options: UnifiedInboxOptions): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  const nowMs = (options.now ?? Date.now)();
+  let projection: AppsRecoverySourceRead;
+  try { projection = read({ runsDir: dir, now: options.now }); }
+  catch { return { report: { state: 'unavailable', pending: null }, items: [] }; }
+  const state: UnifiedInboxSourceState = projection.availability !== 'available' ? 'unavailable'
+    : projection.truncated ? 'degraded' : 'healthy';
+  if (state === 'unavailable') return { report: { state, pending: null }, items: [] };
+  const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
+  for (const row of projection.invocations) {
+    const verdict = appsRecoveryVerdict(projection, row.invocationId, APPS_RECOVERY_MAX_AGE_MS, nowMs);
+    const since = Number.isFinite(row.latestTime) ? iso(row.latestTime) : null;
+    const acts = [
+      `phm fleet apps-recovery-check --invocation ${row.invocationId} --max-age-ms ${APPS_RECOVERY_MAX_AGE_MS} --json`,
+      'phm fleet apps-recovery-state --json',
+    ];
+    if (verdict.verdict === 'unhealthy') {
+      items.push({
+        id: `apps-recovery:${row.invocationId}`,
+        source: 'apps-recovery',
+        kind: 'apps-recovery-retrying',
+        severity: 'warn',
+        blocking: false,
+        title: oneLine(`App recovery retrying: ${appsRecoveryIncidentApps(row)}`, TITLE_MAX),
+        detail: oneLine(`${row.consecutiveFailures} consecutive failed cycles · ${row.totalFailedCycles} total · invocation ${row.invocationId}`, DETAIL_MAX) || null,
+        since,
+        expiresAt: null,
+        act: acts,
+      });
+    } else if (verdict.verdict === 'stale') {
+      const silentMin = verdict.ageMs === null ? null : Math.floor(verdict.ageMs / 60_000);
+      items.push({
+        id: `apps-recovery:${row.invocationId}`,
+        source: 'apps-recovery',
+        kind: 'apps-recovery-silent',
+        severity: 'warn',
+        blocking: false,
+        title: oneLine(silentMin === null ? 'App recovery silent' : `App recovery silent for ${silentMin} min`, TITLE_MAX),
+        detail: oneLine(`no retained event inside the freshness window · invocation ${row.invocationId}`, DETAIL_MAX) || null,
+        since,
+        expiresAt: null,
+        act: acts,
+      });
+    } else if (verdict.verdict === 'terminal' && verdict.terminalOutcome === 'failed' &&
+      (!Number.isFinite(row.latestTime) || nowMs - row.latestTime <= APPS_RECOVERY_FAILED_WINDOW_MS)) {
+      items.push({
+        id: `apps-recovery:${row.invocationId}`,
+        source: 'apps-recovery',
+        kind: 'apps-recovery-failed',
+        severity: 'high',
+        blocking: false,
+        title: oneLine(`App recovery failed: ${appsRecoveryIncidentApps(row)}`, TITLE_MAX),
+        detail: oneLine(`terminal outcome failed · ${row.totalFailedCycles} failed cycles · invocation ${row.invocationId}`, DETAIL_MAX) || null,
+        since,
+        expiresAt: Number.isFinite(row.latestTime) ? iso(row.latestTime + APPS_RECOVERY_FAILED_WINDOW_MS) : null,
+        act: acts,
+      });
+    }
+  }
+  return { report: { state, pending: pendingCount(state, items.length) }, items };
+}
+
+/** The real apps-recovery read: `readAppsRecoveryInvocations` on the shared
+ * runs dir — the same bounded retained-history scan `phm fleet
+ * apps-recovery-state` serves. The projection never throws on a missing
+ * store (an absent bus-inbox reads 'available' with no events); a throwing
+ * seam is 'unavailable', never an empty incident list passed off as fact. */
+function readAppsRecoverySource(options: { runsDir?: string; now?: () => number }): AppsRecoverySourceRead {
+  const dir = options.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  return readAppsRecoveryInvocations(dir);
+}
+
 /** Display label and deep links per channel-health leg; telegram's acts differ because its diagnostic is `phm comms health`, not `phm fleet channel-health`. */
 const channelHealthPresentation = (channel: string): { label: string; acts: readonly string[] } =>
   channel === 'slack'
@@ -5087,6 +5260,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const stuckFixes = await stuckFixItems(options.readStuckFixes ?? readStuckFixesSource, options);
   const strandedWork = await strandedWorkItems(options.readStrandedWork ?? readStrandedWorkSource, options);
   const dispatchStuck = await dispatchStuckItems(options.readDispatchStuck ?? readDispatchStuckSource, options);
+  const appsRecovery = appsRecoveryItems(options.readAppsRecovery ?? readAppsRecoverySource, options);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
@@ -5132,8 +5306,9 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     'stuck-fixes': stuckFixes.report,
     'stranded-work': strandedWork.report,
     'dispatch-stuck': dispatchStuck.report,
+    'apps-recovery': appsRecovery.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...inboxAcks.items, ...drafts.items, ...commsMail.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...peerInbox.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...jobsStuck.items, ...channelHealth.items, ...queueParked.items, ...stuckFixes.items, ...strandedWork.items, ...dispatchStuck.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...needsDelivery.items, ...teammates.items, ...teammateTasks.items, ...ownerThread.items, ...ownerDelivery.items, ...ownerPair.items, ...inboxAcks.items, ...drafts.items, ...commsMail.items, ...bus.items, ...mailbox.items, ...board.items, ...workBoard.items, ...conversations.items, ...wakes.items, ...seats.items, ...peerDispatch.items, ...peerInbox.items, ...sessionHandoffs.items, ...orgOutbox.items, ...gmail.items, ...linkedin.items, ...requests.items, ...emailInbox.items, ...emailOutbox.items, ...teamApprovals.items, ...proposals.items, ...slack.items, ...slackSends.items, ...leaderDelivery.items, ...leaderNetwork.items, ...leaderReplies.items, ...coordination.items, ...claimDrift.items, ...sendGate.items, ...routerQueue.items, ...jobsStuck.items, ...channelHealth.items, ...queueParked.items, ...stuckFixes.items, ...strandedWork.items, ...dispatchStuck.items, ...appsRecovery.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };
