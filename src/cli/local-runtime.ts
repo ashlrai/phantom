@@ -65,7 +65,6 @@ import {
   installAnthropicProxyAgent,
   installLaunchAgent,
   isLoopbackHost,
-  launchAgentInstalled,
   launchAgentLoaded,
   launchAgentLogPaths,
   launchAgentPlistPath,
@@ -79,6 +78,7 @@ import {
   uninstallLaunchAgent,
 } from '../core/local-runtime/llama/index.js';
 import type {
+  LaunchAgentMutation,
   LifecycleOptions,
   LlamaRuntimeConfig,
   LlamaRuntimeSnapshot,
@@ -327,6 +327,24 @@ async function runLifecycle(
   return result.ok ? 0 : 1;
 }
 
+function refuseInstall(
+  flags: ParsedFlags,
+  c: ReturnType<typeof makeColors>,
+  detail: string,
+  extra?: Record<string, unknown>,
+): number {
+  if (flags.json) {
+    console.log(JSON.stringify({ ok: false, action: 'refused', detail, ...extra }, null, 2));
+  } else {
+    console.error(`${c.red('refused')}  ${detail}`);
+  }
+  return 1;
+}
+
+function printMutationLine(c: ReturnType<typeof makeColors>, mutation: LaunchAgentMutation): void {
+  console.log(`${mutation.ok ? c.green('ok') : c.red('failed')}  ${mutation.detail}`);
+}
+
 /**
  * `install` — write and load the launch agent.
  *
@@ -347,21 +365,14 @@ async function cmdInstall(flags: ParsedFlags, runtime: LlamaRuntimeConfig): Prom
       'when you want 24/7 operation; this command will never touch the sentinel.\n' +
       `Meanwhile \`ashlr local-runtime start\` runs it for this session.\n` +
       `Would have written: ${plistPath}`;
-    if (flags.json) {
-      console.log(JSON.stringify({ ok: false, action: 'refused', detail: message, plistPath }, null, 2));
-    } else {
-      console.error(c.red('refused') + '  ' + message);
-    }
-    return 1;
+    return refuseInstall(flags, c, message, { plistPath });
   }
 
   if (runtime.binPath === null) {
     const message =
       'llama-server is not on PATH. Install llama.cpp (`brew install llama.cpp`) or set ' +
       'LLAMA_SERVER_BIN to its absolute path.';
-    if (flags.json) console.log(JSON.stringify({ ok: false, action: 'refused', detail: message }, null, 2));
-    else console.error(c.red('refused') + '  ' + message);
-    return 1;
+    return refuseInstall(flags, c, message);
   }
 
   // A permanently-installed, LAN-exposed, UNAUTHENTICATED inference server is
@@ -377,9 +388,7 @@ async function cmdInstall(flags: ParsedFlags, runtime: LlamaRuntimeConfig): Prom
       'can reach the port can run inference and read every slot\'s prompt via /slots — and ' +
       'a launch agent brings it back at every login, unattended. Bind it to 127.0.0.1, or run ' +
       '`ashlr local-runtime start` for an attended session you can see and stop.';
-    if (flags.json) console.log(JSON.stringify({ ok: false, action: 'refused', detail: message }, null, 2));
-    else console.error(c.red('refused') + '  ' + message);
-    return 1;
+    return refuseInstall(flags, c, message);
   }
 
   // Resolve the GGUF now so a broken reference is refused at install time
@@ -393,11 +402,7 @@ async function cmdInstall(flags: ParsedFlags, runtime: LlamaRuntimeConfig): Prom
   let modelPath = runtime.modelPath;
   if (modelPath === null) {
     const resolved = resolveOllamaModelBlob(runtime.modelRef);
-    if (!resolved.ok) {
-      if (flags.json) console.log(JSON.stringify({ ok: false, action: 'refused', detail: resolved.reason }, null, 2));
-      else console.error(c.red('refused') + '  ' + resolved.reason);
-      return 1;
-    }
+    if (!resolved.ok) return refuseInstall(flags, c, resolved.reason);
     modelPath = resolved.blobPath;
   }
 
@@ -442,8 +447,8 @@ async function cmdInstall(flags: ParsedFlags, runtime: LlamaRuntimeConfig): Prom
     return mutation.ok && proxyMutation.ok ? 0 : 1;
   }
 
-  console.log(`${mutation.ok ? c.green('ok') : c.red('failed')}  ${mutation.detail}`);
-  console.log(`${proxyMutation.ok ? c.green('ok') : c.red('failed')}  ${proxyMutation.detail}`);
+  printMutationLine(c, mutation);
+  printMutationLine(c, proxyMutation);
   console.log('');
   console.log(c.yellow('This wrote files OUTSIDE the repository, in your login configuration:'));
   console.log(`  ${mutation.plistPath}`);
@@ -563,9 +568,9 @@ function cmdUninstall(flags: ParsedFlags): number {
     return mutation.ok && proxyMutation.ok ? 0 : 1;
   }
   const c = makeColors(isTty());
-  console.log(`${mutation.ok ? c.green('ok') : c.red('failed')}  ${mutation.detail}`);
+  printMutationLine(c, mutation);
   console.log(c.dim(`  ${mutation.plistPath}`));
-  console.log(`${proxyMutation.ok ? c.green('ok') : c.red('failed')}  ${proxyMutation.detail}`);
+  printMutationLine(c, proxyMutation);
   console.log(c.dim(`  ${proxyMutation.plistPath}`));
   return mutation.ok && proxyMutation.ok ? 0 : 1;
 }
@@ -640,9 +645,4 @@ export async function cmdLocalRuntime(args: string[]): Promise<number> {
     console.error(`local-runtime failed unexpectedly: ${err instanceof Error ? err.message : String(err)}`);
     return 1;
   }
-}
-
-/** True when the launch agent is present — exported for the doctor surface. */
-export function localRuntimeLaunchAgentInstalled(): boolean {
-  return launchAgentInstalled();
 }

@@ -113,7 +113,7 @@ export function parseOllamaModelRef(raw: string): OllamaModelRef | null {
 }
 
 /** Absolute path of the manifest file for a parsed reference. */
-export function ollamaManifestPath(ref: OllamaModelRef, root = ollamaModelsRoot()): string {
+function ollamaManifestPath(ref: OllamaModelRef, root = ollamaModelsRoot()): string {
   return join(root, 'manifests', ref.registry, ref.namespace, ref.name, ref.tag);
 }
 
@@ -199,7 +199,7 @@ export function resolveOllamaRefForBlobPath(
         const stat = statSync(full);
         // A manifest is small JSON; anything large is not one and reading it
         // would be the kind of unbounded work a status probe must not do.
-        if (stat.size > 256 * 1024) continue;
+        if (stat.size > MAX_MANIFEST_BYTES) continue;
         const layer = selectModelLayer(JSON.parse(readFileSync(full, 'utf8')));
         if (layer === null) continue;
         if (layer.digest.toLowerCase() !== wanted) continue;

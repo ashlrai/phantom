@@ -28,10 +28,12 @@
  * runtime. See `anthropicProxyHostEnvironment`.
  */
 
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { escapeXml, shQuote } from './launchd.js';
+import {
+  buildManagedLaunchAgentPlist,
+  installManagedLaunchAgent,
+  shQuote,
+  uninstallManagedLaunchAgent,
+} from './launchd.js';
 import type { LaunchAgentMutation } from './launchd.js';
 import {
   ANTHROPIC_PROXY_LAUNCH_AGENT_LABEL,
@@ -39,8 +41,6 @@ import {
   anthropicProxyShimPath,
   anthropicProxyStderrLogPath,
   anthropicProxyStdoutLogPath,
-  localRuntimeDir,
-  logsDir,
 } from './paths.js';
 
 /** Everything the proxy job needs. Kept explicit so generation stays pure. */
@@ -99,72 +99,13 @@ export function buildAnthropicProxyPlist(
   spec: AnthropicProxyAgentSpec,
   shimPath: string = anthropicProxyShimPath(),
 ): string {
-  const programArguments = ['/bin/sh', shimPath]
-    .map((arg) => `      <string>${escapeXml(arg)}</string>`)
-    .join('\n');
-
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-  <dict>
-    <key>Label</key>
-    <string>${escapeXml(ANTHROPIC_PROXY_LAUNCH_AGENT_LABEL)}</string>
-    <key>ProgramArguments</key>
-    <array>
-${programArguments}
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>ThrottleInterval</key>
-    <integer>10</integer>
-    <key>ProcessType</key>
-    <string>Background</string>
-    <key>WorkingDirectory</key>
-    <string>${escapeXml(spec.workingDirectory)}</string>
-    <key>StandardOutPath</key>
-    <string>${escapeXml(spec.stdoutLog)}</string>
-    <key>StandardErrorPath</key>
-    <string>${escapeXml(spec.stderrLog)}</string>
-  </dict>
-</plist>
-`;
-}
-
-/** `gui/<uid>` — the per-user launchd domain. */
-function guiDomain(): string {
-  const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
-  return `gui/${uid}`;
-}
-
-/** Run launchctl, returning stdout, or null on any failure. Never throws. */
-function launchctl(args: string[]): string | null {
-  if (process.platform !== 'darwin') return null;
-  try {
-    return execFileSync('/bin/launchctl', args, {
-      encoding: 'utf8',
-      timeout: 15_000,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-  } catch {
-    return null;
-  }
-}
-
-/** Is the proxy plist present in ~/Library/LaunchAgents? Never throws. */
-export function anthropicProxyAgentInstalled(path = anthropicProxyPlistPath()): boolean {
-  try {
-    return existsSync(path);
-  } catch {
-    return false;
-  }
-}
-
-/** Is the proxy job currently bootstrapped into launchd? */
-export function anthropicProxyAgentLoaded(): boolean {
-  if (process.platform !== 'darwin') return false;
-  return launchctl(['print', `${guiDomain()}/${ANTHROPIC_PROXY_LAUNCH_AGENT_LABEL}`]) !== null;
+  return buildManagedLaunchAgentPlist({
+    label: ANTHROPIC_PROXY_LAUNCH_AGENT_LABEL,
+    shimPath,
+    workingDirectory: spec.workingDirectory,
+    stdoutLog: spec.stdoutLog,
+    stderrLog: spec.stderrLog,
+  });
 }
 
 /**
@@ -175,78 +116,31 @@ export function anthropicProxyAgentLoaded(): boolean {
  * {@link import('./launchd.js').installLaunchAgent}.
  */
 export function installAnthropicProxyAgent(spec: AnthropicProxyAgentSpec): LaunchAgentMutation {
-  const plistPath = anthropicProxyPlistPath();
-
-  if (process.platform !== 'darwin') {
-    return {
-      ok: false,
-      plistPath,
-      loaded: false,
-      detail: 'launch agents are a macOS facility; this platform has no equivalent here',
-    };
-  }
-
   const shimPath = anthropicProxyShimPath();
-  try {
-    mkdirSync(dirname(plistPath), { recursive: true });
-    mkdirSync(logsDir(), { recursive: true, mode: 0o700 });
-    mkdirSync(localRuntimeDir(), { recursive: true, mode: 0o700 });
-    // Owner-only: the shim names an absolute interpreter and `exec`s it at
-    // every login, so a world-writable copy is a standing privilege-escalation
-    // path into a KeepAlive job.
-    writeFileSync(shimPath, buildAnthropicProxyShim(spec), { mode: 0o700 });
-    writeFileSync(plistPath, buildAnthropicProxyPlist(spec, shimPath), { mode: 0o644 });
-  } catch (err: unknown) {
-    return {
-      ok: false,
-      plistPath,
-      loaded: false,
-      detail: `could not write the Anthropic proxy launch agent: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
-
-  launchctl(['bootout', `${guiDomain()}/${ANTHROPIC_PROXY_LAUNCH_AGENT_LABEL}`]);
-  const bootstrapped = launchctl(['bootstrap', guiDomain(), plistPath]) !== null;
-  if (bootstrapped) launchctl(['enable', `${guiDomain()}/${ANTHROPIC_PROXY_LAUNCH_AGENT_LABEL}`]);
-
-  const loaded = bootstrapped && anthropicProxyAgentLoaded();
-  return {
-    ok: true,
-    plistPath,
-    loaded,
-    detail: loaded
-      ? 'Anthropic proxy launch agent written and bootstrapped; the lane now starts at login and restarts on crash'
-      : 'Anthropic proxy launch agent written, but launchctl did not bootstrap it — it will still load at next login',
-  };
+  return installManagedLaunchAgent({
+    label: ANTHROPIC_PROXY_LAUNCH_AGENT_LABEL,
+    plistPath: anthropicProxyPlistPath(),
+    shimPath,
+    shimContent: buildAnthropicProxyShim(spec),
+    plistContent: buildAnthropicProxyPlist(spec, shimPath),
+    writeFailurePrefix: 'could not write the Anthropic proxy launch agent',
+    loadedDetail:
+      'Anthropic proxy launch agent written and bootstrapped; the lane now starts at login and restarts on crash',
+    notLoadedDetail:
+      'Anthropic proxy launch agent written, but launchctl did not bootstrap it — it will still load at next login',
+  });
 }
 
 /** Boot the proxy job out and delete its plist. Idempotent; never throws. */
 export function uninstallAnthropicProxyAgent(): LaunchAgentMutation {
-  const plistPath = anthropicProxyPlistPath();
-  const wasInstalled = anthropicProxyAgentInstalled(plistPath);
-
-  launchctl(['bootout', `${guiDomain()}/${ANTHROPIC_PROXY_LAUNCH_AGENT_LABEL}`]);
-
-  try {
-    rmSync(plistPath, { force: true });
-    rmSync(anthropicProxyShimPath(), { force: true });
-  } catch (err: unknown) {
-    return {
-      ok: false,
-      plistPath,
-      loaded: anthropicProxyAgentLoaded(),
-      detail: `could not remove the proxy plist: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
-
-  return {
-    ok: true,
-    plistPath,
-    loaded: false,
-    detail: wasInstalled
-      ? 'Anthropic proxy launch agent booted out and removed'
-      : 'no Anthropic proxy launch agent was installed; nothing to remove',
-  };
+  return uninstallManagedLaunchAgent({
+    label: ANTHROPIC_PROXY_LAUNCH_AGENT_LABEL,
+    plistPath: anthropicProxyPlistPath(),
+    shimPath: anthropicProxyShimPath(),
+    removeFailurePrefix: 'could not remove the proxy plist',
+    removedDetail: 'Anthropic proxy launch agent booted out and removed',
+    notInstalledDetail: 'no Anthropic proxy launch agent was installed; nothing to remove',
+  });
 }
 
 /** Default proxy log paths, so callers do not reach into paths.ts. */
