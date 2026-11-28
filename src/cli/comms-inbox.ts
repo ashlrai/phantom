@@ -3,13 +3,15 @@ import type { Readable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 import { readUnifiedInbox, isUnifiedInboxItemId, isUnifiedInboxKind, isUnifiedInboxSeverity, isUnifiedInboxSource, UNIFIED_INBOX_CONTAINS_MAX, UNIFIED_INBOX_MAX_ITEMS,
   type UnifiedInbox, type UnifiedInboxFilter, type UnifiedInboxKind, type UnifiedInboxSeverity, type UnifiedInboxSource } from '../core/comms/unified-inbox.js';
+import { BUS_CLIS, type BusCli } from '../core/agents/bus-identity.js';
+import { frameUnifiedInbox } from '../core/agents/bus-cli-adapters.js';
 import { createChannelReceiver } from '../core/fleet/channel-envelope.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 import { INBOX_MAX_CHARS, readInboxEntries } from '../core/fleet/mason-inbox.js';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { entryInstant, parseInboxReadQuery, projectInboxRead } from '../core/verse/fleet-inbox-read.js';
 
-const HELP = `phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--id <item-id>] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..200>] [--json]
+const HELP = `phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--id <item-id>] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..200>] [--frame <cli>] [--json]
 phm comms inbox read [--source <label>] [--contains <text>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--before <RFC3339-with-zone>] [--limit <1..200>] [--watch [--new-only] [--interval-ms <1000..60000>] [--max-samples <1..10000>]] [--json]
 phm comms inbox post --file <text-file|-> [--receipt-only] [--json]
 With no verb, lists every pending comms item — unresolved needs-you lines
@@ -57,7 +59,12 @@ fabricated 0 — so a filtered view never hides a busy or degraded
 source. --limit <1..200> keeps only the first N ranked items of the matched
 view — the same slice GET /api/verse/comms/inbox and fleet_comms_inbox apply,
 with total still the true matched count and omitted covering every unshown
-item. --json prints the same view as JSON.
+item. --json prints the same view as JSON. --frame <cli> prints the same
+view as one bounded block marked untrusted under BEGIN/END UNTRUSTED UNIFIED
+COMMS INBOX markers — the same frame every agents bus read's --frame produces
+— with --json carrying it as framed beside the full view and the cut stated
+when the 32 KiB bound clips the page; --frame must be one of
+${BUS_CLIS.join(', ')}.
 read and post read and write the owner's local inbox file. Output is JSON; post returns the receiver acknowledgement.
 --receipt-only on post returns only the acknowledgement status, channel and durable deduplication key, or a failure reason; it excludes message text and private paths.
 Read options select the newest matching entries (default limit 50), returned oldest first; source is metadata, not identity.
@@ -129,24 +136,31 @@ function describeUnifiedFilter(filter: UnifiedInboxFilter): string {
   ].join(' ');
 }
 
-/** Human view of the unified report: priority-ordered items and their deep links. */
-function printUnified(report: UnifiedInbox): void {
+/** The human view's lines: priority-ordered items, their deep links, degraded-source notes and the counts summary. */
+function unifiedViewLines(report: UnifiedInbox): string[] {
+  const lines: string[] = [];
   const degraded = Object.entries(report.sources).filter(([, s]) => s.state === 'degraded' || s.state === 'unavailable');
   for (const item of report.items) {
-    console.log(`[${item.priority}] ${item.source}  ${item.title}`);
-    if (item.detail) console.log(`         ${item.detail}`);
-    for (const act of item.act) console.log(`         → ${act}`);
+    lines.push(`[${item.priority}] ${item.source}  ${item.title}`);
+    if (item.detail) lines.push(`         ${item.detail}`);
+    for (const act of item.act) lines.push(`         → ${act}`);
   }
-  for (const [name, s] of degraded) console.log(`note: ${name} source ${s.state}`);
+  for (const [name, s] of degraded) lines.push(`note: ${name} source ${s.state}`);
   const counts = Object.entries(report.sources).map(([name, s]) => `${name} ${s.pending === null ? 'unknown' : s.pending}`).join(' · ');
   const filter = report.filter;
   const match = filter === undefined ? '' : ` matching ${describeUnifiedFilter(filter)}`;
   // Per-source counts are the unfiltered store reports; under a filter they
   // are labelled so a narrowed total is never read against them directly.
   const scope = filter === undefined ? '' : 'unfiltered: ';
-  console.log(report.total === 0
+  lines.push(report.total === 0
     ? filter === undefined ? 'Nothing pending.' : `Nothing pending${match}.`
     : `${report.total} pending${match} (${scope}${counts})${report.omitted > 0 ? ` · ${report.omitted} omitted` : ''}`);
+  return lines;
+}
+
+/** Human view of the unified report: priority-ordered items and their deep links. */
+function printUnified(report: UnifiedInbox): void {
+  for (const line of unifiedViewLines(report)) console.log(line);
 }
 
 export function createCommsInboxCommand(options: CommandOptions = {}): (args: string[]) => Promise<number> {
@@ -162,13 +176,21 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
       let json = false, blocking = false;
       let source: UnifiedInboxSource | undefined, kind: UnifiedInboxKind | undefined,
         severity: UnifiedInboxSeverity | undefined, itemId: string | undefined,
-        job: string | undefined, contains: string | undefined;
+        job: string | undefined, contains: string | undefined, frame: string | undefined;
       let sinceMs: number | undefined, beforeMs: number | undefined, limit: number | undefined;
       const seen = new Set<string>();
       for (let i = 0; i < args.length; i++) {
         const arg = args[i]!;
         if (arg === '--json' && !seen.has(arg)) { seen.add(arg); json = true; continue; }
         if (arg === '--blocking' && !seen.has(arg)) { seen.add(arg); blocking = true; continue; }
+        if (arg === '--frame' && !seen.has(arg)) {
+          const value = args[++i];
+          // The same --frame rule every agents bus read applies: one of the
+          // five session CLIs, never a flag-looking or missing value.
+          if (value === undefined || value.startsWith('--') ||
+            !(BUS_CLIS as readonly string[]).includes(value)) return invalid();
+          seen.add(arg); frame = value; continue;
+        }
         if (arg === '--source' && !seen.has(arg)) {
           const value = args[++i];
           if (value === undefined || !isUnifiedInboxSource(value)) return invalid();
@@ -263,6 +285,11 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
       const items = limit === undefined ? report.items : report.items.slice(0, limit);
       const view: UnifiedInbox = limit === undefined ? report
         : { ...report, items, omitted: Math.max(0, report.total - items.length) };
+      if (frame !== undefined) {
+        const framed = frameUnifiedInbox(frame as BusCli, unifiedViewLines(view));
+        if (json) console.log(JSON.stringify({ ...view, framed })); else console.log(framed);
+        return 0;
+      }
       if (json) console.log(JSON.stringify(view)); else printUnified(view);
       return 0;
     }

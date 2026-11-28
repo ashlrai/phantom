@@ -231,7 +231,7 @@ digests. Actual adapters still enforce owner verification, KILL, pause and send 
 
 ## Unified inbox
 
-`phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--id <item-id>] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..200>] [--json]`
+`phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--id <item-id>] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..200>] [--frame <cli>] [--json]`
 ([`unified-inbox.ts`](../src/core/comms/unified-inbox.ts)) is the read-only
 roll-up of everything still pending, ranked the way Needs-you ranks: severity
 band, then priority, then expiry, then newest. It aggregates local sources
@@ -960,7 +960,14 @@ describe
 the matched view and the report echoes the applied `filter`, while `sources`
 keeps every store's real unfiltered pending count — `null` when a source
 could not be read, never a fabricated 0 — a filtered view never
-reports a busy or degraded source as empty. `GET /api/verse/comms/inbox` —
+reports a busy or degraded source as empty. `--frame <cli>` (`claude`,
+`codex`, `devin`, `cursor` or `grok`) prints the same ranked view as one
+bounded block marked untrusted under `BEGIN`/`END UNTRUSTED UNIFIED COMMS
+INBOX` markers — the same frame every `agents bus` read's `--frame`
+produces — with `--json` carrying it as `framed` beside the full view and
+the cut stated when the 32 KiB bound clips the page, so a host can hand a
+CLI's next turn the whole pending-work picture as marked-untrusted data in
+one block. `GET /api/verse/comms/inbox` —
 the desktop and agent read of the same report — accepts the same dimensions
 as query parameters (`source`, `kind`, `severity`, `blocking=true|false`,
 `id`, `job`, `since`, `before`, `contains`, each at most once, plus `limit` 1–200 default
