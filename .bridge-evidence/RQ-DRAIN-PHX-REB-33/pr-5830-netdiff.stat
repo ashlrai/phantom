@@ -1,0 +1,10 @@
+ .github/scripts/ci-affected-tests.mjs    | 201 +++++++++++++++++++++++++++++++
+ .github/tests/ci-affected-tests.test.mjs | 102 ++++++++++++++++
+ .github/workflows/ci.yml                 |  84 ++++++++++---
+ AGENTS.md                                |   1 +
+ CONTRIBUTING.md                          |   6 +-
+ docs/AGENT-OPERATIONS.md                 |  21 ++--
+ package.json                             |   2 +-
+ test/m30.ci.test.ts                      |  64 +++++++---
+ test/m481.ci-action-pins.test.ts         |   4 +
+ 9 files changed, 440 insertions(+), 45 deletions(-)

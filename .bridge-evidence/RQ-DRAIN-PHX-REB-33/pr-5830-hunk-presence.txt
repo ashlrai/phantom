@@ -1,0 +1,10 @@
+PR #5830: files=9 added(m>=8c)=357 present_on_master=31 deleted(m>=8c)=45 still_on_master=8
+  .github/scripts/ci-affected-tests.mjs: add none, del n/a [path absent on master]
+  .github/tests/ci-affected-tests.test.mjs: add none, del n/a [path absent on master]
+  .github/workflows/ci.yml: add 29/58, del 7 remain
+  AGENTS.md: add none, del n/a
+  CONTRIBUTING.md: add none, del 1 remain
+  docs/AGENT-OPERATIONS.md: add none, del all
+  package.json: add none, del all
+  test/m30.ci.test.ts: add none, del all
+  test/m481.ci-action-pins.test.ts: add 2/3, del n/a

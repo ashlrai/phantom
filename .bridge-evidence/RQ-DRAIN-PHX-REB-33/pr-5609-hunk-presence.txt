@@ -1,0 +1,149 @@
+PR #5609: files=148 added(m>=8c)=7847 present_on_master=3228 deleted(m>=8c)=225 still_on_master=80
+  .bridge-evidence/port_pr.sh: add none, del n/a [path absent on master]
+  .bridge-evidence/pr-3992.json: add none, del n/a [path absent on master]
+  .bridge-evidence/pr-3993.json: add none, del n/a [path absent on master]
+  .bridge-evidence/pr-3996.json: add none, del n/a [path absent on master]
+  .bridge-evidence/pr-4003.json: add none, del n/a [path absent on master]
+  .bridge-evidence/pr-4008.json: add none, del n/a [path absent on master]
+  .bridge-evidence/pr-4009.json: add none, del n/a [path absent on master]
+  .github/CODEOWNERS: add 3/4, del n/a
+  AGENTS.md: add 5/171, del 3 remain
+  CHANGELOG.md: add 1/15, del n/a
+  CONTRIBUTING.md: add none, del n/a
+  artifacts/apptruth-mission.png: add none, del n/a [path absent on master]
+  contrib/mac/README.md: add 18/24, del n/a
+  contrib/mac/dispatchd.py: add none, del 1 remain
+  contrib/mac/tests/test_dispatchd.py: add all, del n/a
+  docs-sync.toml: add none, del n/a [path absent on master]
+  docs/AGENT-MCP-CLI.md: add none, del 1 remain
+  docs/AGENT-PROFILES.md: add 42/45, del n/a
+  docs/APP-STATE.md: add none, del n/a [path absent on master]
+  docs/CLI-REFERENCE.md: add none, del all
+  docs/CODEMAP.md: add all, del n/a
+  docs/COS.md: add none, del 3 remain
+  docs/DOCS-SYNC.md: add none, del n/a [path absent on master]
+  docs/FLEET-FORUM.md: add none, del n/a [path absent on master]
+  docs/LIVING-DOCS.md: add none, del n/a [path absent on master]
+  docs/MCP-TOOLS.md: add 2/3, del n/a
+  docs/MERGE-COCKPIT.md: add none, del n/a [path absent on master]
+  docs/PAGES.md: add all, del n/a
+  docs/QUICKSTART.md: add none, del all
+  docs/README.md: add none, del n/a
+  docs/api/fleet-openapi.json: add 14/24, del n/a
+  docs/cli.md: add 15/43, del all
+  docs/contracts/CONTRACT-FLEET-FORUM.md: add none, del n/a [path absent on master]
+  docs/contracts/CONTRACT-SELECTOR.md: add all, del n/a
+  docs/llms-full.txt: add none, del all
+  docs/llms-reference.txt: add none, del n/a [path absent on master]
+  docs/llms.txt: add 2/8, del n/a
+  examples/quickstart.md: add none, del all
+  package.json: add none, del n/a
+  scripts/CHANGELOG-SYNC.md: add none, del 3 remain
+  scripts/changelog-sync.mjs: add none, del 12 remain
+  scripts/generate-cli-docs.mjs: add none, del 2 remain
+  scripts/generate-docs-llms.mjs: add none, del 1 remain
+  scripts/lib/codemap.mjs: add none, del n/a [path absent on master]
+  scripts/lib/living-docs.mjs: add none, del n/a [path absent on master]
+  scripts/realio-lane-known-fast-spawns.mjs: add none, del n/a
+  site/llms-full.txt: add none, del all
+  src/cli/agents-bus-contract.ts: add all, del all
+  src/cli/agents.ts: add all, del n/a
+  src/cli/comms-bus.ts: add none, del 1 remain
+  src/cli/completions.ts: add 3/11, del all
+  src/cli/fleet-apps-watch.ts: add none, del 5 remain
+  src/cli/fleet-cos-decline.ts: add none, del 2 remain
+  src/cli/fleet-cos-loop.ts: add 155/159, del n/a
+  src/cli/fleet-cos-work.ts: add all, del all
+  src/cli/fleet-lane-model-drift.ts: add none, del n/a
+  src/cli/fleet-planner-brief.ts: add all, del all
+  src/cli/fleet-self-tick.ts: add 10/17, del 1 remain
+  src/cli/fleet-subcommand-registry.ts: add all, del n/a
+  src/cli/forum.ts: add none, del n/a [path absent on master]
+  src/cli/help.ts: add 4/30, del all
+  src/cli/index.ts: add 13/29, del n/a
+  src/cli/pages.ts: add all, del n/a
+  src/cli/pr-cockpit.ts: add none, del n/a [path absent on master]
+  src/cli/select.ts: add 18/20, del all
+  src/core/agents/recut-desk-n1s127.test.ts: add all, del n/a
+  src/core/agents/send-policy.ts: add all, del n/a
+  src/core/cos/decline.ts: add none, del 1 remain
+  src/core/cos/loop.ts: add 146/148, del n/a
+  src/core/cos/pages.ts: add all, del n/a
+  src/core/docs-sync.ts: add none, del n/a [path absent on master]
+  src/core/fleet/channel-envelope.ts: add all, del n/a
+  src/core/fleet/fleet-verbs-tool.ts: add 29/31, del n/a
+  src/core/fleet/forum-channel-ingest.ts: add all, del n/a
+  src/core/fleet/forum/bridge.ts: add all, del n/a
+  src/core/fleet/forum/mcp.ts: add all, del n/a
+  src/core/fleet/forum/service.ts: add 409/454, del n/a
+  src/core/fleet/friction-ledger.ts: add all, del n/a
+  src/core/fleet/mission-control-types.ts: add none, del n/a
+  src/core/fleet/mission-control.ts: add none, del 3 remain
+  src/core/fleet/pick-grader.ts: add all, del all
+  src/core/fleet/planner-brief.ts: add all, del all
+  src/core/fleet/self-tick.ts: add 3/9, del all
+  src/core/mcp-native.ts: add 12/27, del 2 remain
+  src/core/merge-cockpit.ts: add all, del n/a
+  src/core/routing/selector.ts: add all, del all
+  src/core/verse/app-update-api.ts: add 3/9, del all
+  src/core/verse/fleet-runs-api.ts: add 2/7, del n/a
+  src/core/verse/verse-api.ts: add none, del all
+  src/core/verse/verse-stream.ts: add 3/37, del n/a
+  src/core/web/read-session.ts: add none, del 1 remain
+  src/core/web/server.ts: add 7/8, del n/a
+  src/mcp/fleet-server.ts: add all, del 3 remain
+  src/web-ui/app/nav-config.ts: add all, del n/a
+  src/web-ui/app/routes.tsx: add all, del n/a
+  src/web-ui/design/font-ranges.test.ts: add none, del 1 remain
+  src/web-ui/routes/pages/PagesView.module.css: add all, del n/a
+  src/web-ui/routes/pages/PagesView.tsx: add all, del n/a
+  src/web-ui/routes/verse/fleet-mission/FleetMissionPane.test.tsx: add 2/16, del n/a
+  src/web-ui/routes/verse/fleet-mission/FleetMissionPane.tsx: add none, del 2 remain
+  src/web-ui/routes/verse/fleet-mission/mission-queries.ts: add none, del 23 remain
+  src/web-ui/routes/verse/mobile/ScreenHost.tsx: add none, del 1 remain
+  src/web-ui/routes/verse/mobile/mobile-model.test.ts: add none, del n/a
+  src/web-ui/routes/verse/mobile/mobile-router.ts: add none, del 2 remain
+  src/web-ui/routes/verse/mobile/screens/ForumScreen.test.tsx: add none, del n/a [path absent on master]
+  src/web-ui/routes/verse/mobile/screens/ForumScreen.tsx: add none, del n/a [path absent on master]
+  src/web-ui/routes/verse/mobile/screens/MoreScreen.tsx: add none, del n/a
+  src/web-ui/routes/verse/panes/every-pane-sweep.test.tsx: add none, del n/a
+  test/__snapshots__/mcp-output-efficiency.test.ts.snap: add 37/54, del n/a
+  test/agent-send-decision-recut2.test.ts: add all, del n/a
+  test/agent-send-decision.test.ts: add all, del n/a
+  test/comm-bus-priority-filter-31b2.test.ts: add none, del 1 remain
+  test/config/realio-lane-membership.mjs: add 1/7, del n/a
+  test/cos-bus-notice.test.ts: add all, del all
+  test/cos-decline.test.ts: add none, del n/a [path absent on master]
+  test/cos-pages.test.ts: add all, del n/a
+  test/cos-worker.test.ts: add all, del all
+  test/doc-facts.test.ts: add none, del n/a
+  test/fixtures/authority/tier1-closure.json: add 46/683, del n/a
+  test/fleet-cos-loop.test.ts: add all, del n/a
+  test/fleet-forum-sim.test.ts: add all, del n/a
+  test/fleet-forum.test.ts: add 122/132, del n/a
+  test/fleet-mission-stream.test.ts: add none, del n/a [path absent on master]
+  test/fleet-mission.test.ts: add 3/12, del n/a
+  test/fleet-openapi-coverage.test.ts: add none, del n/a
+  test/fleet-self-loop-02soly1.test.ts: add 1/5, del all
+  test/fleet-self-loop-stream-02solc1.test.ts: add 1/2, del all
+  test/fleet-self-tick-incidents-08.test.ts: add none, del all
+  test/fleet-self-tick-last-cli.test.ts: add 1/2, del all
+  test/fleet-self-tick-last-validation-02sole1.test.ts: add none, del n/a
+  test/fleet-self-tick-log-cap-cli-02.test.ts: add none, del n/a
+  test/fleet-self-tick-write-recovery-02solz2.test.ts: add 1/6, del all
+  test/fleet-self-tick.test.ts: add 1/6, del 1 remain
+  test/friction-ledger-03.test.ts: add none, del n/a [path absent on master]
+  test/m31.contract-lock.test.ts: add 2/3, del n/a
+  test/mcp-fleet-verbs-tool.test.ts: add all, del n/a
+  test/mcp-output-efficiency.test.ts: add 1/10, del all
+  test/mcp/fleet-job-current-snapshot-04-sqc1.test.ts: add all, del n/a
+  test/mcp/fleet-path-cochanges-04-sqd1.test.ts: add all, del all
+  test/merge-cockpit.test.ts: add 23/24, del n/a
+  test/recut-pr4869.test.ts: add all, del n/a
+  test/self-tick-cos-work-14.test.ts: add 87/88, del n/a
+  test/self-tick-inbox-acks-04.test.ts: add 1/2, del all
+  test/self-tick-landed-sweep-03.test.ts: add 1/4, del all
+  test/self-tick-order-notices-05.test.ts: add 1/2, del all
+  test/send-policy.test.ts: add all, del n/a
+  test/verse-api-mount-310.test.ts: add none, del 2 remain
+  test/verse-workbench-contracts-310.test.ts: add 3/5, del 2 remain

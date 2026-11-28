@@ -1,0 +1,6 @@
+PR #5788: files=5 added(m>=8c)=1037 present_on_master=1 deleted(m>=8c)=111 still_on_master=101
+  src/mcp/fleet-server.ts: add 1/35, del 101 remain
+  src/mcp/fleet-server.ts.backup: add none, del n/a [path absent on master]
+  src/mcp/fleet-server.ts.patch: add none, del n/a [path absent on master]
+  temp1.ts: add none, del n/a [path absent on master]
+  test/mcp-pool-config-refusal-357s.test.ts: add none, del n/a [path absent on master]

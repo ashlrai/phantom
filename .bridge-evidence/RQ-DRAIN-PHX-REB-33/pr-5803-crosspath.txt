@@ -1,0 +1,8 @@
+src/core/routing/task-bandit.ts: 39/606 added lines found in master bandit corpus
+src/core/routing/policy.ts: 4/87 added lines found in master bandit corpus
+src/core/routing/router.ts: 11/55 added lines found in master bandit corpus
+src/core/routing/types.ts: 5/59 added lines found in master bandit corpus
+test/task-bandit.test.ts: 25/451 added lines found in master bandit corpus
+src/core/memory/reclaim.ts: 49/722 added lines found in master bandit corpus
+src/core/memory/system-deps.ts: 5/104 added lines found in master bandit corpus
+src/core/run/job-replay.ts: 1/57 added lines found in master bandit corpus
