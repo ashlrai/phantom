@@ -2401,7 +2401,10 @@ To move an agent onto the unified bus:
    of paging raw. `--result` keeps only `work.result` bodies reporting that
    outcome, the same `WORK_RESULT_OUTCOMES` vocabulary and
    `busBodyResultOutcome` own-field match every other bus read's `--result`
-   applies. `work
+   applies. `--matched` adds `matched`, the true pending total across the
+   whole filtered set — the same count `agents bus inbox --matched` and
+   `channel read --matched` report — so a truncated page still answers how
+   much mail waits without paging through it. `work
    mine`'s `mailbox` section lists the pending rows for every label of the
    agent's identity (or the literal ref when none resolves) with the `--to`
    each row needs, so leftover mail is discoverable without knowing which

@@ -429,11 +429,14 @@ keeps envelopes whose scrubbed one-line summary carries the needle, and
 that conversation label. `--result` keeps only `work.result` bodies
 reporting that outcome — the same `WORK_RESULT_OUTCOMES` vocabulary the
 work feed's `--result` filter validates. `hasMore` reports truncation of
-the filtered set. `--frame <cli>` prints the same pending page as one
-bounded block under the BEGIN/END UNTRUSTED AGENT BUS MESSAGES markers
-every other bus read's `--frame` uses — the raw `from`/`to` labels stay
-unauthenticated routing data — and `--json` adds the block as a `framed`
-field beside the page.
+the filtered set. `--matched` adds `matched`, the true pending total across
+the whole filtered set — the same count `agents bus inbox --matched` and
+`channel read --matched` report, so a truncated page still answers how much
+mail waits without paging through it. `--frame <cli>` prints the same
+pending page as one bounded block under the BEGIN/END UNTRUSTED AGENT BUS
+MESSAGES markers every other bus read's `--frame` uses — the raw `from`/`to`
+labels stay unauthenticated routing data — and `--json` adds the block as a
+`framed` field beside the page.
 
 State lives under `$ASHLR_HOME/bus-mailbox`, default `~/.ashlr/bus-mailbox`,
 separate from the task board's `$ASHLR_HOME/bus`. Reads create nothing; corrupt,
