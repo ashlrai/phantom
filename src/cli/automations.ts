@@ -17,6 +17,7 @@
  */
 import { readFile } from 'node:fs/promises';
 import { importRoutines } from '../core/automations/import.js';
+import { formatLocalTimestamp } from '../core/automations/rrule.js';
 
 import {
   AUTOMATION_LANES,
@@ -29,12 +30,13 @@ import {
   disableAutomation,
   enableAutomation,
   fireAutomation,
+  isAutomationRecord,
   type AutomationEngineDeps,
   type AutomationInput,
   type AutomationView,
 } from '../core/automations/index.js';
 
-export const AUTOMATIONS_USAGE = [
+const AUTOMATIONS_USAGE = [
   'Usage: ashlr automations <command>',
   '',
   '  list [--json]                         Automations with last fired, next run, queue, spend, success rate',
@@ -110,12 +112,18 @@ function clean(text: string): string {
   return home && home.length > 1 ? text.split(home).join('~') : text;
 }
 
-function when(iso: string | null): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  const p = (n: number): string => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+function requireSingleId(p: Parsed, verb: string): string {
+  const [id, extra] = p.positional;
+  if (!id || extra !== undefined) throw new UsageError(`${verb} needs exactly one automation id.`);
+  return id;
+}
+
+async function readJsonFile(deps: AutomationsCliDeps, path: string): Promise<{ ok: true; value: unknown } | { ok: false }> {
+  try {
+    return { ok: true, value: JSON.parse(await deps.readFile(path)) };
+  } catch {
+    return { ok: false };
+  }
 }
 
 function viewLines(view: AutomationView): string[] {
@@ -124,7 +132,7 @@ function viewLines(view: AutomationView): string[] {
   return [
     `${a.enabled ? '●' : '○'} ${a.id}  ${a.name}  → ${a.lane}${a.playbookId ? ` (playbook ${a.playbookId})` : ''}`,
     `    ${view.triggerSummary}`,
-    `    last fired ${when(s.lastFiredAt)} · next ${when(s.nextRunAt)} · queue ${s.queued}/${a.queueDepth} · in flight ${s.active}/${a.maxConcurrent} · today ${s.firedToday}/${a.maxPerDay} · spend $${s.spentThisMonthUsd.toFixed(2)}/$${a.spendCapUsd.toFixed(2)} this month · success ${rate}`,
+    `    last fired ${formatLocalTimestamp(s.lastFiredAt) ?? '—'} · next ${formatLocalTimestamp(s.nextRunAt) ?? '—'} · queue ${s.queued}/${a.queueDepth} · in flight ${s.active}/${a.maxConcurrent} · today ${s.firedToday}/${a.maxPerDay} · spend $${s.spentThisMonthUsd.toFixed(2)}/$${a.spendCapUsd.toFixed(2)} this month · success ${rate}`,
     ...(s.lastError ? [`    ! ${s.lastError}`] : []),
   ];
 }
@@ -168,18 +176,16 @@ async function cmdAdd(deps: AutomationsCliDeps, p: Parsed): Promise<number> {
     if (!template) throw new UsageError(`No template "${templateId}". See: ashlr automations templates`);
     input = { ...(template.input as AutomationInput) };
   } else {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(await deps.readFile(file!));
-    } catch {
+    const read = await readJsonFile(deps, file!);
+    if (!read.ok) {
       deps.err(`Could not read ${clean(file!)} as JSON.`);
       return 1;
     }
-    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    if (!isAutomationRecord(read.value)) {
       deps.err('The file must hold one automation object.');
       return 1;
     }
-    input = parsed as Record<string, unknown>;
+    input = read.value;
   }
   const name = str(p, '--name');
   if (name !== undefined) input['name'] = name;
@@ -197,18 +203,16 @@ async function cmdImport(deps: AutomationsCliDeps, p: Parsed): Promise<number> {
   if (p.positional.length || [...p.flags.keys()].some((flag) => !['--from', '--dry-run', '--json'].includes(flag))) throw new UsageError('import takes --from, --dry-run and --json only.');
   const path = str(p, '--from');
   if (!path) throw new UsageError('import needs --from <routines.json>.');
-  let data: unknown;
-  try { data = JSON.parse(await deps.readFile(path)); }
-  catch { deps.err('Could not read routines file as JSON.'); return 1; }
-  const result = await importRoutines(data, p.flags.has('--dry-run'));
+  const read = await readJsonFile(deps, path);
+  if (!read.ok) { deps.err('Could not read routines file as JSON.'); return 1; }
+  const result = await importRoutines(read.value, p.flags.has('--dry-run'));
   if (p.flags.has('--json')) deps.out(JSON.stringify(result, null, 2));
   else deps.out(`${result.dryRun ? 'Would import' : 'Imported'} ${result.imported.length} disabled automations; skipped ${result.skipped.length} existing or duplicate names.`);
   return 0;
 }
 
 async function cmdSwitch(deps: AutomationsCliDeps, p: Parsed, verb: 'enable' | 'disable' | 'remove'): Promise<number> {
-  const [id, extra] = p.positional;
-  if (!id || extra !== undefined) throw new UsageError(`${verb} needs exactly one automation id.`);
+  const id = requireSingleId(p, verb);
   if (verb === 'remove') {
     if (!(await deleteAutomation(id))) { deps.err(`No automation ${id}.`); return 1; }
     deps.out(`Removed ${id} (its history stays in the journal).`);
@@ -221,8 +225,7 @@ async function cmdSwitch(deps: AutomationsCliDeps, p: Parsed, verb: 'enable' | '
 }
 
 async function cmdFire(deps: AutomationsCliDeps, p: Parsed): Promise<number> {
-  const [id, extra] = p.positional;
-  if (!id || extra !== undefined) throw new UsageError('fire needs exactly one automation id.');
+  const id = requireSingleId(p, 'fire');
   const dryRun = p.flags.has('--dry-run');
   const repo = str(p, '--repo');
   const text = str(p, '--text');
