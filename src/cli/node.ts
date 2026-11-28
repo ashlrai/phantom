@@ -47,7 +47,8 @@ phm node capacity [--node <id>] [--out <file>] [--previous <file>] [--json] (mea
 phm node measure [--json] (print the measured --capacity sample for phm node beat)
 phm node route --capacity <file>... --costs <file> --jobs <file> [--outcomes <file>] [--outcomes-ledger] [--runs-dir <dir>] [--nodes <file>] [--exhausted <p,p>] [--json] (node, provider, model scoring; --outcomes-ledger derives lane merge tallies from metrics/jobs.jsonl)
 phm node self-update [--owner <scope>] [--target <x.y.z>] [--json] (plan only: per-node phm version drift)
-phm node bridge [--owner <scope>] [--apply] [--json] (ready.tsv rows that would offload to nodes and why; dry run by default)`;
+phm node bridge [--owner <scope>] [--apply] [--json] (ready.tsv rows that would offload to nodes and why; dry run by default)
+phm node work --node <id> --session <n> [--json] (pull the routed codex-file job, run it under its lease, complete it)`;
 
 /** Usage lines for the given extra verbs, in command-list order. */
 function extraUsageLines(...verbs: string[]): string {
@@ -108,6 +109,7 @@ async function scopedNodeHelp(
     }
     case 'light':
     case 'lanes':
+    case 'work':
       return `${extraUsageLines(verb)}${pointer}`;
     default:
       return null;
@@ -120,6 +122,9 @@ export async function cmdNode(args: string[]): Promise<number> {
   }
   if (args[0] === 'light' && !args.includes('--help') && !args.includes('-h')) {
     return (await import('./node-light.js')).cmdNodeLight(args.slice(1));
+  }
+  if (args[0] === 'work' && !args.includes('--help') && !args.includes('-h')) {
+    return (await import('./node-work.js')).cmdNodeWork(args.slice(1));
   }
   // Only first pool enrollment (`--primary`/`--backup`) must bypass the
   // standalone parser: neither is a node-fleet flag, and `--backup` has no

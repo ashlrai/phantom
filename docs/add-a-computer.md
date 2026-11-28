@@ -177,6 +177,23 @@ phm node enqueue --job demo-1 --owner acme --pack codex-file --task-part "$TASK"
 phm node pull --node <nodeId> --session 1
 ```
 
+On a machine with the `codex` CLI signed in, `phm node work` runs that job
+for you — no agent in the loop:
+
+```sh
+phm node work --node <nodeId> --session 1
+```
+
+`work` pulls the job the router assigned the session, runs a `codex-file`
+job through `codex exec` in a fresh scratch directory (the same pack `pull`
+describes), keeps the node session and job lease renewed for the run's
+duration, and completes the job with the result reference. One job per
+call — run it again for the next. A job `work` cannot run (another pack, or
+secret NAMES it cannot supply) is released back to pending and this session
+is not offered it again until a rejoin; a pack failure releases it plainly
+for another attempt. It is refused on a pool-configured Mac, where
+`phm node worker`/`run-once` already run jobs.
+
 Every command above runs on this computer: the standalone registry is local,
 so producer and node are the same machine and a job enqueued elsewhere never
 reaches this node. To share one queue across computers you control — or to

@@ -62,6 +62,24 @@ const PULL_HELD_WORDS: Record<string, string> = {
   'disk-pressure': 'disk pressure',
 };
 
+/** The one-sentence answer an empty `pull` prints — shared by `phm node pull`
+ * and `phm node work`, which pulls through the same path. An empty pull can
+ * still say why this node takes nothing: a measured capacity hold or an
+ * advertised zero-slot bound (the same words `phm node status` uses), or open
+ * work that fit but routed elsewhere. Any of them means the queue was not
+ * simply empty. */
+export function pullIdleMessage(out: Record<string, unknown>): string {
+  const held = typeof out['held'] === 'string' ? out['held'] : null;
+  const slots = typeof out['slots'] === 'number' ? out['slots'] : null;
+  const open = typeof out['open'] === 'number' && out['open'] > 0 ? out['open'] : null;
+  const why = held !== null ? `this node is held (${PULL_HELD_WORDS[held] ?? held})`
+    : slots === 0 ? 'this node advertises zero job slots'
+    : open !== null ? `${open} open job${open === 1 ? '' : 's'} fit this node but routed to other nodes or wait on a free slot`
+    : null;
+  return why === null ? 'No job for this node. Run: phm node plan'
+    : `No job for this node; ${why}. Run: phm node plan`;
+}
+
 /** Rejoin command per expired node in a status view, keyed by node id. The
  * profile comes from `nodeProfile` — the full advertised owners, caps and
  * slots, not the scope-filtered view fields — so the hint restores exactly
@@ -334,21 +352,7 @@ function text(verb: string, out: Record<string, unknown>, notes?: {
       : `Node ${nodeId} was not left; no live session matches that node and session.`;
   }
   if (verb === 'pull') {
-    if (!out['pulled']) {
-      // An empty pull can still say why this node takes nothing: a measured
-      // capacity hold or an advertised zero-slot bound (the same words
-      // `phm node status` uses), or open work that fit but routed elsewhere.
-      // Any of them means the queue was not simply empty.
-      const held = typeof out['held'] === 'string' ? out['held'] : null;
-      const slots = typeof out['slots'] === 'number' ? out['slots'] : null;
-      const open = typeof out['open'] === 'number' && out['open'] > 0 ? out['open'] : null;
-      const why = held !== null ? `this node is held (${PULL_HELD_WORDS[held] ?? held})`
-        : slots === 0 ? 'this node advertises zero job slots'
-        : open !== null ? `${open} open job${open === 1 ? '' : 's'} fit this node but routed to other nodes or wait on a free slot`
-        : null;
-      return why === null ? 'No job for this node. Run: phm node plan'
-        : `No job for this node; ${why}. Run: phm node plan`;
-    }
+    if (!out['pulled']) return pullIdleMessage(out);
     // Text mode must carry everything a manual runner needs to work the lease:
     // the claim's fencing tokens (renew/complete refuse without them), the job's
     // requirements and secret NAMES, the embedded task text, and paste-ready

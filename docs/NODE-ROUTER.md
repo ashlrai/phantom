@@ -116,9 +116,13 @@ refuses the pair split either way. The claiming
 node's `pull` prints the task text; the `codex-file` pack runs it through
 `codex exec` in a fresh scratch directory, so `codex,pack:codex-file` in
 `--requires` routes only to nodes with codex signed in and the pack
-advertised. A manual runner can also read the printed task, do the work and
-`complete --result` with its own result text — the pack is what an automated
-runner executes, not a requirement on the result.
+advertised. `phm node work --node <id> --session <n>` is the standalone
+runner for that pack: it pulls the routed job, keeps the session and lease
+renewed while `codex exec` runs, then completes with the result reference —
+one job per call, refused on a pool Mac. A manual runner can also read the
+printed task, do the work and `complete --result` with its own result text —
+the pack is what an automated runner executes, not a requirement on the
+result.
 
 `phm node result --job <id> --owner <scope>` is the read-only way back to a
 job's outcome: `pending`, `running` (naming the node whose live claim can act,

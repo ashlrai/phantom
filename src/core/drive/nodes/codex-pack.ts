@@ -21,6 +21,8 @@ export interface CodexFileDeps {
   spawn?: typeof spawn;
   timeoutMs?: number;
   now?: () => Date;
+  /** Aborts the codex child (SIGKILL) when the caller's lease or session is fenced mid-run. */
+  signal?: AbortSignal;
 }
 
 /** Per-job working root: `~/.ashlr-runs/node-work/<jobId>/`, never the home directory. */
@@ -58,6 +60,8 @@ export async function runCodexFilePack(request: { jobId: string; task: string; b
     } catch { return fail('scratch-unavailable'); }
     let tail = Buffer.alloc(0);
     const outcome = await new Promise<'ok' | CodexPackError>(resolve => {
+      // An already-fenced caller never spawns codex at all.
+      if (deps.signal?.aborted) { resolve('codex-timeout'); return; }
       let child: ReturnType<typeof spawn>;
       try {
         child = (deps.spawn ?? spawn)(binary, codexFileArgv(scratch), { cwd: scratch, shell: false,
@@ -65,12 +69,18 @@ export async function runCodexFilePack(request: { jobId: string; task: string; b
       } catch { resolve('codex-spawn-failed'); return; }
       let timedOut = false;
       const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, deps.timeoutMs ?? 25 * 60_000);
+      const onAbort = () => child.kill('SIGKILL');
+      deps.signal?.addEventListener('abort', onAbort, { once: true });
       child.stdout?.on('data', (chunk: Buffer) => {
         tail = Buffer.concat([tail, chunk]);
         if (tail.length > CODEX_OUTPUT_LIMIT) tail = tail.subarray(tail.length - CODEX_OUTPUT_LIMIT);
       });
       child.on('error', () => { clearTimeout(timer); resolve('codex-spawn-failed'); });
-      child.on('close', code => { clearTimeout(timer); resolve(timedOut ? 'codex-timeout' : code === 0 ? 'ok' : 'codex-exit-nonzero'); });
+      child.on('close', code => {
+        clearTimeout(timer);
+        deps.signal?.removeEventListener('abort', onAbort);
+        resolve(timedOut || deps.signal?.aborted ? 'codex-timeout' : code === 0 ? 'ok' : 'codex-exit-nonzero');
+      });
       child.stdin?.on('error', () => { /* close reports the exit */ });
       child.stdin?.end(task);
     });
