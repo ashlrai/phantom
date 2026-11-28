@@ -363,6 +363,7 @@ export async function sendOwnerReply(input: OwnerReplyInput, options: OwnerThrea
       if (state.archivedKeys?.includes(keyDigest(key))) return { status: 'duplicate' as const, idempotencyKey: key };
       const prior = state.messages.find(message => message.direction === 'outbound' && message.idempotencyKey === key);
       if (prior && prior.text !== text) return { status: 'refused' as const, reason: 'A different reply already owns this identity.' };
+      if (prior && prior.replyTo !== inbound.idempotencyKey) return { status: 'refused' as const, reason: 'This reply identity belongs to a different owner request.' };
       const destinations = fanoutChannels(inbound.channel);
       const deliveries: NonNullable<OwnerThreadResult['deliveries']> = [];
       for (const channel of destinations) {
