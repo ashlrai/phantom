@@ -177,6 +177,8 @@ function authFix(job: QueueJobV1, nodes: NodeRecord[], state: NodesState): strin
  * legacy queues retain their load policy. Remaining ties break by node ID.
  * Pure: the same state and clock always produce the same plan. Jobs without an
  * owner scope are never routed, so a legacy job cannot leak across scopes.
+ * The optional owner filters the returned assignments after shared capacity
+ * has been allocated in queue order, just as it is for an unscoped pull.
  */
 export function planRoutes(state: NodesState, now: number, owner?: string): RouteAssignment[] {
   const capacity = nodeCapacityView(state, now);
@@ -189,7 +191,8 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
   const claims = new Map(nodes.map(n => [n.nodeId, activeClaims(state, n, now)]));
   const plan: RouteAssignment[] = [];
   for (const job of state.jobs) {
-    if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now)) continue;
+    if (!job.owner || !routable(job, now)) continue;
+    const visible = owner === undefined || job.owner === owner;
     const reasons = new Map<string, number>();
     let best: NodeRecord | null = null;
     for (const node of nodes) {
@@ -212,9 +215,10 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
       if (host) reserved.set(host.hostId, (reserved.get(host.hostId) ?? 0) + 1);
       load.set(best.nodeId, load.get(best.nodeId)! + CLAIM_LOAD);
       claims.set(best.nodeId, claims.get(best.nodeId)! + 1);
-      plan.push({ jobId: job.id, owner: job.owner, nodeId: best.nodeId });
+      if (visible) plan.push({ jobId: job.id, owner: job.owner, nodeId: best.nodeId });
       continue;
     }
+    if (!visible) continue;
     const requires = job.requires ?? [];
     const inScope = nodes.filter(n => n.owners?.includes(job.owner!));
     // The "no node advertises" claim needs the literal check: a node blocked on
