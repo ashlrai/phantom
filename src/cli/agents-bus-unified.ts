@@ -79,9 +79,10 @@ Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or
 names, never authentication. Messages land in the one local bus store; P0 always
 wakes, P1 and handoffs wake by default, and wake always records its hint.
 post sends a v2 note (or context with --kind context) to any printable routing
-label outside the reserved agent:/group:/dm:/handoff: prefixes — the sink and
-topic mail dm, channel post and the work verbs cannot carry; the sender is
-still a registered identity under the same scrub and wake rules. --kind on
+label outside the reserved agent:/group:/dm:/handoff: prefixes and the
+bus.dead-letter transport sink — the sink and topic mail dm, channel post and
+the work verbs cannot carry, and the work verbs' --to refuses the same sink;
+the sender is still a registered identity under the same scrub and wake rules. --kind on
 dm, post and channel post picks the v2 conversational body kind — note by
 default, context for reference material; the delivery-kind enum inbox reads
 filter by is a different --kind.

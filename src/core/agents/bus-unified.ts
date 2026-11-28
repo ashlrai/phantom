@@ -248,6 +248,23 @@ export async function postChannelMessage(input: ChannelPostInput, options: Unifi
 }
 
 /**
+ * The transport dead-letter sink address — the same literal the status
+ * probe, the unified inbox, fleet-edges and `bus-dead-letter` keep; no
+ * import widens the Tier-1 closure just to name it.
+ */
+const BUS_DEAD_LETTER_ADDRESS = 'bus.dead-letter';
+
+/**
+ * `bus.dead-letter` is the one routing label no unified send may address:
+ * the router files delivery-failure letters there through `appendBusInbox`
+ * directly, and agent mail under it would list as a dead letter it never
+ * was — a false "provably never arrived" in every dead-letter read. The
+ * match is case-insensitive like the reserved prefixes: a case variant is
+ * the same system address, never a new label.
+ */
+const isDeadLetterAddress = (label: string): boolean => label.toLowerCase() === BUS_DEAD_LETTER_ADDRESS;
+
+/**
  * Post a v2 `note` (or `context`) to a plain routing label — the address every
  * other send verb refuses by design: `dm` needs two registered identities,
  * `channel post` needs membership, `work post`/`status` need a job, and the
@@ -256,7 +273,10 @@ export async function postChannelMessage(input: ChannelPostInput, options: Unifi
  * (`fleet.mesh`) or any label a subscriber reads through `comms bus read`,
  * `bus-follow` or an identity's alias matching; the sender is still a
  * registered identity and the mail carries the same sender metadata, scrub,
- * wake and append path as a DM. It is untrusted data: addressing a label
+ * wake and append path as a DM. `bus.dead-letter` — the transport sink only
+ * the router files letters under — is refused alongside the reserved
+ * prefixes, so agent mail can never list as a dead letter it is not. It is
+ * untrusted data: addressing a label
  * grants no authority, reaches no inbox unless the label is one of the
  * target's identity labels, and wakes only by the priority rules.
  */
@@ -272,6 +292,9 @@ export async function postLabelMessage(input: LabelPostInput, options: UnifiedBu
   }
   if (RESERVED_PREFIXES.some(prefix => to.toLowerCase().startsWith(prefix))) {
     return refuse('invalid', 'Address prefix is reserved for the dedicated verbs.');
+  }
+  if (isDeadLetterAddress(to)) {
+    return refuse('invalid', 'Address is reserved for the transport dead-letter sink.');
   }
   const reg = registry(options);
   if ('status' in reg) return reg;
@@ -353,7 +376,7 @@ export async function sendWakeRequest(input: WakeRequestInput, options: UnifiedB
 }
 
 export interface WorkAnnouncementInput extends SendCommon {
-  /** Routing label the announcement addresses; default `leaders`. */
+  /** Routing label the announcement addresses; default `leaders`. The transport dead-letter sink is refused. */
   to?: string;
   jobId: string;
   title: string;
@@ -364,7 +387,7 @@ export interface WorkAnnouncementInput extends SendCommon {
   dispatch?: { tier: 'fast' | 'mid' | 'work' | 'frontier'; scope: string; acceptance: string };
 }
 export interface WorkStatusInput extends SendCommon {
-  /** Routing label the status addresses; default `leaders`. */
+  /** Routing label the status addresses; default `leaders`. The transport dead-letter sink is refused. */
   to?: string;
   jobId: string;
   status: WorkJob['status'];
@@ -374,9 +397,13 @@ export interface WorkStatusInput extends SendCommon {
 /** Work bodies address a plain routing label (default the fleet work sink), never an identity. */
 function workRoute(to: string | undefined): string | UnifiedSendResult {
   const address = to ?? DEFAULT_WORK_ADDRESS;
-  return THREAD.test(address) && scrubSecrets(address) === address
-    ? address
-    : refuse('invalid', 'Work address must be a printable routing label.');
+  if (!THREAD.test(address) || scrubSecrets(address) !== address) {
+    return refuse('invalid', 'Work address must be a printable routing label.');
+  }
+  if (isDeadLetterAddress(address)) {
+    return refuse('invalid', 'Work address is reserved for the transport dead-letter sink.');
+  }
+  return address;
 }
 
 /**

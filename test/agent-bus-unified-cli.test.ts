@@ -688,6 +688,22 @@ describe('phm agents bus (unified)', () => {
       .toMatchObject({ feed: 'ok', job: { status: 'running', statusId: 'cli-wst', postId: 'cli-wpost' } });
   });
 
+  it('refuses the transport dead-letter sink on post and work sends', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    for (const to of ['bus.dead-letter', 'Bus.Dead-Letter']) {
+      expect(await run(['post', '--from', 'atlas', '--to', to, '--text', 'x', '--id', `dl-${to}`]))
+        .toMatchObject({ code: 1, json: { status: 'invalid' } });
+    }
+    expect(await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-DL', '--title', 'x', '--repo', 'a/b',
+      '--to', 'bus.dead-letter', '--id', 'dl-wpost']))
+      .toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['work', 'status', '--from', 'atlas', '--job', 'RQ-DL', '--status', 'done',
+      '--to', 'bus.dead-letter', '--id', 'dl-wst']))
+      .toMatchObject({ code: 1, json: { status: 'invalid' } });
+    // Nothing reached the store: the dead-letter read stays honestly empty.
+    expect((await run(['dead-letters'])).json).toMatchObject({ status: 'ok', letters: [], matched: 0 });
+  });
+
   it('filters inbox and channel reads by --thread', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
