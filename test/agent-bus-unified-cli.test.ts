@@ -772,6 +772,33 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['wakes', '--all', '--result', 'released'])).toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
   });
 
+  it('filters wakes by --referent', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    // A live envelope plus its bus.send hint resolves; a hand-enqueued hint
+    // with no live envelope resolves unresolved.
+    expect(appendBusInbox({ id: 'rf-live', from: 'atlas', to: 'agent:nova', priority: 'P3', ttl: 60_000,
+      body: { kind: 'note', text: 'still here' } }, { root }).status).toBe('posted');
+    for (const id of ['rf-live', 'rf-ghost']) {
+      enqueueBusWake({ kind: 'bus.send', id, from: 'agent:atlas', to: 'agent:nova' }, { root: join(base, 'runs') });
+    }
+    const ids = (json: { wakes: { id: string }[] }) => json.wakes.map(w => w.id);
+    expect((await run(['wakes', 'nova', '--referent', 'resolved'])).json).toMatchObject({ matched: 1 });
+    expect(ids((await run(['wakes', 'nova', '--referent', 'resolved'])).json)).toEqual(['rf-live']);
+    expect(ids((await run(['wakes', 'nova', '--referent', 'unresolved'])).json)).toEqual(['rf-ghost']);
+    // The verdict filter composes with the other wakes filters.
+    expect((await run(['wakes', 'nova', '--referent', 'resolved', '--from', 'ghost'])).json)
+      .toMatchObject({ matched: 0, wakes: [] });
+    // The fleet-wide read resolves the same verdicts.
+    expect((await run(['wakes', '--all', '--referent', 'unresolved'])).json).toMatchObject({ matched: 1 });
+    expect(ids((await run(['wakes', '--all', '--referent', 'unresolved'])).json)).toEqual(['rf-ghost']);
+    // The verdict vocabulary is closed: 'unknown' is never a value because
+    // an unreadable store makes the read unavailable first.
+    expect(await run(['wakes', 'nova', '--referent', 'unknown'])).toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
+    expect(await run(['wakes', 'nova', '--referent', 'bogus'])).toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
+    expect(await run(['wakes', '--all', '--referent='])).toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
+  });
+
   it('filters inbox and channel reads by --priority', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });

@@ -1639,10 +1639,18 @@ export type AllWakesPage =
   | { status: 'ok'; scope: 'fleet'; wakes: AgentWakeRow[]; matched: number; truncated: boolean }
   | { status: 'unavailable' | 'invalid'; reason: string };
 
-/** The filter set every wake read shares: one job id, sender include/exclude, one channel, one priority band, contains text, one v2 thread label, one reply citation, one body-kind discriminator, one work-result outcome, the exclusive upper time bound and one exact hint id. */
-interface WakeFilter { job?: string; from?: string; excludeFrom?: string; channel?: string; contains?: string; priority?: BusPriority; before?: number; id?: string; thread?: string; inReplyTo?: string; bodyKind?: string; result?: WorkResultOutcome }
+/** The referent-resolution verdicts a wakes `--referent` filter accepts —
+ * the two states a successful filtered read can return. `unknown` is never
+ * offered: it is the per-row verdict only an unreadable bus store produces,
+ * and that store makes every referent-dependent read `unavailable` rather
+ * than a page, so a filter value for it could never match. */
+export const WAKE_REFERENT_STATES = ['resolved', 'unresolved'] as const;
+export type WakeReferentState = (typeof WAKE_REFERENT_STATES)[number];
 
-type ParsedWakeFilter = { ok: true; job?: string; from?: string; excludeFrom?: string; channel?: string; containsNeedle?: string; priority?: BusPriority; before?: number; id?: string; thread?: string; inReplyTo?: string; bodyKind?: string; result?: WorkResultOutcome }
+/** The filter set every wake read shares: one job id, sender include/exclude, one channel, one priority band, contains text, one v2 thread label, one reply citation, one body-kind discriminator, one work-result outcome, the exclusive upper time bound, one exact hint id and one referent-resolution state. */
+interface WakeFilter { job?: string; from?: string; excludeFrom?: string; channel?: string; contains?: string; priority?: BusPriority; before?: number; id?: string; thread?: string; inReplyTo?: string; bodyKind?: string; result?: WorkResultOutcome; referent?: WakeReferentState }
+
+type ParsedWakeFilter = { ok: true; job?: string; from?: string; excludeFrom?: string; channel?: string; containsNeedle?: string; priority?: BusPriority; before?: number; id?: string; thread?: string; inReplyTo?: string; bodyKind?: string; result?: WorkResultOutcome; referent?: WakeReferentState }
   | { ok: false; reason: string };
 
 /** Validate the shared wakes filter set before any store is touched. */
@@ -1670,6 +1678,10 @@ function parseWakeFilter(filter: WakeFilter): ParsedWakeFilter {
   const result = filter.result;
   if (result !== undefined && !(WORK_RESULT_OUTCOMES as readonly string[]).includes(result)) {
     return { ok: false, reason: 'Invalid result outcome.' };
+  }
+  const referent = filter.referent;
+  if (referent !== undefined && !(WAKE_REFERENT_STATES as readonly string[]).includes(referent)) {
+    return { ok: false, reason: 'Invalid referent state.' };
   }
   const priority = filter.priority;
   if (priority !== undefined && !BUS_PRIORITIES.includes(priority)) {
@@ -1704,6 +1716,7 @@ function parseWakeFilter(filter: WakeFilter): ParsedWakeFilter {
     ...(inReplyTo === undefined ? {} : { inReplyTo }),
     ...(bodyKind === undefined ? {} : { bodyKind }),
     ...(result === undefined ? {} : { result }),
+    ...(referent === undefined ? {} : { referent }),
     ...(containsNeedle === undefined ? {} : { containsNeedle }) };
 }
 
@@ -1716,10 +1729,10 @@ type WakeRowsPage = { status: 'ok'; wakes: AgentWakeRow[]; matched: number; trun
  * `match` decides addressee scope inside `readBusWakes`, so `matched`
  * counts only rows the whole filter set accepts; one bounded store scan
  * then resolves each row's `claimHolder`/`message` evidence and the
- * `job`/`contains`/`priority`/`thread`/`inReplyTo`/`bodyKind`/`result`
+ * `job`/`contains`/`priority`/`thread`/`inReplyTo`/`bodyKind`/`result`/`referent`
  * verdicts
  * filter on that resolved text — an unreadable queue is `unavailable`,
- * and a `job`/`contains`/`priority`/`thread`/`inReplyTo`/`bodyKind`/`result`
+ * and a `job`/`contains`/`priority`/`thread`/`inReplyTo`/`bodyKind`/`result`/`referent`
  * read
  * whose bus store cannot be read fails closed the same way, never an
  * empty page passed off as "no wakes".
@@ -1734,19 +1747,21 @@ function readWakeRows(sinceAt: number | undefined, options: UnifiedBusOptions, r
     : scanBusInbox({ root: options.root, now: options.now });
   const job = filter.job, containsNeedle = filter.containsNeedle, priority = filter.priority;
   const thread = filter.thread, inReplyTo = filter.inReplyTo, bodyKind = filter.bodyKind;
-  const result = filter.result;
-  // A job, contains, priority, thread, reply-citation, body-kind or
-  // result-outcome verdict
+  const result = filter.result, referent = filter.referent;
+  // A job, contains, priority, thread, reply-citation, body-kind,
+  // result-outcome or referent-state verdict
   // needs the resolved referent; when the store cannot be read every hint's
-  // citation, summary, band, body fields and outcome are unknown, so the
+  // citation, summary, band, body fields, outcome and resolution state are
+  // unknown, so the
   // filtered
   // read fails closed instead of reporting an empty page as "no wakes for
   // this job", "no wakes mentioning this", "no urgent wakes", "no wakes in
   // this thread", "no wakes answering that message", "no wakes about
-  // this body kind" or "no wakes reporting that result".
+  // this body kind", "no wakes reporting that result" or "no resolved or
+  // unresolved wakes".
   if ((job !== undefined || containsNeedle !== undefined || priority !== undefined ||
        thread !== undefined || inReplyTo !== undefined || bodyKind !== undefined ||
-       result !== undefined) &&
+       result !== undefined || referent !== undefined) &&
       scan !== undefined && scan.source === 'unavailable') {
     return { status: 'unavailable', reason: 'Bus store is not readable.' };
   }
@@ -1787,6 +1802,18 @@ function readWakeRows(sinceAt: number | undefined, options: UnifiedBusOptions, r
         : message?.status === 'resolved' ? message.priority : undefined;
       if (band !== priority) return false;
     }
+    if (referent !== undefined) {
+      // The hint's own resolution verdict: a claim-holder hint resolves when
+      // its citing work.status receipt is live, an ordinary hint when its
+      // triggering envelope is. 'unknown' — only an unreadable store
+      // produces it — names no provable state and matches neither value.
+      const holder = contexts.get(row.id);
+      const message = resolved.contexts.get(row.id);
+      const state = typeof holder === 'object' ? 'resolved'
+        : holder !== undefined ? holder
+        : message?.status ?? 'unknown';
+      if (state !== referent) return false;
+    }
     return true;
   });
   return { status: 'ok',
@@ -1799,7 +1826,7 @@ function readWakeRows(sinceAt: number | undefined, options: UnifiedBusOptions, r
     }),
     matched: job === undefined && containsNeedle === undefined && priority === undefined &&
       thread === undefined && inReplyTo === undefined && bodyKind === undefined &&
-      result === undefined ? wakes.matched ?? 0 : shown.length,
+      result === undefined && referent === undefined ? wakes.matched ?? 0 : shown.length,
     truncated: wakes.truncated ?? false };
 }
 
@@ -1924,6 +1951,20 @@ function readWakeRows(sinceAt: number | undefined, options: UnifiedBusOptions, r
  * unreadable bus store answering `unavailable`, `matched` counting the
  * proven matches on the resolved page, and an outcome outside
  * `WORK_RESULT_OUTCOMES` answering `invalid`.
+ * `filter.referent` keeps only hints whose own resolution verdict equals
+ * the value — `resolved` when the hint's referent is live evidence (the
+ * triggering envelope a `bus.send` hint points at, or the citing
+ * `work.status` receipt a claim-holder `wh-…` hint re-derives) and
+ * `unresolved` when the store was read and holds no such evidence
+ * (expired, reclaimed or never posted) — the two states a successful
+ * filtered read can return; `unknown`, the verdict only an unreadable
+ * store produces, is not a value because that store makes the read
+ * `unavailable` first, so "which hints still point at live mail" and
+ * "which hints are dead noise" are each one filtered read. The verdict
+ * needs the resolved referent like every other resolved-referent filter:
+ * an unreadable bus store answers `unavailable`, `matched` counts the
+ * proven matches on the resolved page, and a value outside
+ * `WAKE_REFERENT_STATES` answering `invalid`.
  * `filter.before` keeps only hints recorded strictly before that
  * epoch-ms cutoff — the exclusive upper bound every bus read's `--before`
  * applies on the hint's own queue time, composing with `sinceAt`'s
@@ -1975,7 +2016,7 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
  * carry the same `claimHolder`/`message` resolution `readAgentWakes`
  * annotates, so fleet triage costs the same zero extra reads; the
  * `since`/`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority`/`before`/
- * `thread`/`inReplyTo`/`bodyKind`/`result`
+ * `thread`/`inReplyTo`/`bodyKind`/`result`/`referent`
  * filters behave identically — `channel` keeps only hints whose own `to`
  * label sits under `group:<name>:*`, the room prefix every other bus read's
  * channel filter matches, decided on the address alone inside the
@@ -1984,7 +2025,7 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
  * exclusive upper bound `readAgentWakes`' `filter.before` applies on the
  * hint's queue time — including the fail-closed
  * `unavailable` when a
- * `job`/`contains`/`priority`/`thread`/`inReplyTo`/`bodyKind`/`result`
+ * `job`/`contains`/`priority`/`thread`/`inReplyTo`/`bodyKind`/`result`/`referent`
  * verdict
  * needs a bus store that cannot be read. An unreadable registry or queue is
  * `unavailable`, never an

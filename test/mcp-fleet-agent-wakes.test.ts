@@ -83,13 +83,13 @@ describe('fleet_agent_wakes argument parsing', () => {
       agent: 'agent:planner', since: '1800000000000', before: '1700000000000', job: 'RQ-9',
       from: 'agent:sender', excludeFrom: 'agent:bot', channel: 'ops', priority: 'P0',
       contains: '  Parser   Fix ', id: 'm-9', thread: 'release-plan', inReplyTo: 'env-1', bodyKind: 'work.status',
-      result: 'failed',
+      result: 'failed', referent: 'resolved',
     });
     expect(parsed).toEqual({
       agent: 'agent:planner', since: 1800000000000, before: 1700000000000, job: 'RQ-9',
       from: 'agent:sender', excludeFrom: 'agent:bot', channel: 'ops', priority: 'P0',
       contains: 'parser fix', id: 'm-9', thread: 'release-plan', inReplyTo: 'env-1', bodyKind: 'work.status',
-      result: 'failed',
+      result: 'failed', referent: 'resolved',
     });
   });
 
@@ -134,6 +134,8 @@ describe('fleet_agent_wakes argument parsing', () => {
       { agent: 'a', bodyKind: null }, { agent: 'a', bodyKind: 'x'.repeat(129) },
       { agent: 'a', result: 'bogus' }, { agent: 'a', result: 'released' }, { agent: 'a', result: 'completed' },
       { agent: 'a', result: '' }, { agent: 'a', result: 'FAILED' }, { agent: 'a', result: 5 }, { agent: 'a', result: null },
+      { agent: 'a', referent: 'unknown' }, { agent: 'a', referent: 'bogus' }, { agent: 'a', referent: '' },
+      { agent: 'a', referent: 'RESOLVED' }, { agent: 'a', referent: 5 }, { agent: 'a', referent: null },
     ]) expect(parseFleetAgentWakesArgs(bad)).toBeNull();
   });
 });
@@ -146,13 +148,14 @@ describe('fleet_agent_wakes reader', () => {
       return okPage({ matched: 3 });
     };
     const result = await readFleetAgentWakes(
-      parseFleetAgentWakesArgs({ agent: 'planner', since: '1800000000000', before: '1700000000000', job: 'RQ-9', from: 'agent:sender', channel: 'ops', priority: 'P1', thread: 'release-plan', inReplyTo: 'env-1', bodyKind: 'work.status', result: 'complete' })!,
+      parseFleetAgentWakesArgs({ agent: 'planner', since: '1800000000000', before: '1700000000000', job: 'RQ-9', from: 'agent:sender', channel: 'ops', priority: 'P1', thread: 'release-plan', inReplyTo: 'env-1', bodyKind: 'work.status', result: 'complete', referent: 'unresolved' })!,
       { read });
-    expect(seen).toEqual([['planner', 1800000000000, {}, { job: 'RQ-9', from: 'agent:sender', channel: 'ops', priority: 'P1', before: 1700000000000, thread: 'release-plan', inReplyTo: 'env-1', bodyKind: 'work.status', result: 'complete' }]]);
+    expect(seen).toEqual([['planner', 1800000000000, {}, { job: 'RQ-9', from: 'agent:sender', channel: 'ops', priority: 'P1', before: 1700000000000, thread: 'release-plan', inReplyTo: 'env-1', bodyKind: 'work.status', result: 'complete', referent: 'unresolved' }]]);
     expect(result).toMatchObject({
       schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
       status: 'ok', agent: 'planner', scope: 'identity', matched: 3, truncated: false,
     });
+    if (result.status !== 'ok') throw new Error('unreachable');
     expect(result.wakes).toHaveLength(1);
     expect(result.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
@@ -191,6 +194,7 @@ describe('fleet_agent_wakes reader', () => {
       schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
       status: 'ok', scope: 'fleet', matched: 4, truncated: false,
     });
+    if (result.status !== 'ok') throw new Error('unreachable');
     expect(result.wakes).toHaveLength(1);
     expect(result.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
@@ -214,8 +218,8 @@ describe('fleet_agent_wakes reader', () => {
     const read: typeof readAgentWakes = () => page;
     const result = await readFleetAgentWakes(parseFleetAgentWakesArgs({ agent: 'ghost' })!, { read });
     expect(result).toMatchObject({ status: page.status, reason: page.reason });
-    expect(result.wakes).toBeUndefined();
-    expect(result.matched).toBeUndefined();
+    expect(result).not.toHaveProperty('wakes');
+    expect(result).not.toHaveProperty('matched');
   });
 });
 
@@ -250,6 +254,8 @@ describe('fleet_agent_wakes MCP tool', () => {
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
     expect(tool?.inputSchema.properties?.['result'])
       .toMatchObject({ type: 'string', enum: ['reserved', 'admitted', 'complete', 'failed'] });
+    expect(tool?.inputSchema.properties?.['referent'])
+      .toMatchObject({ type: 'string', enum: ['resolved', 'unresolved'] });
   });
 
   it.each([
@@ -261,6 +267,7 @@ describe('fleet_agent_wakes MCP tool', () => {
     [{ agent: 'a', priority: 'P4' }], [{ agent: 'a', priority: 'high' }], [{ agent: 'a', priority: 5 }],
     [{ agent: 'a', since: 'never' }], [{ agent: 'a', since: 5 }], [{ agent: 'a', before: 'never' }], [{ agent: 'a', before: 5 }],
     [{ agent: 'a', contains: '' }], [{ agent: 'a', contains: 'x'.repeat(513) }], [{ agent: 'a', extra: 1 }],
+    [{ agent: 'a', referent: 'unknown' }], [{ agent: 'a', referent: 'bogus' }], [{ agent: 'a', referent: 5 }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
     const agentWakes = vi.fn();
     const client = await connect({ status: async () => ({}), loop: async () => ({}), agentWakes });
@@ -276,7 +283,7 @@ describe('fleet_agent_wakes MCP tool', () => {
       status: 'ok', agent: 'planner', scope: 'identity',
       wakes: [wake()], matched: 3, truncated: true,
     };
-    const agentWakes = vi.fn(async () => payload);
+    const agentWakes = vi.fn(async (_input: FleetAgentWakesArgs) => payload);
     const client = await connect({ status: async () => ({}), loop: async () => ({}), agentWakes });
     const { parsed } = await callWakes(client, {
       agent: 'planner', since: '1800000000000', job: 'RQ-9', priority: 'P2', contains: 'Parser Fix', result: 'failed',
@@ -284,7 +291,7 @@ describe('fleet_agent_wakes MCP tool', () => {
     expect(agentWakes).toHaveBeenCalledWith(expect.objectContaining({
       agent: 'planner', since: 1800000000000, job: 'RQ-9', priority: 'P2', contains: 'parser fix', result: 'failed',
     }));
-    const args = agentWakes.mock.calls[0]![0] as FleetAgentWakesArgs;
+    const args = agentWakes.mock.calls[0]![0];
     expect(args.from).toBeUndefined();
     expect(args.excludeFrom).toBeUndefined();
     expect(parsed).toEqual(payload);
@@ -297,13 +304,13 @@ describe('fleet_agent_wakes MCP tool', () => {
       status: 'ok', scope: 'fleet',
       wakes: [wake({ to: 'fleet.mesh' })], matched: 2, truncated: false,
     };
-    const agentWakes = vi.fn(async () => payload);
+    const agentWakes = vi.fn(async (_input: FleetAgentWakesArgs) => payload);
     const client = await connect({ status: async () => ({}), loop: async () => ({}), agentWakes });
     const { parsed } = await callWakes(client, { priority: 'P0' });
     // The shared reader sees the parsed args with no agent — the fleet-wide
     // branch inside readFleetAgentWakes picks readAllWakes.
     expect(agentWakes).toHaveBeenCalledWith(expect.objectContaining({ priority: 'P0' }));
-    const args = agentWakes.mock.calls[0]![0] as FleetAgentWakesArgs;
+    const args = agentWakes.mock.calls[0]![0];
     expect(args.agent).toBeUndefined();
     expect(parsed).toEqual(payload);
   });

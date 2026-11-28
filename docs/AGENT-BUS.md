@@ -706,7 +706,7 @@ polling `inbox` in a loop or dropping to the raw-envelope stream.
 `phm agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>]
 [--from <agent>] [--exclude-from <agent>] [--priority P0..P3]
 [--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]
-[--result <reserved|admitted|complete|failed>]` lists wake
+[--result <reserved|admitted|complete|failed>] [--referent <resolved|unresolved>]` lists wake
 hints for the agent — addressed under any spelling that resolves to its
 identity, exact first then lowercase, the same fold the inbox read
 applies — and its
@@ -824,6 +824,19 @@ reports no result outcome, so those hints never match; an
 `unresolved`/`unknown` referent names no provable outcome and never
 matches either, the unreadable-store and `matched` rules are
 `--thread`'s, and an outcome outside `WORK_RESULT_OUTCOMES` answers
+`invalid`. `--referent` keeps only the hints whose own resolution
+verdict equals the given state — the same verdict the row's `message`
+and `claimHolder` annotations report — so "which hints still point at
+live mail" (`resolved`) and "which hints are dead noise" (`unresolved`)
+are each one filtered read. A `bus.send` hint's verdict is its
+`message` resolution — `resolved` while the triggering envelope is
+retained, `unresolved` once it is expired, reclaimed or never posted —
+and a claim-holder `wh-…` hint's verdict is its citation resolution —
+`resolved` when a live `work.status` receipt reproduces it, `unresolved`
+when none does; `unknown`, the verdict only an unreadable bus store
+produces, is never a filter value because that store makes the read
+`unavailable` first. The unreadable-store and `matched` rules are
+`--thread`'s, and a value outside `resolved|unresolved` answers
 `invalid`. `--id`
 keeps only the hint whose own id is strictly equal to the value — the
 triggering envelope's wire id on a `bus.send` hint, the `wh-…`
@@ -848,7 +861,7 @@ cannot be read. Triage no longer costs one `agents bus show` per hint.
 `fleet_agent_wakes` (the isolated fleet MCP tool) serves the same read with
 the same dimensions as arguments — `agent` optional (omitted, the
 fleet-wide `--all` read under `scope: 'fleet'`), `since`/`job`/`from`/
-`excludeFrom`/`channel`/`priority`/`contains`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` the same filters — under the identical
+`excludeFrom`/`channel`/`priority`/`contains`/`thread`/`inReplyTo`/`bodyKind`/`result`/`referent`/`id` the same filters — under the identical
 `readAgentWakes`/`readAllWakes` validation, so an MCP-connected agent reads its wake
 hints, claim-holder citations and resolved referents — or the whole
 fleet's pending hints in one call — without shelling out
