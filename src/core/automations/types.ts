@@ -148,6 +148,12 @@ export interface AutomationTriageRecord {
 /** What a create/update carries (server fills id/v/timestamps). */
 export type AutomationInput = Omit<AutomationV1, 'v' | 'id' | 'createdAt' | 'updatedAt'> & { id?: string };
 
+/** Allowed keys on a create/update body (shared by strict validation and the Verse API). */
+export const AUTOMATION_INPUT_KEYS = [
+  'id', 'name', 'enabled', 'trigger', 'lane', 'playbookId', 'repos', 'instructions',
+  'maxConcurrent', 'maxPerDay', 'queueDepth', 'spendCapUsd', 'dedupeKey', 'triage',
+] as const;
+
 // ---------------------------------------------------------------------------
 // Limits
 // ---------------------------------------------------------------------------
@@ -197,6 +203,7 @@ export const AUTOMATION_DEFAULTS = Object.freeze({
 export const AUTOMATION_ID_PATTERN = /^au_[a-z0-9][a-z0-9-]{1,47}$/;
 export const AUTOMATION_FIRING_ID_PATTERN = /^af_\d{8}T\d{6}_[a-z0-9]{6}$/;
 export const AUTOMATION_REPO_PATTERN = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
+export const AUTOMATION_BRANCH_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
 export const AUTOMATION_LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 :._/+-]{0,49}$/;
 
 // ---------------------------------------------------------------------------

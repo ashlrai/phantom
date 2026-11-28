@@ -23,7 +23,7 @@ export const GROKBOT_NEXT_RESET = '2026-11-01T00:00:00.000Z';
 const root = (): string => join(ashlrHome(), 'routines');
 const strings = (v: unknown): v is string[] => Array.isArray(v) && v.length <= 32 && v.every(identifier) && new Set(v).size === v.length;
 function invalid(): never { throw new Error('Invalid routine document or provider evidence.'); }
-export function parseRoutines(value: unknown): Routine[] {
+function parseRoutines(value: unknown): Routine[] {
   safeJson(value);
   if (!record(value) || !exact(value, ['schema', 'routines']) || value.schema !== 'phantom-routines.v1' ||
       !Array.isArray(value.routines) || value.routines.length > 50) invalid();
@@ -40,7 +40,7 @@ export function parseRoutines(value: unknown): Routine[] {
   if (new Set(rows.map(r => r.id)).size !== rows.length) invalid();
   return rows;
 }
-export function parseRoutineProbe(value: unknown, now: Date): RoutineProbe {
+function parseRoutineProbe(value: unknown, now: Date): RoutineProbe {
   if (!record(value) || !exact(value, ['health', 'quota_state', 'reset_at', 'observed_at', 'expires_at', 'cost', 'capabilities']) ||
       !['ready', 'unhealthy'].includes(String(value.health)) ||
       !['available', 'low', 'exhausted', 'unknown'].includes(String(value.quota_state)) ||

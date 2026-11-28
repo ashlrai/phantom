@@ -34,7 +34,7 @@ export interface ParsedRrule {
 
 export type RruleParse = { ok: true; rule: ParsedRrule } | { ok: false; error: string };
 
-const DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'] as const;
+export const RRULE_DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'] as const;
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
 const FREQS: readonly RruleFreq[] = ['HOURLY', 'DAILY', 'WEEKLY', 'MONTHLY'];
 const KNOWN = new Set(['FREQ', 'INTERVAL', 'BYDAY', 'BYMONTHDAY', 'BYHOUR', 'BYMINUTE']);
@@ -84,8 +84,8 @@ export function parseRrule(input: unknown): RruleParse {
     if (freq === 'MONTHLY') return { ok: false, error: 'BYDAY is not supported with FREQ=MONTHLY (use BYMONTHDAY).' };
     const days: number[] = [];
     for (const code of parts['BYDAY'].split(',')) {
-      const idx = (DAY_CODES as readonly string[]).indexOf(code);
-      if (idx === -1) return { ok: false, error: `BYDAY "${code.slice(0, 8)}" must be one of ${DAY_CODES.join(', ')} (no ordinals).` };
+      const idx = (RRULE_DAY_CODES as readonly string[]).indexOf(code);
+      if (idx === -1) return { ok: false, error: `BYDAY "${code.slice(0, 8)}" must be one of ${RRULE_DAY_CODES.join(', ')} (no ordinals).` };
       if (!days.includes(idx)) days.push(idx);
     }
     byDay = days.sort((a, b) => a - b);
