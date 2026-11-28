@@ -265,7 +265,7 @@ const MAX_OVERLAY_BYTES = 4096;
  * so this is the bar the experiment must clear to be worth adopting — not a
  * forecast — and the statement says so.
  */
-export const TUNING_HYPOTHESIS_TARGET_LIFT_PP = 10;
+const TUNING_HYPOTHESIS_TARGET_LIFT_PP = 10;
 
 /**
  * Turn recurring-failure suggestions (area 'playbook', key

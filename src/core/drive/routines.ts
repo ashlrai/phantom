@@ -1,4 +1,6 @@
 /** Local driver stub contract. Pure routines consume snapshots, never send messages. */
+import { isDriveRecord, isNonNegativeSafeInt } from './pool-routing.js';
+
 export interface DriveStatus {
   schemaVersion: 1;
   observedAt: string;
@@ -20,22 +22,23 @@ export interface DriveReport {
 }
 
 export function parseDriveInputs(statusText: string, jobsText: string): { status: DriveStatus; jobs: DriveJob[] } {
-  const status = JSON.parse(statusText) as DriveStatus;
-  if (!status || status.schemaVersion !== 1 || typeof status.observedAt !== 'string' || !Number.isFinite(Date.parse(status.observedAt)) ||
-      !['green', 'red', 'unknown'].includes(status.main) || !Array.isArray(status.lanes) ||
-      status.lanes.some(lane => !lane || typeof lane.id !== 'string' || !lane.id ||
-        !Number.isSafeInteger(lane.queued) || lane.queued < 0 ||
-        !Number.isSafeInteger(lane.running) || lane.running < 0 ||
+  const rawStatus: unknown = JSON.parse(statusText);
+  if (!isDriveRecord(rawStatus) || rawStatus.schemaVersion !== 1 || typeof rawStatus.observedAt !== 'string' || !Number.isFinite(Date.parse(rawStatus.observedAt)) ||
+      !['green', 'red', 'unknown'].includes(rawStatus.main as string) || !Array.isArray(rawStatus.lanes) ||
+      rawStatus.lanes.some(lane => !isDriveRecord(lane) || typeof lane.id !== 'string' || !lane.id ||
+        !isNonNegativeSafeInt(lane.queued) || !isNonNegativeSafeInt(lane.running) ||
         (lane.paused !== undefined && typeof lane.paused !== 'boolean'))) {
     throw new Error('Invalid drive status snapshot');
   }
-  const jobs = jobsText.split(/\r?\n/).filter(line => line.trim()).map(line => JSON.parse(line) as DriveJob);
-  if (jobs.some(job => !job || typeof job.id !== 'string' || !job.id ||
-      !['queued', 'running', 'completed', 'failed'].includes(job.state) ||
+  const status = rawStatus as unknown as DriveStatus;
+  const rawJobs: unknown[] = jobsText.split(/\r?\n/).filter(line => line.trim()).map(line => JSON.parse(line) as unknown);
+  if (rawJobs.some(job => !isDriveRecord(job) || typeof job.id !== 'string' || !job.id ||
+      !['queued', 'running', 'completed', 'failed'].includes(job.state as string) ||
       typeof job.updatedAt !== 'string' || !Number.isFinite(Date.parse(job.updatedAt)) ||
       (job.prUrl !== undefined && typeof job.prUrl !== 'string'))) {
     throw new Error('Invalid drive jobs journal');
   }
+  const jobs = rawJobs as DriveJob[];
   // Journals may contain multiple transitions. The last record is authoritative.
   return { status, jobs: [...new Map(jobs.map(job => [job.id, job])).values()] };
 }

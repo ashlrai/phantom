@@ -8,14 +8,20 @@ import { ashlrHome } from '../core/cloud/store.js';
 import { listWorkBoard } from '../core/comms/work-board.js';
 import { WORK_ITEM_STATES, type WorkItemState } from '../core/comms/work-item-state.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
+import { agentChannelNameSchema } from '../core/agents/bus-identity.js';
 
-const usage = 'Usage: ashlr fleet work-board [--root <absolute>] [--thread <channel_ref>] [--state <RECEIVED|ASSIGNED|RUNNING|BLOCKED|VERIFIED>] [--since <15m|2h|1d|epoch-ms|ISO>] [--before <15m|2h|1d|epoch-ms|ISO>] [--limit <1..100>] [--json]\n'
+const usage = 'Usage: ashlr fleet work-board [--root <absolute>] [--thread <channel_ref>] [--state <RECEIVED|ASSIGNED|RUNNING|BLOCKED|VERIFIED>] [--since <15m|2h|1d|epoch-ms|ISO>] [--before <15m|2h|1d|epoch-ms|ISO>] [--channel <name>] [--topic <topic>] [--id <envelope-id>] [--limit <1..100>] [--json]\n'
   + 'Prints one line per request: ID STATE as-of=... source=... owner-missing=... owner=... claim=... channel=... ref=...,\n'
   + 'then a footer: items=N truncated=yes|no inbox=ok|unavailable as-of=<now>, plus claims=missing|unavailable\n'
   + 'when the claims table is absent or unreadable (a validated table, even an empty one, prints no claims token).\n'
   + '--state keeps only items the shared classifier placed in that state; --since/--before keep only requests whose\n'
   + 'recorded receivedAt falls inside the [since, before) window — since inclusive, before exclusive, the same bound\n'
-  + 'every bus read applies. The footer then also prints state=<S> and matched=<n>, the true filtered total across\n'
+  + 'every bus read applies. --channel keeps only requests addressed to group:<name>:* — the room\'s whole traffic\n'
+  + 'under every topic — and --topic keeps only requests addressed to a well-formed group:<room>:<topic> label\n'
+  + 'carrying that exact topic component, composing into one room AND one topic; both decide on the request\'s own\n'
+  + 'to label with no registry dependence, the same raw rules every other bus read\'s --channel/--topic applies.\n'
+  + '--id keeps only the request whose own wire id is strictly equal, the same exact-envelope match every bus\n'
+  + 'read\'s --id applies. The footer then also prints state=<S> and matched=<n>, the true filtered total across\n'
   + 'the whole settled scan, so items may be a newest-first slice of it. Read-only.';
 
 /** The shared `15m|2h|1d|epoch-ms|ISO` grammar every bus read's time flag
@@ -28,16 +34,22 @@ function timeBound(value: string): number | null {
 export async function cmdFleetWorkBoard(args: string[]): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(usage); return 0; }
   let root: string | undefined, thread: string | undefined, limit: number | undefined, state: WorkItemState | undefined,
-    since: number | undefined, before: number | undefined, json = false;
+    since: number | undefined, before: number | undefined, channel: string | undefined, topic: string | undefined,
+    id: string | undefined, json = false;
   for (let i = 0; i < args.length; i++) {
     const key = args[i]!;
     if (key === '--json' && !json) { json = true; continue; }
     if (key !== '--root' && key !== '--thread' && key !== '--limit' && key !== '--state'
-      && key !== '--since' && key !== '--before') { console.error(usage); return 2; }
+      && key !== '--since' && key !== '--before' && key !== '--channel' && key !== '--topic' && key !== '--id') {
+      console.error(usage); return 2;
+    }
     const value = args[++i];
     if (!value || value.startsWith('--')) { console.error(usage); return 2; }
     if (key === '--root' && root === undefined) root = value;
     else if (key === '--thread' && thread === undefined) thread = value;
+    else if (key === '--channel' && channel === undefined && agentChannelNameSchema.safeParse(value).success) channel = value;
+    else if (key === '--topic' && topic === undefined && agentChannelNameSchema.safeParse(value).success) topic = value;
+    else if (key === '--id' && id === undefined && /^[\x21-\x7e]{1,128}$/.test(value)) id = value;
     else if (key === '--state' && state === undefined && (WORK_ITEM_STATES as readonly string[]).includes(value)) state = value as WorkItemState;
     else if (key === '--limit' && limit === undefined && /^\d+(?![\s\S])/.test(value)
       && Number(value) >= 1 && Number(value) <= 100) limit = Number(value);
@@ -56,7 +68,9 @@ export async function cmdFleetWorkBoard(args: string[]): Promise<number> {
   if (root !== undefined && (!isAbsolute(root) || root.includes('\0'))) { console.error(usage); return 2; }
   const now = Date.now();
   const board = listWorkBoard({ root: root ?? join(ashlrHome(), 'fleet'), now, limit, channelRef: thread, state,
-    ...(since === undefined ? {} : { since }), ...(before === undefined ? {} : { before }) });
+    ...(since === undefined ? {} : { since }), ...(before === undefined ? {} : { before }),
+    ...(channel === undefined ? {} : { channel }), ...(topic === undefined ? {} : { topic }),
+    ...(id === undefined ? {} : { id }) });
   const asOf = new Date(now).toISOString();
   if (json) { console.log(JSON.stringify({ ...board, asOf })); return 0; }
   for (const item of board.items) {

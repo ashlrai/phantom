@@ -228,7 +228,7 @@ digests. Actual adapters still enforce owner verification, KILL, pause and send 
 
 ## Unified inbox
 
-`phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]`
+`phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--id <item-id>] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..200>] [--json]`
 ([`unified-inbox.ts`](../src/core/comms/unified-inbox.ts)) is the read-only
 roll-up of everything still pending, ranked the way Needs-you ranks: severity
 band, then priority, then expiry, then newest. It aggregates local sources
@@ -258,12 +258,59 @@ replies whose channel fanout is not fully delivered — the delivery side of the
 same mark, which counts a reply answered even when every channel refused it
 (each `owner-delivery` item names the unconfirmed destinations as failed,
 pending or unknown and deep-links the resend that retries only them),
+a live iMessage owner-pairing wait — the one pairing text `phm owner pair
+imessage` or the owner-live self-tick sent to the owner's own handles still
+inside its YES window (`readOwnerPairPending`, the same
+`comms/owner-pair.json` `phm owner pair status` reads, minus the handles —
+only the sent count ever leaves the store; the first own handle answering
+YES binds and anything else binds nothing, so the wait is the owner's own
+step and lists as warn `owner-pair-waiting` with `since` the send time and
+`expiresAt` the real deadline the record keeps; an expired window is a
+closed wait, a bound owner makes any leftover record inert residue, a
+verified-absent state file is `missing` and a file that cannot be read or
+parsed `unavailable` — never an empty wait passed off as fact; deep links
+`phm owner pair status --json` and `phm owner pair imessage`, which checks
+a waiting pair first so re-running it after the YES finishes the binding),
+MASON-INBOX.md entries still owed a channel ack — the `pending` rows of
+the same bounded read `phm fleet inbox-acks` serves (the 256 KiB inbox
+tail, the `queue/inbox-acks.jsonl` ledger and the MASON-OUTBOX/PLAN-LOG
+reply journals, shared through `readInboxAcks` so the two surfaces can
+never disagree): a recorded Mason message whose planner "Got it" ack has
+no ledger row and no answering leader reply. Until the next planner ack
+pass — or `phm fleet inbox-acks --flush` — Mason has no confirmation his
+message landed; entries the ledger already settled (`acked`, `skipped`)
+or that no channel can carry (`no-channel`) are recorded decisions, never
+pending work, and never list. Warn, non-blocking, `since` the entry's
+recorded timestamp and `expiresAt` null — an owed ack waits for the next
+pass, never a guessed deadline. Coverage is the same bounded tail
+`fleet inbox-acks` reads: an absent inbox is `missing` (verified: nothing
+recorded, nothing owed); an unreadable inbox or ack ledger `unavailable`
+— pending is unknown, never an empty ack state passed off as fact; a
+partially readable reply journal `degraded` — pending rows may include
+entries a leader reply already answered, so the set is an upper bound.
+Deep links `phm fleet inbox-acks --flush`, `phm fleet inbox-acks` and
+`phm comms inbox read`,
 outbound drafts awaiting approval — `phm drafts` items plus pending
 Comms-agent reply drafts that have no cos mirror (every non-email transport,
 or an email mirror that failed to write; a mirrored copy lists through its
 `phm drafts` item while pending and still suppresses the Comms record once
 decided, so one pending reply is one item, and items never carry the
-recipient, which can be a handle) — live bus envelopes whose body the claim
+recipient, which can be a handle) — mail in the Comms agent's own inbox
+(`<runsDir>/comms-agent/inbox.json`, the document `phm comms-agent run`
+triages) that no reply-draft record covers: kept mail still awaiting a
+pass, mail whose send the policy refused (a refused send leaves no draft,
+so it lists here — the pending work `phm comms-agent status` counts as
+`inbox` depth but no item-level surface ever showed), each item naming
+the transport and the scrubbed subject only — never `from`, which is a
+handle, body or labels; a Comms draft — pending (already listed under
+`drafts`) or sent (the reply was delivered; archiving the row is the next
+pass's bookkeeping) — covers its `messageId`, so one pending reply stays
+one item. The schema keeps no timestamp, so `since`/`expiresAt` stay
+null; an unreadable or malformed inbox is `unavailable` — the pending set
+is unknown, never an empty inbox — and an unreadable drafts store
+degrades the read, coverage then unproven so every message lists rather
+than suppressing on a guess; deep links `phm comms-agent run` and
+`phm comms-agent drafts` — live bus envelopes whose body the claim
 contract accepts (`isClaimableWork`: a `kind:"work"` body or a protocol-v1
 transport `task` body) with no
 live claim (a live coordination-table row on the envelope's `queue:<id>` key
@@ -398,7 +445,32 @@ names the peer, outcome, consumer and receipt with `since`/`expiresAt` null
 because the journal stamps receipt creation, not the last outcome move, and
 deep-links `phm agentnet peers dispatch --apply`; an absent journal is
 `missing`, an unreadable one `unavailable`, never an empty backlog passed off
-as fact) — plus open session-handoff checkpoints (the same
+as fact) — plus peer mail this host's live-enrolled callsigns are admitted
+to read (the same admission proofs `phm agentnet peers read` runs per session
+and the `peerInbox` section of `phm agents bus status` counts fleet-wide: a
+retained bus envelope counts when a live coordination-ledger row proves this
+host sent it to an enrolled callsign — id, target, send instant, 24h window
+and body digest all matching — or when the private dispatch journal proves
+this host published that work.result outcome to the addressed callsign; until
+now the only surfaces were that bare count and the sessioned `peers read`,
+so admitted mail — a peer's question, review ask or task — was invisible to
+this one pending view. Each admitted envelope whose body the bus source does
+not already own — claimable work, a worker handoff or a
+`work.post`/`work.status`/`work.claim`/`work.release`/`wake` feed body, which
+list under `bus`/`wakes` instead, one pending thing one item (a published
+`work.result` reply stays, since the feed reads it as job evidence and the
+peer-dispatch source lists only unpublished outcomes) —
+lists as a warn `peer-message` naming the enrolled callsigns whose session
+admits it, a scrubbed body summary, `since` the store receipt time and
+`expiresAt` the envelope's own TTL deadline, with
+`phm agentnet peers read --id`, `phm agents bus show` and bare
+`phm agentnet peers read` acts; an absent bindings file or bus store is
+`missing`, an unreadable bindings, ledger, journal or bus store
+`unavailable` — an unreadable journal leaves work.result mail unprovable, so
+the total is unknown rather than a ledger-only undercount — and a bounded
+scan that could not cover every retained receipt degrades the source,
+pending a stated floor, never a complete count passed off as fact) — plus
+open session-handoff checkpoints (the same
 `listSessionHandoffs` bounded journal scan `phm checkpoint handoff
 list`, `fleet_session_handoffs`, the bus-status probe and `work mine`'s
 `sessions` section serve, so a checkpointed session waiting for a
@@ -628,25 +700,188 @@ source — every READY row still lists but its launch state is
 unproven, and the detail says so — an absent queue file is `missing`
 (verified-empty: no READY rows can exist) and an unreadable one
 `unavailable`, never an empty queue passed off as fact; deep links
-`phm queue stuck`, `phm fleet unfed --json`, `phm queue`) — and each item carries `act` deep-link commands (`phm fleet
+`phm queue stuck`, `phm fleet unfed --json`, `phm queue`) — and running
+jobs that are not really running (the same `readStuckJobs`/`jobs.stuck.v1`
+read `phm jobs stuck` and the `--stuck` pass of `phm fleet stray-stop`
+serve, over the dispatchd run markers — `queue/run/<job>.line` open,
+`.fin` absent — so the surfaces can never disagree: until now a dead or
+hung job held its lane's running count — every status, vitals and
+capacity read inflated — while no pending surface named it, since the
+bus, feed, board, queue and channel sources all look at work not yet
+claimed or refused, never at markers that claim a run which is not
+happening; a GHOST — the recorded pid is gone while the marker still
+claims the lane's running slot — lists as warn `stuck-ghost` and STUCK —
+started over 90 minutes ago with the log silent for 30 — as warn
+`stuck-job`, each naming the job id `phm jobs stuck` prints, `since` the
+recorded start reconstructed at the report's whole-minute precision
+(null when the marker kept none — age unknown stays unknown) and
+`expiresAt` null, since a lying marker waits for stray-stop or a finish,
+never a guessed deadline; an unlistable marker directory is `unavailable`
+— the stuck set is unknown, never an empty list passed off as fact —
+unless `queue/run` is verified absent, which is `missing` (no job can
+count as running, so nothing can be stuck); the read never writes —
+closing a ghost marker or stopping a stuck job is `phm fleet stray-stop
+--stuck --apply`'s job, which the self-tick also runs; deep links `phm
+jobs stuck`, `phm fleet stray-stop --stuck --apply`) — and owner-channel
+transport health (the slack and iMessage bridges through `readChannelHealth`
+— the same projection `phm fleet channel-health` and `phm channels` serve —
+plus the Telegram poller through `telegramEnabled` + `readTelegramHealth`,
+the same read `phm comms health --json` serves, so the surfaces can never
+disagree: until now a dead bridge or a stale poller was invisible here —
+`phm channels` could show a channel ready while its process was gone, and an
+agent had to already know which diagnostic to run to learn owner traffic
+was not flowing; a configured bridge that is BLOCKED lists as high
+`channel-blocked`, DEGRADED as warn `channel-degraded` and UNKNOWN as warn
+`channel-unknown` — evidence incomplete or a receipt overdue, never called
+a decision — while a channel nobody configured (`BLOCKED` with
+`configured:false`, the overview's `not-set-up` row) and a LIVE one never
+list, since setup state is not pending work; the telegram leg lists only
+when `telegramEnabled` — the same gate the comms cycle's poll applies — as
+one `channel-degraded` item naming each failed check (a recorded poll
+error, no poll inside the 7-minute liveness window, no successful poll
+yet), and an unreadable main config or a throwing poll read lists
+`channel-unknown` instead; `since`/`expiresAt` stay null throughout —
+health keeps no condition-start time and a degraded channel waits for
+repair, never a guessed deadline — and either leg's own failure degrades
+the source, since a throwing read is itself the degraded/unknown evidence
+and `unavailable`/`missing` never apply to a live probe that always
+resolves; deep links `phm fleet channel-health`, `phm channels slack
+status`, `phm imessage doctor`, `phm comms health --json`, `phm comms
+cycle`, `phm channels`) — and PARKED rows in the dispatch ready queue
+(the same `readFleetQueue` `depDetail` projection `phm fleet
+queue-parked`, `phm fleet parked` and the autopilot's `stale-parked-deps`
+gap serve, over `<runsDir>/queue/ready.tsv` plus `metrics/jobs.jsonl`, so
+the surfaces can never disagree: until now the parked dependency backlog
+had no inbox surface — the router-queue source lists only READY rows in
+`queue/router-queue.md`, so a job parked on `DEPENDENCY GATE` ids was
+invisible to the one view an agent checks for work; each dependency-gated
+row lists once under its own state — gates still lacking a MERGED outcome
+list as info `parked-dep-waiting` naming the unmet gate ids, queued work
+correctly waiting on named jobs, while a row whose gate ids ALL show
+MERGED yet was never unparked lists as warn `parked-dep-stale`, since the
+auto-unpark pass should have freed it already so it is stuck work, not a
+wait — `jobIds` carries the parked job's own id plus the gate ids its
+detail names, so `--job` finds the row under the parked job and under
+every job it waits on; every OTHER parked reason — BYHAND, HOLD,
+MERGERATE, QUOTA and the rest of the free-form `PARKED-<reason>`
+vocabulary — had no inbox surface either, so each non-dependency
+reason+lane group now lists once as info `parked-group`, the same
+`parked REASON (lane): count [jobs]` rollup those reads print, carrying
+the group's true count, its lane and the projection's own eight-job cap
+named as a floor (`+N more` when larger) with `jobIds` the listed ids —
+a non-dependency park is a hold, never a proven gate wait or stale park,
+so it stays info rather than borrowing the dep kinds' verdicts;
+`since`/`expiresAt` stay null throughout — ready.tsv rows keep no park
+timestamp and a parked job waits for its gates, its reason's resolution
+or an unpark pass, never a guessed deadline — and no item is
+Mason-blocking; a missing `ready.tsv`
+is `missing` (verified-empty: no parked rows can exist), an unreadable or
+malformed one `degraded` — the listed rows are a floor, never a complete
+set — and a throwing read `unavailable`, never an empty queue passed off
+as fact; deep links `phm fleet queue-parked`, `phm fleet parked`, `phm
+fleet autopilot --once`) — and FIXUP-MAIN jobs whose published fix PRs
+never reached a terminal outcome (the same `readStuckFixes` fold of
+`<runsDir>/metrics/jobs.jsonl` `phm fleet stuck-fixes` and the needs-you
+strip serve, so the surfaces can never disagree: until now a guardian
+fix that published its PR and then went quiet had no item-level inbox
+surface — the ledger already knew the job id, repo, PR url and publish
+time, but only the fleet command, the runs-history route and the strip
+could see it; each stuck fix lists once — `stuck-fix` at warn, escalated
+to high at the one-hour mark the strip calls urgent — naming the repo,
+the minutes the PR has been silent and deep-linking the PR url in the
+detail, `since` the recorded publish time and `expiresAt` null, since a
+fix PR waits on its merge outcome, never a guessed deadline; `jobIds`
+carries the FIXUP-MAIN job's own id so `--job` finds it; a missing
+`jobs.jsonl` is `missing` (verified-empty: no fix job can be on record),
+an unreadable or ledger-unknown read `unavailable` — the stuck set is
+unknown, never an empty list passed off as fact — and a torn ledger line
+is skipped, never fatal; no item is Mason-blocking; deep links `phm
+fleet stuck-fixes`, `phm fleet main-health`) — and finished work in
+kept worktrees that never became a pull request (the same
+`readStrandedWork`/`findStrandedWork` fold `phm fleet stranded` serves,
+over `queue/status.json`'s kept list, the `metrics/jobs.jsonl` finish
+events, each job's `.publish` sidecar and the queue run markers, so the
+surfaces can never disagree: until now a job that finished with real
+changes and then stopped short of a PR — a publish abort, a
+safety-gate stop, an unexplained result — had no item-level inbox
+surface: the jobs-stuck source reads open run markers, the queue
+sources read ready/router rows, the stuck-fixes source reads published
+fix PRs, and every bus/feed/board read looks at work not yet claimed,
+while the finished diff sat invisible in a kept worktree at risk of
+being reaped or forgotten; each unrecovered stranded row lists once as
+warn `stranded-worktree` naming the job id, repo, lane, cause and diff
+size with the projection's own next step in the detail — `since` the
+recorded finish time (null when the ledger kept none — unknown stays
+unknown) and `expiresAt` null, since stranded work waits for a
+republish or re-run, never a guessed deadline; `jobIds` carries the
+job's own id so `--job` finds it; rows a later job already recovered —
+or a verify already proved on main — never list, their own next step
+saying there is nothing to do; a verified-absent `queue/status.json` is
+`missing` (no kept worktree can be listed, so no finished work can be
+stranded), a kept list that exists but cannot be read or a throwing
+read `unavailable` — the stranded set is unknown, never an empty list
+passed off as fact — and a known read with gaps (an unreadable metrics
+ledger leaves finish times and sizes unknown, so the listed rows are a
+floor) `degraded`; no item is Mason-blocking; deep links `phm fleet
+stranded`, `phm fleet republish` (the pushed-branch recovery
+`abort after push` rows name), `phm fleet kept-worktrees`) — and queued
+jobs dispatch keeps refusing or failing (the same
+`findStuckJobs`/`readDispatchStuckJobs` fold of the `dispatch-events.log`
+tail and the ready list's lane attribution `phm fleet stuck` and the
+`fleet.stuck.v1` row of `phm fleet vitals` serve, so the surfaces can
+never disagree: until now a job the dispatcher could never place — a
+lane refusing its size or repo every tick, a worktree cleanup that
+keeps failing — had no item-level inbox surface, since the
+router-queue source lists only READY rows in `queue/router-queue.md`,
+the queue-parked source lists only PARKED rows, the jobs-stuck source
+reads run markers for jobs already launched, and every bus/feed/board
+read looks at work not yet claimed, while the refused job sat in the
+queue generating refusal events an agent had to already know to look
+for; each stuck row lists once as warn `dispatch-stuck` naming the job
+id `phm fleet stuck` prints — `since` the first recorded refusal or
+failure, the moment the stuck condition began, and `expiresAt` null,
+since a refused job waits for a lane move or a queue edit, never a
+guessed deadline; `jobIds` carries the job's own id so `--job` finds
+it; lane-refusal causes deep-link `phm queue lane <id> <lane>` — the
+steer that moves the row — a worktree cleanup failure deep-links `phm
+fleet worktrees`, and an unrecognised cause deep-links `phm fleet
+dispatch-events` to read the raw lines, every item leading with `phm
+fleet stuck`; the event log is the only witness a job is being
+refused, so `phm fleet stuck`'s own rule applies — a missing or
+unreadable log leaves the stuck set unknown, `unavailable` (pending
+null), never an empty list passed off as fact, while a degraded ready
+read still lists every event-proven job but marks the source
+`degraded` — lane attribution is a floor, never a complete set; no
+item is Mason-blocking; deep links `phm fleet stuck`, `phm queue
+lane`, `phm queue`, `phm fleet worktrees`, `phm fleet
+dispatch-events`) — and each
+item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm fleet
 imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms thread`,
 `phm comms send-owner`, `phm comms status`, `phm inbox show`,
 `phm drafts approve`, `phm comms-agent drafts`,
 `phm fleet bus-claim acquire`, `phm agents bus claim acquire`,
 `phm fleet handoff-receive`, `phm agents conversations`,
-`phm bots handoff`, `phm agentnet peers dispatch`, `phm checkpoint handoff show|list`, `phm fleet org-sync --apply`, `phm fleet org-board`, `phm agents bus post`, `phm comms email-cycle`,
+`phm bots handoff`, `phm agentnet peers dispatch`, `phm agentnet peers read`, `phm checkpoint handoff show|list`, `phm fleet org-sync --apply`, `phm fleet org-board`, `phm agents bus post`, `phm comms email-cycle`,
 `phm fleet email-outbox`,
 `phm bus inbox`, `phm bus ack`, `phm bus thread pending`, `phm bus thread
 ack`, `phm bus task claim`, `phm bus task list`, `phm bus board pending`,
 `phm team approve|deny`, `phm inbox approve|reject`,
 `phm fleet slack-trace`, `phm channels slack status`, `phm channels slack
 run`, `phm channels`, `phm comms cycle`, `phm leader inbox`, `phm imessage
-replies`, `phm leader replies`, `phm comms send-owner`, `phm fleet
+replies`, `phm leader replies`, `phm comms send-owner`, `phm owner pair
+status`, `phm owner pair imessage`, `phm fleet
 coordination board`, `phm fleet coordination inbox --agent`, `phm fleet
 claim-drift`, `phm agents bus show`, `phm agents bus claim list --key`,
 `phm agents bus status`, `phm fleet status`, `phm fleet resume`, `phm
-queue stuck`, `phm fleet unfed --json`, `phm queue`). It never claims, replies, or mutates; a source
+queue stuck`, `phm fleet unfed --json`, `phm queue`, `phm jobs stuck`,
+`phm fleet stray-stop --stuck --apply`, `phm fleet
+channel-health`, `phm channels slack status`, `phm imessage doctor`, `phm
+comms health --json`, `phm comms cycle`, `phm fleet queue-parked`, `phm
+fleet parked`, `phm fleet autopilot --once`, `phm fleet stuck-fixes`,
+`phm fleet main-health`, `phm fleet stranded`, `phm fleet republish`,
+`phm fleet kept-worktrees`, `phm fleet stuck`, `phm queue lane`, `phm
+fleet worktrees`, `phm fleet dispatch-events`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. The bare view also narrows:
@@ -655,13 +890,23 @@ the item's own classification, finer than `--source` where one source emits
 several kinds (the `bus` source's `bus-work`/`bus-handoff`/`bus-dead-letter`
 split, the `board` source's `board-delivery`/`board-task` split) — `--severity
 <info|warn|high>` one
-severity band, `--blocking` only items that block, `--job <id>` only items
-that provably name that job — a bus or mailbox body's `busBodyJobMatch`
-citation, a feed job's id, a board task's fleet item or a delivery on a
+severity band, `--blocking` only items that block, `--id <item-id>` only
+the item whose stable `<source>:<ref>` id strictly equals the value — the
+same exact-id match every bus read's `--id` applies, the one dimension
+that pinpoints a single projected item since `--contains` searches
+title/detail only (never the id) and `--job` matches the citation set —
+`--job <id>` only items
+that provably name that job — a bus, mailbox or peer-mail body's
+`busBodyJobMatch` citation, a feed job's id, a board task's fleet item or a
+delivery on a
 job-carrying thread, a conversation thread's jobs, a teammate task's job, a
 seat's `node-job` handoff (a `bus-claim` ref is a claim key, never a job), a
-peer-dispatch receipt's job, a session-handoff journal's job id or a
-router-queue row's own READY id —
+peer-dispatch receipt's job, a session-handoff journal's job id, a
+router-queue row's own READY id, a jobs-stuck marker's own job id, a
+queue-parked row's own job id, one of the gate ids its detail names, or
+one of a parked group's listed job ids, a stuck-fix row's own
+FIXUP-MAIN job id, a stranded-work row's own job id, or a
+dispatch-stuck row's own job id —
 and `--since <15m|2h|1d|ISO>` only items whose recorded `since` appearance
 time reaches the cutoff, the same inclusive `>=` match every bus read
 `--since` applies; `--before <15m|2h|1d|ISO>` is the exclusive upper bound
@@ -675,7 +920,10 @@ as new or old; and `--contains <text>` only items whose scrubbed `title` or
 `detail` carries the text as a case-insensitive substring with whitespace
 collapsed — the same text the row shows, so a match is always visible in
 the row it selects, while the `act` deep links (commands, never item
-content) stay out of the match. The dimensions AND together. `total`, `omitted` and `items` then
+content) stay out of the match. The dimensions AND together, and `--limit
+<1..200>` keeps only the first N ranked items of the matched view — the same
+slice `GET /api/verse/comms/inbox` and `fleet_comms_inbox` apply, absent
+means every item the 200-item cap returns. `total`, `omitted` and `items` then
 describe
 the matched view and the report echoes the applied `filter`, while `sources`
 keeps every store's real unfiltered pending count — `null` when a source
@@ -683,7 +931,7 @@ could not be read, never a fabricated 0 — a filtered view never
 reports a busy or degraded source as empty. `GET /api/verse/comms/inbox` —
 the desktop and agent read of the same report — accepts the same dimensions
 as query parameters (`source`, `kind`, `severity`, `blocking=true|false`,
-`job`, `since`, `before`, `contains`, each at most once, plus `limit` 1–200 default
+`id`, `job`, `since`, `before`, `contains`, each at most once, plus `limit` 1–200 default
 50), validated by `parseUnifiedInboxQuery` — the same value rules `phm
 comms inbox` and `fleet_comms_inbox` apply — and echoes the applied
 `filter` on the response exactly like

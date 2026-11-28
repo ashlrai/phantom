@@ -62,6 +62,25 @@ export function exactKeys(value: Record<string, unknown>, expected: readonly str
   return actual.length === sorted.length && actual.every((key, index) => key === sorted[index]);
 }
 
+export function strictExactRecord(
+  value: unknown,
+  expected: readonly string[],
+): Record<string, unknown> | null {
+  const row = strictPlainRecord(value);
+  return row !== null && exactKeys(row, expected) ? row : null;
+}
+
+export function pickRecordKeys<T extends object, K extends keyof T>(
+  value: T,
+  keys: readonly K[],
+): Pick<T, K> {
+  return Object.fromEntries(keys.map((key) => [key, value[key]])) as Pick<T, K>;
+}
+
+export function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function canonicalizeJsonValue(
   value: unknown,
   bounds: Pick<CanonicalJsonBounds, 'maxDepth' | 'maxNodes'>,
@@ -137,11 +156,31 @@ export function hmacSha256Hex(key: Buffer, domain: string, value: string | Uint8
   return mac.update(value).digest('hex');
 }
 
+export function timingSafeBufferEqual(left: Uint8Array, right: Uint8Array): boolean {
+  return left.byteLength === right.byteLength && timingSafeEqual(left, right);
+}
+
 export function timingSafeUtf8Equal(left: unknown, right: unknown): boolean {
   if (typeof left !== 'string' || typeof right !== 'string') return false;
-  const leftBytes = Buffer.from(left, 'utf8');
-  const rightBytes = Buffer.from(right, 'utf8');
-  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
+  return timingSafeBufferEqual(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'));
+}
+
+export function digestUnsignedRecordV1(
+  value: unknown,
+  fullKeys: readonly string[],
+  unsignedKeys: readonly string[],
+  bounds: CanonicalJsonBounds,
+  domain: string,
+): string | null {
+  const row = strictPlainRecord(value);
+  if (!row) return null;
+  const unsigned = exactKeys(row, unsignedKeys)
+    ? row
+    : exactKeys(row, fullKeys)
+      ? pickRecordKeys(row, unsignedKeys)
+      : null;
+  const bytes = unsigned ? canonicalJsonBytes(unsigned, bounds) : null;
+  return bytes ? sha256Prefixed(domain, bytes) : null;
 }
 
 export function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
@@ -155,6 +194,10 @@ export function isCanonicalIsoTimestamp(value: unknown, maxLength = 40): value i
   if (typeof value !== 'string' || value.length > maxLength) return false;
   const milliseconds = Date.parse(value);
   return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === value;
+}
+
+export function isCanonicalIsoTimestamp24(value: unknown): value is string {
+  return isCanonicalIsoTimestamp(value, 24);
 }
 
 export function isSafeIntegerInRange(value: unknown, minimum: number, maximum: number): value is number {
@@ -186,18 +229,20 @@ export function decodeStrictUtf8JsonBytes(
   }
 }
 
+function stackSourceVersion(value: unknown): string | null {
+  const source = strictExactRecord(value, STACK_SOURCE_KEYS);
+  if (!source || source['product'] !== 'stack' ||
+    typeof source['version'] !== 'string' || source['version'].length > 80 ||
+    typeof source['commit'] !== 'string' || !GIT_COMMIT_RE.test(source['commit'])) return null;
+  return source['version'];
+}
+
 export function isValidStackSourceV1(value: unknown): value is StackSourceMetadataV1 {
-  const source = strictPlainRecord(value);
-  return Boolean(source && exactKeys(source, STACK_SOURCE_KEYS) && source['product'] === 'stack' &&
-    typeof source['version'] === 'string' && source['version'].length <= 80 &&
-    STACK_SOURCE_VERSION_RE.test(source['version']) &&
-    typeof source['commit'] === 'string' && GIT_COMMIT_RE.test(source['commit']));
+  const version = stackSourceVersion(value);
+  return version !== null && STACK_SOURCE_VERSION_RE.test(version);
 }
 
 export function isUnsupportedStackSourceVersionV1(value: unknown): boolean {
-  const source = strictPlainRecord(value);
-  return Boolean(source && exactKeys(source, STACK_SOURCE_KEYS) && source['product'] === 'stack' &&
-    typeof source['version'] === 'string' && source['version'].length <= 80 &&
-    SEMVER_RE.test(source['version']) && !STACK_SOURCE_VERSION_RE.test(source['version']) &&
-    typeof source['commit'] === 'string' && GIT_COMMIT_RE.test(source['commit']));
+  const version = stackSourceVersion(value);
+  return version !== null && SEMVER_RE.test(version) && !STACK_SOURCE_VERSION_RE.test(version);
 }

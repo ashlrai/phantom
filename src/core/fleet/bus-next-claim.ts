@@ -107,19 +107,31 @@ function claimAddressMatchers(request: BusNextRequest): {
   };
 }
 
+/**
+ * The read-filter half of a `BusNextRequest`, validated once for every claim
+ * surface: `claimNextBusWork` itself and the `validBusWaitClaimRequest` gate
+ * the bounded wait and the work loop/pool option validators share, so a
+ * malformed filter is `invalid` before any scan — never a widened claim and
+ * never a mid-loop `failed`. The rules are exactly the ones the claim scan
+ * applies below.
+ */
+export function validBusNextFilters(request: BusNextRequest): boolean {
+  return busReadContains(request.contains) !== null &&
+    (request.since === undefined || (Number.isSafeInteger(request.since) && request.since >= 0)) &&
+    (request.before === undefined || (Number.isSafeInteger(request.before) && request.before >= 0)) &&
+    (request.priority === undefined || BUS_PRIORITIES.includes(request.priority)) &&
+    (request.channel === undefined || agentChannelNameSchema.safeParse(request.channel).success) &&
+    (request.topic === undefined || agentChannelNameSchema.safeParse(request.topic).success) &&
+    (request.from === undefined || label(request.from)) &&
+    (request.excludeFrom === undefined || label(request.excludeFrom)) &&
+    (request.id === undefined || label(request.id));
+}
+
 export function claimNextBusWork(request: BusNextRequest): BusNextResult {
   const claim = { action: 'acquire' as const, id: request.to, owner: request.owner, leaseMs: request.leaseMs, root: request.root };
   if (!validBusClaimRequest(claim)) return { status: 'invalid' };
   const containsNeedle = busReadContains(request.contains);
-  if (containsNeedle === null) return { status: 'invalid' };
-  if (request.since !== undefined && (!Number.isSafeInteger(request.since) || request.since < 0)) return { status: 'invalid' };
-  if (request.before !== undefined && (!Number.isSafeInteger(request.before) || request.before < 0)) return { status: 'invalid' };
-  if (request.priority !== undefined && !BUS_PRIORITIES.includes(request.priority)) return { status: 'invalid' };
-  if (request.channel !== undefined && !agentChannelNameSchema.safeParse(request.channel).success) return { status: 'invalid' };
-  if (request.topic !== undefined && !agentChannelNameSchema.safeParse(request.topic).success) return { status: 'invalid' };
-  if (request.from !== undefined && !label(request.from)) return { status: 'invalid' };
-  if (request.excludeFrom !== undefined && !label(request.excludeFrom)) return { status: 'invalid' };
-  if (request.id !== undefined && !label(request.id)) return { status: 'invalid' };
+  if (containsNeedle === null || !validBusNextFilters(request)) return { status: 'invalid' };
   const matchers = claimAddressMatchers(request);
   const channelPrefix = request.channel === undefined ? undefined : `group:${request.channel}:`;
   const candidates: BusInboxReceipt[] = [];

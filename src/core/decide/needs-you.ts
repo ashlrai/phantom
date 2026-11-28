@@ -15,10 +15,10 @@
  */
 
 import type { TypeSafeChoiceQuestion } from '../classify/typesafe-client.js';
-import { decide, decideEach, type BatchItem } from './decide.js';
-import { cacheKey } from './cache.js';
+import { decide, decideEach, readNoulAnswer, type BatchItem } from './decide.js';
+import { cacheKey, setLruEntry, touchLruEntry } from './cache.js';
 import { NEEDS_YOU_PRIORITIES } from './registry.js';
-import type { DecideOptions, Decision, DecisionFallbackReason } from './types.js';
+import type { Decision, DecisionCallOptions, DecisionFallbackReason } from './types.js';
 
 export type NeedsYouPriority = (typeof NEEDS_YOU_PRIORITIES)[number];
 export type AttentionSeverity = 'info' | 'warn' | 'high';
@@ -109,7 +109,7 @@ const PRIORITY_QUESTION: TypeSafeChoiceQuestion = {
   },
 };
 
-export type PrioritizeNeedsYouOptions = Omit<DecideOptions<NeedsYouPriority>, 'fallback' | 'interpret' | 'escalateOnly'> & {
+export type PrioritizeNeedsYouOptions = DecisionCallOptions & {
   readonly nowMs?: number;
 };
 
@@ -164,7 +164,7 @@ export interface InterruptContext {
   readonly pushesToday?: number;
 }
 
-export type WorthInterruptingOptions = Omit<DecideOptions<boolean>, 'fallback' | 'interpret' | 'escalateOnly'>;
+export type WorthInterruptingOptions = DecisionCallOptions;
 
 function mustNotSuppress(item: AttentionItem): boolean {
   return item.severity === 'high' || item.blocking === true;
@@ -213,9 +213,8 @@ export async function worthInterrupting(
     // as a general rule, Jev may only suppress when the rule allows it.
     ...(mustNotSuppress(item) ? { escalateOnly: (v: boolean) => (v ? 1 : 0) } : {}),
     interpret: (answers) => {
-      const a = answers['interrupt'];
-      if (!a || a.type !== 'noul') return undefined;
-      return { value: a.noul >= 0.5, confidence: Math.max(a.noul, 1 - a.noul), label: a.noul >= 0.5 ? 'interrupt' : 'hold' };
+      const a = readNoulAnswer(answers, 'interrupt');
+      return a ? { value: a.yes, confidence: a.confidence, label: a.yes ? 'interrupt' : 'hold' } : undefined;
     },
   });
 }
@@ -260,16 +259,10 @@ function rememberAttempt(signature: string, ranked: readonly RankedAttentionItem
   // Transport, disabled/unkeyed and budget failures must recover after one minute.
   const transient = ranked.some((r) => r.path === 'fallback'
     && r.reason !== 'below-threshold' && r.reason !== 'no-answer' && r.reason !== 'escalate-only');
-  attempts.delete(signature);
-  attempts.set(signature, {
+  setLruEntry(attempts, signature, {
     at, retryMs: transient ? TRANSPORT_RETRY_MS : ANSWER_RETRY_MS,
     priorities: new Map(ranked.filter((r) => r.path === 'jev').map((r) => [r.item.id, r.priority])),
-  });
-  while (attempts.size > MAX_ORDERING_ENTRIES) {
-    const oldest = attempts.keys().next().value;
-    if (oldest === undefined) break;
-    attempts.delete(oldest);
-  }
+  }, MAX_ORDERING_ENTRIES);
 }
 
 /**
@@ -283,8 +276,7 @@ export function orderNeedsYouWithJev<I extends AttentionItem>(sorted: readonly I
     const signature = signatureOf(sorted, nowMs);
     const attempt = attempts.get(signature);
     if (attempt && nowMs >= attempt.at && nowMs - attempt.at < attempt.retryMs) {
-      attempts.delete(signature);
-      attempts.set(signature, attempt);
+      touchLruEntry(attempts, signature, attempt);
       const priorities = attempt.priorities;
       const position = new Map(sorted.map((item, i) => [item.id, i] as const));
       return [...sorted].sort((a, b) => {

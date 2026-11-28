@@ -172,6 +172,22 @@ describe('generatorYieldBacklogItems', () => {
     expect(items[0]?.prompt).toContain('4 of 5 recorded autofill:bet decisions');
   });
 
+  it('requires an attributed source and reason for recurring rejection briefs', async () => {
+    const unattributed = [
+      ...recurringRows(' Unknown ', 'duplicate', 4, [4, 3], 'unknown-source'),
+      ...recurringRows('autofill:idea', ' UNKNOWN ', 4, [4, 3], 'unknown-reason'),
+      ...[4, 3, 4, 3].map((day, index) => gen(`reasonless-${index}`, 'autofill:bet', 'rejected', at(day))),
+    ];
+    const options = { repo: REPO, now: NOW };
+    expect(await generatorYieldBacklogItems({ ...options, ledgerText: unattributed.join('\n') })).toEqual([]);
+
+    const valid = recurringRows('autofill:idea', 'duplicate', 4, [4, 3], 'valid');
+    const items = await generatorYieldBacklogItems({ ...options, ledgerText: [...valid, ...unattributed].join('\n') });
+    expect(items).toHaveLength(1);
+    expect(items[0]?.title).toContain('duplicate (4 in 7d)');
+    expect(items[0]?.prompt).toContain('full-window refusal share is unknown');
+  });
+
   it('never emits the unknown-src catch-all and ignores malformed or out-of-window rows', async () => {
     const text = [
       // Unknown src: 10 rejections across 5 days — the catch-all never emits.
@@ -207,6 +223,10 @@ describe('generatorYieldBacklogItems', () => {
     expect(await generatorYieldBacklogItems({ repo: REPO, now: NOW, ledgerText: '   \n  \n' })).toEqual([]);
     const text = recurringRows('autofill:bet', 'stopped_family', 4, [4, 3, 4, 3], 'bet-z').join('\n');
     expect(await generatorYieldBacklogItems({ repo: 'ashlrai/other-repo', now: NOW, ledgerText: text })).toEqual([]);
+    expect(await generatorYieldBacklogItems({ repo: 'another-owner/phantom', now: NOW, ledgerText: text })).toEqual([]);
+    const mixedCase = await generatorYieldBacklogItems({ repo: ' AshlrAI/Phantom ', now: NOW, ledgerText: text });
+    expect(mixedCase).toHaveLength(1);
+    expect(mixedCase[0]!.repo).toBe('AshlrAI/Phantom');
     // A bare repository name still matches the fleet gate but carries no owner/repo field.
     const bare = await generatorYieldBacklogItems({ repo: 'phantom', now: NOW, ledgerText: text });
     expect(bare).toHaveLength(1);
@@ -264,6 +284,29 @@ describe('generatorYieldBacklogItems', () => {
     expect(clipped?.title).toContain('4 retained in 7d');
     expect(clipped?.prompt).toContain('counts cover only the retained decisions');
     expect(clipped?.prompt).not.toMatch(/4 of \d+ recorded/);
+  });
+
+  it.each([
+    ['torn JSON', '{"schema":'],
+    ['invalid timestamp', draft('bad-time', 'autofill:bet', 'invalid')],
+    ['missing job', draft('', 'autofill:bet', at(2))],
+    ['unknown source', draft('unattributed', 'unknown', at(2))],
+  ])('keeps observed recurrence but withholds the share for %s', async (_label, malformed) => {
+    const rows = recurringRows('autofill:bet', 'duplicate', 4, [4, 3], 'partial');
+    const [item] = await generatorYieldBacklogItems({
+      repo: REPO, now: NOW, ledgerText: [...rows, malformed].join('\n'),
+    });
+    expect(item?.prompt).toContain('4 rejections');
+    expect(item?.prompt).toContain('full-window refusal share is unknown');
+    expect(item?.prompt).not.toMatch(/4 of \d+ recorded/);
+  });
+
+  it('keeps the share when an incomplete decision is outside the window', async () => {
+    const rows = recurringRows('autofill:bet', 'duplicate', 4, [4, 3], 'complete');
+    const [item] = await generatorYieldBacklogItems({
+      repo: REPO, now: NOW, ledgerText: [...rows, draft('', 'unknown', at(8))].join('\n'),
+    });
+    expect(item?.prompt).toContain('4 of 4 recorded autofill:bet decisions');
   });
 
   it('reads the real ledger under a runs dir', async () => {

@@ -21,7 +21,7 @@ function stub(repos: unknown[], backlog: unknown) {
 }
 
 it('renders the row with totals and opens Merges on click', async () => {
-  stub([root('example-org/alpha')], { source: 'ok', items: [{ mergeStateStatus: 'DIRTY', updatedAt: null }, { mergeStateStatus: 'CLEAN', updatedAt: null }], counts: { mergeState: { DIRTY: 1, CLEAN: 1 } } });
+  stub([root('example-org/alpha')], { source: 'ok', coverage: { complete: true }, items: [{ mergeStateStatus: 'DIRTY', updatedAt: null }, { mergeStateStatus: 'CLEAN', updatedAt: null }], counts: { mergeState: { DIRTY: 1, CLEAN: 1 } } });
   const openPane = vi.fn();
   render(<GoalsPane host={{ openPane } as never} />);
   expect(await screen.findByText('2 open · 1 DIRTY')).toBeInTheDocument();

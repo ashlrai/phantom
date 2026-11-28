@@ -97,17 +97,47 @@ const DETACHED_SCRIPT_FILE = /\.(?:[cm]?[jt]sx?)$/;
  * The program's only reach outside contrib/ is
  * src/core/authority/protected-paths.ts, and a dependency bump can break
  * it through the shared manifests, so the trigger names those inputs; a
- * new cross-boundary import must extend it. scripts/, examples/, test/
- * and the root configs stay outside every project on their own
- * boundaries — each needs its own verified program before a check can
- * claim it.
+ * new cross-boundary import must extend it. examples/ and the root
+ * configs stay outside every project on their own boundaries — each
+ * needs its own verified program before a check can claim it. test/ is
+ * covered per changed file by runTestTypecheck below, not as a program.
  */
 const CONTRIB_DIR = 'contrib';
 const CONTRIB_ROUTER_DIR = 'contrib/router';
 const ROUTER_PROGRAM_FILE = /\.ts$/;
-const CONTRIB_TS_FILE = /\.[cm]?tsx?$/;
+const TS_FAMILY_FILE = /\.[cm]?tsx?$/;
 const ROUTER_SRC_BOUNDARY = 'src/core/authority/protected-paths.ts';
 const SHARED_MANIFEST_FILE = /^package(?:-lock)?\.json$/;
+
+/**
+ * The scripts/ TypeScript surface is operational tooling — fleet and
+ * evaluator scripts run through tsx (`npm run eval:memory`,
+ * `bench:memory`, `conformance:ecosystem`, ...) and the preparation
+ * evaluator .ts sources bundle into the shipped dist builtin — that no
+ * tsconfig project covers: the backend project includes only src/ and
+ * its program never sees these files, while ESLint lints them but
+ * cannot type-check. tsx transpiles without checking types, so a type
+ * error here ships silently until the script runs — exactly the hole
+ * the contrib check closed for its tree. verify-changed closes it the
+ * same way: one tsc file-list run over every .ts-family file under
+ * scripts/, at any depth, pruned only at node_modules (there is no
+ * documented non-recursive boundary like contrib/router's).
+ *
+ * The program's reach outside scripts/ is the backend src/ tree: the
+ * ~60 direct src imports pull a transitive closure of roughly 2 900 src
+ * files — most of src/core — so the trigger names the whole backend
+ * src/ boundary (the same src/(?!web-ui|raycast) prefix the backend
+ * project selects on) rather than a file list that would silently rot;
+ * a new cross-boundary import needs no trigger edit. A dependency bump
+ * can also break the program through @types, so the shared manifests
+ * join the trigger. docs/, examples/ and the root configs stay outside:
+ * scripts import no test/ module (the shipped fixture bundle rejects
+ * test/ inputs outright), and each remaining tree needs its own verified
+ * program before a check can claim it. test/ gets a file-scoped check
+ * instead — see testTypecheckFiles below.
+ */
+const SCRIPTS_DIR = 'scripts';
+const BACKEND_SRC_FILE = /^src\/(?!web-ui\/|raycast\/)/;
 
 /**
  * Shipped .html pages embed three grammars no other check reads: classic and
@@ -155,6 +185,56 @@ const REALIO_LANE_INPUTS = new Set([
 const VERSE_ROUTE_FILE = /^src\/core\/verse\/.*-api\.ts$/;
 const VERSE_SYNC_IO_CHECKER = 'scripts/check-verse-sync-io.mjs';
 
+/**
+ * The Merge Gate "Check generated files" job regenerates docs/llms.txt from
+ * the docs page tree and verifies bin/ashlr's sha256 is still listed in the
+ * canonical launcher digest manifest, then fails on any drift. verify-changed
+ * runs the same read-only --check modes when a diff can stale either output,
+ * so the verdict lands locally instead of as a red gate step. The index
+ * inputs are every docs markdown page (docs/internal pages are excluded from
+ * the index but still trigger the cheap check), the index source block, the
+ * committed index itself, and the generator plus its page model. The digest
+ * inputs are the launcher bytes, the manifest and the checker.
+ */
+const LLMS_INDEX_INPUT = /^docs\/(?:.*\.md|llms-source\.txt|llms\.txt)$/;
+const LLMS_INDEX_GENERATOR = 'scripts/generate-docs-llms.mjs';
+const LLMS_INDEX_PAGE_MODEL = 'scripts/lib/docs-pages.mjs';
+const LAUNCHER_DIGEST_INPUTS = new Set([
+  'bin/ashlr',
+  'scripts/canonical-launcher-digests.json',
+  'scripts/canonical-launcher-digests.mjs',
+]);
+
+/**
+ * capabilities/generated/ is deterministic codegen output: `phm caps
+ * generate` renders every registered surface/model pair's adapter configs
+ * from capabilities/registry.v1.json through src/core/caps/ (generate,
+ * registry validation, schema, output writer, service). The committed tree
+ * is held honest by test/caps-registry.test.ts's freshness cases, which
+ * otherwise run only inside the backend suite — a diff that stales the
+ * output (a registry edit, a generator change, a hand-edited adapter) used
+ * to pass verify-changed green and fail later in CI. The same suite now
+ * runs here when a generator input or the committed output changes, so an
+ * outside agent gets the drift verdict inside the same minutes-level pass
+ * instead of a queued-suite round trip. The trigger names the registry,
+ * the whole caps module tree (dispatch.ts over-selects harmlessly), the
+ * source imports outside that tree the generator's validation reads —
+ * connectors/profile's assertMetadata, run/engine-registry's
+ * BUILTIN_ENGINE_REGISTRY and run/model-catalog's KNOWN_MODELS — and every
+ * file under capabilities/generated/ so a hand edit fails too. Deletions
+ * count: removing the registry or a generator file stales the output the
+ * same way an edit does.
+ */
+const CAPS_GENERATED_PREFIX = 'capabilities/generated/';
+const CAPS_GENERATOR_PREFIX = 'src/core/caps/';
+const CAPS_GENERATOR_INPUTS = new Set([
+  'capabilities/registry.v1.json',
+  'src/core/connectors/profile.ts',
+  'src/core/run/engine-registry.ts',
+  'src/core/run/model-catalog.ts',
+]);
+const CAPS_FRESHNESS_SUITE = 'test/caps-registry.test.ts';
+
 /** Pure selection: keep deleted paths for the web decision, but never lint them. */
 export function selectChangedFiles(changedPaths, existingPaths) {
   const changed = [...new Set(changedPaths)].filter(Boolean).sort();
@@ -185,10 +265,33 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     mdcFiles: changed.filter((path) => existing.has(path) && /\.mdc$/i.test(path)),
     detachedScriptFiles: changed.filter((path) => existing.has(path) && DETACHED_SCRIPT_TREE.test(path) && DETACHED_SCRIPT_FILE.test(path)),
     contribTypecheck: changed.some((path) =>
-      (path.startsWith(`${CONTRIB_DIR}/`) && CONTRIB_TS_FILE.test(path)) ||
+      (path.startsWith(`${CONTRIB_DIR}/`) && TS_FAMILY_FILE.test(path)) ||
       path === ROUTER_SRC_BOUNDARY || SHARED_MANIFEST_FILE.test(path)),
+    scriptsTypecheck: changed.some((path) =>
+      (path.startsWith(`${SCRIPTS_DIR}/`) && TS_FAMILY_FILE.test(path)) ||
+      SHARED_MANIFEST_FILE.test(path) || BACKEND_SRC_FILE.test(path)),
+    // The backend suites are the last authored TypeScript surface no
+    // check type-checked: ~6 000 .ts-family files under test/ sit outside
+    // every tsconfig project, ESLint lints but cannot type-check, and
+    // vitest transpiles without checking — so a type error in a test
+    // ships silently until it changes runtime behavior. The whole tree
+    // is too large for one file-list verdict inside the per-run budget,
+    // so the check is file-scoped like the lane lints: the changed
+    // .ts-family files themselves are the tsc roots and only diagnostics
+    // located in them fail the run; pre-existing errors in unchanged
+    // files they import print as a WARN count. Deletions carry no file
+    // to check and stay out.
+    testTypecheckFiles: changed.filter((path) =>
+      existing.has(path) && path.startsWith('test/') && TS_FAMILY_FILE.test(path)),
     realioLaneCheck: changed.some((path) => REALIO_LANE_TEST_FILE.test(path) || REALIO_LANE_INPUTS.has(path)),
     verseSyncIoCheck: changed.some((path) => VERSE_ROUTE_FILE.test(path) || path === VERSE_SYNC_IO_CHECKER),
+    llmsIndexCheck: changed.some((path) =>
+      LLMS_INDEX_INPUT.test(path) || path === LLMS_INDEX_GENERATOR || path === LLMS_INDEX_PAGE_MODEL),
+    launcherDigestCheck: changed.some((path) => LAUNCHER_DIGEST_INPUTS.has(path)),
+    capsGeneratedCheck: changed.some((path) =>
+      path.startsWith(CAPS_GENERATED_PREFIX) ||
+      path.startsWith(CAPS_GENERATOR_PREFIX) ||
+      CAPS_GENERATOR_INPUTS.has(path)),
   };
 }
 
@@ -201,7 +304,17 @@ export function selectChangedFiles(changedPaths, existingPaths) {
  * real command. Only interpreters with a matching grammar step classify —
  * python, node, perl, and the POSIX shells `bash -n` parses (sh/bash/dash).
  * zsh, ksh and friends return null and stay unchecked, exactly as before.
+ *
+ * env options that take a separate argument (`-u NAME`, `-C DIR`,
+ * `--unset NAME`, `--chdir DIR`, `--argv0 ARG`) consume the following token,
+ * so without the skip the argument itself would be mistaken for the command
+ * and a `#!/usr/bin/env -u FOO node` script would classify to nothing and
+ * escape its syntax check. Attached forms (`-uFOO`, `--unset=FOO`) already
+ * arrive as one `-` token; `-S`'s payload is the command line itself, so it
+ * stays a plain option skip.
  */
+const ENV_ARG_OPTIONS = new Set(['-u', '-C', '--unset', '--chdir', '--argv0']);
+
 export function shebangInterpreter(firstLine) {
   if (typeof firstLine !== 'string' || !firstLine.startsWith('#!')) return null;
   const tokens = firstLine.slice(2).trim().split(/\s+/).filter(Boolean);
@@ -209,7 +322,15 @@ export function shebangInterpreter(firstLine) {
   let command = tokens[index] ?? '';
   if (/(^|\/)env$/.test(command)) {
     index += 1;
-    while (index < tokens.length && (tokens[index].startsWith('-') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index]))) index += 1;
+    while (index < tokens.length) {
+      const token = tokens[index];
+      if (token.startsWith('-')) {
+        index += ENV_ARG_OPTIONS.has(token) ? 2 : 1;
+        continue;
+      }
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) { index += 1; continue; }
+      break;
+    }
     command = tokens[index] ?? '';
   }
   const base = command.split('/').pop() ?? '';
@@ -1756,7 +1877,7 @@ export function contribSatelliteProgramFiles(root, readdir = readdirSync) {
       if (entry.isDirectory()) {
         if (entry.name === 'node_modules' || child === CONTRIB_ROUTER_DIR) continue;
         walk(child);
-      } else if (entry.isFile() && CONTRIB_TS_FILE.test(entry.name)) {
+      } else if (entry.isFile() && TS_FAMILY_FILE.test(entry.name)) {
         files.push(child);
       }
     }
@@ -1779,6 +1900,33 @@ export function contribProgramFiles(root, readdir = readdirSync) {
 }
 
 /**
+ * Type-check a file-list program in one tsc run with the flags the
+ * contrib and scripts checks share — file-list mode ignores
+ * tsconfig.json, so the flags are the contract, and tsc follows each
+ * program's src/ imports on its own. Diagnostics already carry
+ * path:line. The child gets a generous heap: the scripts src import
+ * closure is a few thousand files, which the default ceiling clips
+ * under load. The caller holds a typecheck slot like the project
+ * checks — a compiler is a compiler on a shared machine.
+ */
+function runFileListTypecheck(root, files, spawn, label) {
+  const result = spawn(process.execPath,
+    ['--max-old-space-size=4096', 'node_modules/typescript/bin/tsc', '--noEmit',
+     '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022',
+     '--strict', '--skipLibCheck', ...files],
+    { cwd: root, encoding: 'utf8', timeout: 300000, killSignal: 'SIGKILL' });
+  if (result.status !== 0) {
+    if (result.stdout) console.log(result.stdout.trimEnd());
+    if (result.stderr) console.error(result.stderr.trimEnd());
+    if (result.error) console.error(result.error.message);
+    console.log(`FAIL ${label} typecheck`);
+    return false;
+  }
+  console.log(`PASS ${label} typecheck`);
+  return true;
+}
+
+/**
  * Type-check the whole contrib program in one tsc run with the flags
  * SUPERVISOR.md documents — file-list mode ignores tsconfig.json, so the
  * flags are the contract, and tsc follows the program's
@@ -1789,19 +1937,144 @@ export function contribProgramFiles(root, readdir = readdirSync) {
  * a compiler is a compiler on a shared machine.
  */
 export function runContribTypecheck(root, files, spawn = spawnSync) {
+  return runFileListTypecheck(root, files, spawn, 'contrib');
+}
+
+/**
+ * Every .ts-family file under scripts/, sorted for a deterministic
+ * command line. scripts/ has no documented non-recursive boundary like
+ * contrib/router's, so the walk covers the whole tree at any depth;
+ * node_modules is pruned — vendored trees are never program roots. An
+ * absent or unreadable directory yields an empty list — the caller
+ * skips rather than fails.
+ */
+export function scriptsProgramFiles(root, readdir = readdirSync) {
+  const files = [];
+  const walk = (rel) => {
+    let entries;
+    try {
+      entries = readdir(resolve(root, rel), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const child = `${rel}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules') continue;
+        walk(child);
+      } else if (entry.isFile() && TS_FAMILY_FILE.test(entry.name)) {
+        files.push(child);
+      }
+    }
+  };
+  walk(SCRIPTS_DIR);
+  return files.sort();
+}
+
+/**
+ * Type-check the whole scripts program in one tsc run — the same
+ * file-list invocation runContribTypecheck documents, because both
+ * trees execute under tsx/node which transpiles without checking types
+ * and no tsconfig project covers either. tsc follows the program's
+ * src/ imports on its own; the scripts closure is a few thousand files,
+ * so the shared 4 GB heap ceiling applies here too.
+ */
+export function runScriptsTypecheck(root, files, spawn = spawnSync) {
+  return runFileListTypecheck(root, files, spawn, 'scripts');
+}
+
+/**
+ * Ambient `any` declarations for the untyped JavaScript modules the
+ * backend suites import — operational .mjs/.js scripts under scripts/
+ * and test/helpers that no tsconfig project or sibling .d.mts covers.
+ * vitest transpiles without checking, so those imports are legal today;
+ * under tsc strict each one is a TS7016 "could not find a declaration
+ * file" error that says nothing about the test's own correctness.
+ * Declaring the wildcards any is the honest type — the modules
+ * genuinely carry none — and file resolution still wins for every
+ * specifier that does resolve to a .ts source, so src/ imports keep
+ * their real types. The file is always a program root in
+ * runTestTypecheck, never a diagnostic target.
+ */
+const TEST_TYPECHECK_SHIM = 'test/untyped-js-imports.d.ts';
+
+/** One tsc diagnostic line: `path(line,col): error|warning TSnnnn: …`. */
+const TSC_DIAGNOSTIC_LINE = /^([^\s].*?)\((\d+),(\d+)\): (?:error|warning) TS\d+/;
+
+/** Repo-relative diagnostic path normalization for changed-file matching. */
+function normalizeTscPath(path) {
+  return path.replace(/\\/g, '/').replace(/^\.\//, '');
+}
+
+/**
+ * Type-check the changed backend test files in one tsc run — the same
+ * file-list invocation the contrib and scripts checks share, plus
+ * --esModuleInterop (the backend tsconfig sets it and suites rely on
+ * default-import interop) and the untyped-JS shim root. Unlike those
+ * whole-program checks the verdict is file-scoped: tsc still follows
+ * each file's imports into src/ and test/helpers, but only diagnostics
+ * located in the changed files themselves fail the run — the same
+ * changed-file boundary the lane lints apply. Diagnostics in unchanged
+ * files are pre-existing debt the diff did not introduce; they print
+ * as a bounded WARN count instead of failing, and are caught when
+ * their own file changes. A non-zero tsc result with no parseable
+ * diagnostics at all (compiler-level failure, spawn error, signal)
+ * still fails.
+ */
+export function runTestTypecheck(root, files, spawn = spawnSync) {
+  const roots = [...new Set([TEST_TYPECHECK_SHIM, ...files])];
   const result = spawn(process.execPath,
     ['--max-old-space-size=4096', 'node_modules/typescript/bin/tsc', '--noEmit',
      '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022',
-     '--strict', '--skipLibCheck', ...files],
+     '--strict', '--skipLibCheck', '--esModuleInterop', '--jsx', 'react-jsx', ...roots],
     { cwd: root, encoding: 'utf8', timeout: 300000, killSignal: 'SIGKILL' });
-  if (result.status !== 0) {
-    if (result.stdout) console.log(result.stdout.trimEnd());
+  if (result.error || result.signal) {
     if (result.stderr) console.error(result.stderr.trimEnd());
     if (result.error) console.error(result.error.message);
-    console.log('FAIL contrib typecheck');
+    console.log('FAIL test typecheck');
     return false;
   }
-  console.log('PASS contrib typecheck');
+  if (result.status === 0) {
+    console.log('PASS test typecheck');
+    return true;
+  }
+  const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+  // tsc prints diagnostic paths relative to cwd — repo paths stay
+  // repo-relative, anything else can come back with `..` segments or
+  // absolute — so both sides resolve against root before comparing.
+  const changed = new Set(files.map((path) => resolve(root, path)));
+  const ownDiagnostics = [];
+  const otherDiagnostics = [];
+  let unparsedErrors = 0;
+  for (const line of output.split('\n')) {
+    const match = line.match(TSC_DIAGNOSTIC_LINE);
+    if (!match) {
+      if (/\berror\b/.test(line)) unparsedErrors++;
+      continue;
+    }
+    (changed.has(resolve(root, match[1])) ? ownDiagnostics : otherDiagnostics).push(line);
+  }
+  if (unparsedErrors > 0 || (ownDiagnostics.length === 0 && otherDiagnostics.length === 0)) {
+    // A non-zero exit the file-scoped read cannot classify: a compiler
+    // or environment failure (bad flags, missing types, spawn-level
+    // error text) rather than file diagnostics.
+    if (result.stdout) console.log(result.stdout.trimEnd());
+    if (result.stderr) console.error(result.stderr.trimEnd());
+    console.log('FAIL test typecheck');
+    return false;
+  }
+  if (otherDiagnostics.length > 0) {
+    const files = [...new Set(otherDiagnostics.map((line) => normalizeTscPath(line.match(TSC_DIAGNOSTIC_LINE)[1])))].sort();
+    const shown = files.slice(0, 10).join(', ');
+    console.log(`WARN test typecheck: ${otherDiagnostics.length} pre-existing diagnostic(s) in ${files.length} unchanged file(s) suppressed (${shown}${files.length > 10 ? ', …' : ''}); they fail when their own file changes`);
+  }
+
+  if (ownDiagnostics.length > 0) {
+    for (const line of ownDiagnostics) console.log(line);
+    console.log('FAIL test typecheck');
+    return false;
+  }
+  console.log('PASS test typecheck');
   return true;
 }
 
@@ -2228,7 +2501,7 @@ function main() {
     const projectScope = projectNames.length > 1
       ? `${projectNames.slice(0, -1).join(', ')} and ${projectNames.at(-1)}`
       : projectNames[0] ?? null;
-    const scope = [projectScope, selection.contribTypecheck && 'contrib'].filter(Boolean).join(' and ') || 'typecheck skipped';
+    const scope = [projectScope, selection.contribTypecheck && 'contrib', selection.scriptsTypecheck && 'scripts', selection.testTypecheckFiles.length > 0 && 'test'].filter(Boolean).join(' and ') || 'typecheck skipped';
     console.log(`verify: ${new Set(changed).size} changed files (${comparison?.mode ?? 'merge-base'}), ${scope}${projects.backend || projects.web || projects.desktop ? ', incremental' : changed.length ? ': no project change' : ': no changes'}`);
     const shebangScripts = selectShebangScripts(changed, existing, (path) => readFirstLine(root, path));
     pythonFiles = [...new Set([...selection.pythonFiles, ...shebangScripts.python])];
@@ -2307,6 +2580,21 @@ function main() {
     }
   } else {
     console.log('PASS docs check skipped: no markdown change or file deletion');
+  }
+  if (selection.llmsIndexCheck) {
+    run('docs llms index freshness', 'scripts/generate-docs-llms.mjs', ['--check']);
+  } else {
+    console.log('PASS docs llms index freshness skipped: no docs page or index input change');
+  }
+  if (selection.launcherDigestCheck) {
+    run('canonical launcher digests', 'scripts/canonical-launcher-digests.mjs', ['--check']);
+  } else {
+    console.log('PASS canonical launcher digests skipped: no launcher or manifest change');
+  }
+  if (selection.capsGeneratedCheck) {
+    run('caps generated freshness', 'scripts/test-ci.mjs', [CAPS_FRESHNESS_SUITE]);
+  } else {
+    console.log('PASS caps generated freshness skipped: no capability registry, generator or generated-output change');
   }
   const preflight = eslintPreflight(root);
   if (!preflight.ok) {
@@ -2502,7 +2790,7 @@ function main() {
   } else {
     run('verse sync-I/O lint', 'scripts/check-verse-sync-io.mjs');
   }
-  if (projects.backend || projects.web || projects.desktop || selection.contribTypecheck) try {
+  if (projects.backend || projects.web || projects.desktop || selection.contribTypecheck || selection.scriptsTypecheck || selection.testTypecheckFiles.length > 0) try {
     const timeout = Number(process.env.PHANTOM_TSC_TIMEOUT_SECONDS ?? 900);
     if (!Number.isFinite(timeout) || !Number.isInteger(timeout * 1000) || timeout * 1000 < 1 || timeout * 1000 > 2_147_483_647) {
       throw new Error('PHANTOM_TSC_TIMEOUT_SECONDS must be a positive number of seconds within the supported timeout range');
@@ -2522,6 +2810,31 @@ function main() {
           } else if (!runContribTypecheck(root, contribFiles)) {
             process.exitCode = 1;
           }
+        }
+      }
+      if (!selection.scriptsTypecheck) {
+        console.log('PASS scripts typecheck skipped: no scripts program input changed');
+      } else {
+        const scripts = parserPackagePreflight(root, 'typescript');
+        if (!scripts.ok) {
+          console.log(`SKIP scripts typecheck: ${scripts.reason}`);
+        } else {
+          const scriptsFiles = scriptsProgramFiles(root);
+          if (scriptsFiles.length === 0) {
+            console.log('PASS scripts typecheck skipped: no program files under scripts/');
+          } else if (!runScriptsTypecheck(root, scriptsFiles)) {
+            process.exitCode = 1;
+          }
+        }
+      }
+      if (selection.testTypecheckFiles.length === 0) {
+        console.log('PASS test typecheck skipped: no changed TypeScript file under test/');
+      } else {
+        const testTs = parserPackagePreflight(root, 'typescript');
+        if (!testTs.ok) {
+          console.log(`SKIP test typecheck: ${testTs.reason}`);
+        } else if (!runTestTypecheck(root, selection.testTypecheckFiles)) {
+          process.exitCode = 1;
         }
       }
       if (projects.backend) {

@@ -44,6 +44,7 @@ export interface TickRouteDecision extends RouteDecision {
   seatDecision: SeatDecision | null;
   /** Original routing-source account identity; host-local and never an admission by itself. */
   selectedAccountHint?: string | null;
+  autoModel?: import('../fleet/lane-auto-model.js').LaneAutoReceipt;
   /**
    * Non-null ⇒ do NOT dispatch this item this tick (parked until a seat
    * reopens, or too large for any eligible seat and must be split — never

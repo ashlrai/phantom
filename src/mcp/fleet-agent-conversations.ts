@@ -71,7 +71,7 @@ const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 const CONVERSATION_KEYS = new Set([
   'agent', 'waiting', 'blocked', 'state', 'job', 'waitingOn', 'since', 'before', 'contains',
-  'inReplyTo', 'id', 'channel', 'priority', 'from', 'excludeFrom', 'to', 'with', 'thread', 'bodyKind',
+  'inReplyTo', 'id', 'channel', 'topic', 'priority', 'from', 'excludeFrom', 'to', 'with', 'thread', 'bodyKind',
   'result', 'kind', 'limit',
 ]);
 const LABEL_KEYS = ['agent', 'job', 'waitingOn', 'inReplyTo', 'id', 'from', 'excludeFrom', 'to', 'with', 'thread', 'bodyKind'] as const;
@@ -103,6 +103,8 @@ export interface FleetAgentConversationsArgs {
   id?: string;
   /** Keep only threads where at least one member message is addressed to `group:<channel>:*` — the shared `--channel` rule. */
   channel?: string;
+  /** Keep only threads where at least one member message is addressed to a well-formed `group:<room>:<topic>` label carrying this exact topic component — the shared `--topic` rule, composing with `channel` into one room AND one topic. */
+  topic?: string;
   /** Keep only threads where at least one member message carries this exact P0..P3 band — the shared `--priority` rule. */
   priority?: BusPriority;
   /** Keep only threads where at least one member message was sent under this agent's labels — the shared `--from` rule. */
@@ -182,6 +184,11 @@ export function parseFleetAgentConversationsArgs(args: Record<string, unknown>):
     if (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success) return null;
     parsed.channel = channel;
   }
+  const topic = args.topic;
+  if (topic !== undefined) {
+    if (typeof topic !== 'string' || !agentChannelNameSchema.safeParse(topic).success) return null;
+    parsed.topic = topic;
+  }
   const priority = args.priority;
   if (priority !== undefined) {
     if (typeof priority !== 'string' || !(BUS_PRIORITIES as readonly string[]).includes(priority)) return null;
@@ -250,6 +257,7 @@ export async function readFleetAgentConversations(
     ...(args.inReplyTo === undefined ? {} : { inReplyTo: args.inReplyTo }),
     ...(args.id === undefined ? {} : { id: args.id }),
     ...(args.channel === undefined ? {} : { channel: args.channel }),
+    ...(args.topic === undefined ? {} : { topic: args.topic }),
     ...(args.priority === undefined ? {} : { priority: args.priority }),
     ...(args.from === undefined ? {} : { from: args.from }),
     ...(args.excludeFrom === undefined ? {} : { excludeFrom: args.excludeFrom }),

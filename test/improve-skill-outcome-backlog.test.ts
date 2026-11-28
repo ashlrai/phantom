@@ -33,6 +33,7 @@ const realFeed = (await vi.importActual<typeof import('../src/core/improve/skill
 const feedMock = vi.mocked(skillOutcomeBacklogItems);
 
 const REPO = 'ashlrai/phantom';
+const CONTENT_HASH = 'a'.repeat(64);
 
 function card(overrides: Partial<SkillCard> = {}): SkillCard {
   return {
@@ -44,6 +45,7 @@ function card(overrides: Partial<SkillCard> = {}): SkillCard {
     summary: 'Run the focused contract before broader verification.',
     status: 'verified',
     source: 'verified-proposal',
+    contentHash: CONTENT_HASH,
     ...overrides,
   };
 }
@@ -73,6 +75,7 @@ function outcomeRow(
   return {
     skillId,
     skillRevision,
+    skillContentHash: CONTENT_HASH,
     selections,
     outcomes: { merged: selections },
     realized,
@@ -184,6 +187,37 @@ describe('skillOutcomeBacklogItems', () => {
       outcomes: summary([outcomeRow('skill.unknown', 1, recurring)]),
       corpus: corpus([card()]),
     })).toEqual([]);
+  });
+
+  it('requires the outcome digest to match the current revision across the corpus', async () => {
+    const matching = card();
+    const different = card({ contentHash: 'b'.repeat(64), ts: '2026-07-09T12:00:00.000Z' });
+    const sibling = card({ skillId: 'skill.sibling' });
+    const observed = outcomeRow(matching.skillId, 1, recurring);
+    const siblingOutcome = outcomeRow(sibling.skillId, 1, recurring);
+
+    for (const [cards, row] of [
+      [[different], observed],
+      [[matching, different], observed],
+      [[different, matching], observed],
+      [[matching], { ...observed, skillContentHash: undefined }],
+      [[card({ contentHash: undefined })], observed],
+    ] as const) {
+      const items = await skillOutcomeBacklogItems({
+        repo: REPO,
+        outcomes: summary([row, siblingOutcome]),
+        corpus: corpus([...cards, sibling]),
+      });
+      expect(items).toHaveLength(1);
+      expect(items[0]?.prompt).toContain(sibling.skillId);
+    }
+
+    const items = await skillOutcomeBacklogItems({
+      repo: REPO,
+      outcomes: summary([{ ...observed, skillRevision: 2 }]),
+      corpus: corpus([{ ...matching, revision: 2 }, different]),
+    });
+    expect(items).toHaveLength(1);
   });
 
   it('withholds briefs for conflicting statuses on the latest revision regardless of row order', async () => {

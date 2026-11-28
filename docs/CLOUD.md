@@ -227,8 +227,9 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
 - **Discovered items** are added by `phm improve discover` and the
   scheduler's refresh: a red default branch, issues someone with triage
   rights labelled `phantom`, evidence-backed proposals, the fleet's own
-  outcome learning — recurring breakage, revert, dirty, fixup and low-merge
-  patterns the jobs ledger and dispatch log already prove become items
+  outcome learning — recurring breakage, revert, dirty, fixup,
+  empty-failure, launch-death and low-merge patterns the jobs ledger and
+  dispatch log already prove become items
   whose ids embed the stable `improve-<hash>` job id, so refreshes add only new
   patterns — the nightly local retro's proposals, the recurring
   verification, scope, safety, review and execution findings it mines from
@@ -441,7 +442,15 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   inside the 7-day window, the CONTRACT-M334 stage-3 bar being zero; a
   divergence item emits while the window holds at least 50 shadowed
   decisions and the measured divergence rate reaches the stage-2
-  tolerance of 2%, naming the largest recorded backend disagreements. A
+  tolerance of 2%, naming the largest recorded backend disagreements.
+  The same journal also feeds the stage-2 exit-criteria verdict itself,
+  evaluated over the full journal rather than the window: once the
+  journal holds the contract's own 200-decision bar, a soak that clears
+  the criteria (under 2% divergence, zero safety-relevant) becomes an
+  item queueing the stage-3 `gateway` default flip, and a cumulative
+  record that fails them becomes an item naming the blocker the window
+  cannot see — an old safety-relevant row or an all-time rate over
+  tolerance bars the flip for the life of the append-only journal. A
   missing or unreadable fabric directory emits nothing, and rows emit
   only for the fleet's own repository since the shadow covers this
   install's dispatches —
@@ -493,6 +502,35 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   truncated tails are stated as lower bounds, and rows emit only for
   the fleet's own repository since the reaper is this install's
   machinery —
+  and the dispatchd guard's anomaly ledger, the
+  `{ts, job, kind, detail}` rows `dispatchd_guard.py`'s `alert()`
+  appends to `metrics/anomalies.jsonl` under the fleet runs
+  directory — at most one per job+kind per hour while a condition
+  holds, alongside point-in-time `bus/eo/ANOMALY-<job>-<kind>.md`
+  snapshots the next alert overwrites (the ops-side guard the live
+  `~/.ashlr-runs/bin/dispatchd.py` imports; `contrib/mac/dispatchd.py`
+  carries no guard module). Kinds are `no_progress` (a job in the
+  dispatcher's own alive set whose `<job>.log` went untouched for
+  over an hour), `reap_rate` and `launch_rate` (the job's
+  trailing-hour counts in `queue/breaker.json`'s `_rate` ledger past
+  the per-hour bars). Until now the ledger was write-only audit
+  with no reader at all — the bus snapshots are per-alert state,
+  not a trend — while the sibling stuck-job feed reads the
+  phantom-side reaper's ledgers, a different evidence class
+  covering only jobs that reaper can see. A (kind, job) cell
+  becomes an item while its rows reach the recurring bar of three
+  across at least two distinct UTC days inside the 7-day window —
+  the guard alerts at most hourly, so the prompt quotes the
+  recorded detail (the growing 'log idle' minutes show whether the
+  silence kept deepening) rather than claiming independent
+  recurrences — and each kind's fleet-wide cell becomes an item
+  while it spans at least three distinct jobs across the same
+  days; lane and repo attribution joins `metrics/jobs.jsonl` as
+  enrichment that degrades to 'unknown' rather than suppressing
+  the guard evidence, each kind folds only its own rows, truncated
+  tails are stated as lower bounds, and rows emit only for the
+  fleet's own repository since the journal describes this
+  install's dispatcher —
   and the cloud lesson holdout trial's adverse verdicts, the
   randomized served-vs-holdout landing comparison `lessonTrial`
   (src/core/improve/lesson-trial.ts) folds from the cloud task files
@@ -556,8 +594,11 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   loop's own measured verdicts never became work). A signal becomes
   an item at the recurring bar of three distinct proposals: registered
   proposals with a recorded PR but no `measured` event past the
-  24-hour grace — registration is automated but the later verbs are
-  manual and unscheduled, so the scorecard starves — is a
+  24-hour grace — registration, checkout-free observation and bounded
+  measurement (`syncImproveMeasurements`, its own scheduler job driving
+  `measureAt` on the fleet mirror) are all automated, so a stall now
+  means the pass cannot reach the proposal — no mirror, a closed PR, a
+  metric that never measures — is a
   current-state stall tally; in-window `measured` events that keep
   returning no value become an item at three recorded events across
   two distinct proposals, quoting the recorded reasons; measured
@@ -631,9 +672,10 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   inside the 7-day window — with rows whose pool field went unrecorded
   grouping as the calibration arm's own 'unknown' cell, in-flight jobs
   absent by design and never counted. A missing, unreadable or truncated
-  ledger emits nothing. A clipped prefix can change the majority and
-  first-row attribution. Rows failing the writer's closed contract are
-  skipped, and another repository emits nothing since the ledger is
+  ledger emits nothing. An invalid JSON row or a row failing the writer's
+  closed contract also withholds all reward briefs. Either omitted or
+  invalid rows could change the majority and first-row attribution.
+  Another repository emits nothing since the ledger is
   this install's dispatch record —
   and the job-control steering ledger's recurring unacknowledged
   requests, the fleet.job.control.v1 rows `phm job <action>`, POST
@@ -1448,9 +1490,10 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   adverse rows across two distinct UTC days inside the 7-day window —
   identical receipt lines (ignoring surrounding whitespace) count once
   toward both recurrence and recorded retry totals. Distinct lines can
-  contribute even when they share a timestamp. The job latency report also
-  counts identical timestamped Git-operation receipts once in its timing,
-  failure, retry, and cross-lane overlap tallies. Undated observations
+  contribute even when they share a timestamp. The job latency report
+  counts timestamped Git-operation receipts with identical JSON content
+  once in its timing, failure, retry, and cross-lane overlap tallies,
+  even if the key order or whitespace changes. Undated observations
   retain their per-row counts and supply no overlap evidence. For recurrence,
   index.lock cells count rows recorded `failed`, fetch/push cells
   count rows whose `retries` is a recorded positive integer, timed
@@ -1471,7 +1514,13 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   wall time into one stage never became work). For phases bounded by PR
   events, fleet job latency and pulse merge latency withhold a sample when
   publish, CI, merge or close receipts identify conflicting PRs within the
-  span. Undated PR receipts can also make the span ambiguous. A phase emits only
+  span. Undated PR receipts can also make the span ambiguous. A batch claim
+  at either endpoint or inside the span withholds the sample. A solo claim
+  follows the same rule after queue wait, with an exception for a claim
+  sharing the phase's starting launch timestamp. Undated claims also withhold
+  affected samples. Queue wait includes solo claims because failed attempts
+  are part of the admission delay.
+  A phase emits only
   when measured on at least ten job attempts and carrying at least
   six hours of recorded wait across the bounded tail — enough
   samples that the total is not one fluke and enough accumulated

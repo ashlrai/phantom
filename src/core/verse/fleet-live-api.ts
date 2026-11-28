@@ -73,6 +73,7 @@ import {
   FLEET_ENGINES,
   GATE_ORDER,
   REPO_HOLD_KINDS,
+  STALE_STANDING_TICK_REASON,
   VERSE_FLEET_LIVE_PATH,
   type FleetEngine,
   type FleetFunnelStage,
@@ -1386,7 +1387,7 @@ export async function buildFleetLiveSnapshot(d: FleetLiveDeps = deps): Promise<B
         busy: busy[lane] ?? 0,
         capReason: state === 'dark' || state === 'stopped' || state === 'paused'
           ? stateReason ?? 'The fleet is not running.'
-          : 'No standing tick has reported lanes in the last 10 minutes.',
+          : STALE_STANDING_TICK_REASON,
       }));
 
   // ── Funnel ──────────────────────────────────────────────────────────────
@@ -1982,6 +1983,15 @@ export const handleFleetLiveApi: ApiModule = async (ctx, req, res, path, method)
     }
     const { readFleetQueue } = await import('../fleet/runs-parked-queue.js');
     const { sanitizePublicJson } = await import('../util/public-json.js');
+    const { readFleetReplica, refreshFleetReplicaOnRead } = await import('../fleet/fleet-replica.js');
+    await refreshFleetReplicaOnRead();
+    const observation = readFleetReplica(deps.now());
+    if (observation) {
+      const { replica, source } = observation;
+      if (!replica) sendJson(res, 503, { error: source.reason, source });
+      else sendJson(res, 200, { ...replica.queue, skips: replica.queue.skips.slice(0, Math.min(200, Math.max(1, limit ?? 25))), source });
+      return true;
+    }
     const queue = await readFleetQueue({ limit });
     // Keep the stuck read out of runs-parked-queue.ts: that module sits in the
     // Tier-1 import closure and a literal import() of queue/stuck.js would grow
@@ -2031,9 +2041,16 @@ export const handleFleetLiveApi: ApiModule = async (ctx, req, res, path, method)
         sendInvalid(res, `unknown query parameter: ${key}`);
         return true;
       }
+      const { readFleetLiveReplica, refreshFleetReplicaOnRead, stampLocalFleetSnapshot } = await import('../fleet/fleet-replica.js');
+      await refreshFleetReplicaOnRead();
+      const replica = readFleetLiveReplica(deps.now());
+      if (replica) {
+        sendJson(res, 200, replica);
+        return true;
+      }
       ensureRefresher();
       const current = cache && deps.now() - cache.atMs <= GET_MAX_AGE_MS ? cache : await refresh();
-      sendJson(res, 200, current.snapshot);
+      sendJson(res, 200, stampLocalFleetSnapshot(current.snapshot, deps.now()));
       return true;
     }
     if (method === 'POST') {

@@ -24,7 +24,17 @@
  * inside the `[since, before)` window — since inclusive, before exclusive,
  * the same bound every bus read applies — resolved through the shared
  * `15m|2h|1d|epoch-ms|ISO` grammar against this server's clock; under a time
- * bound the board reports `matched` the same way `state` does. */
+ * bound the board reports `matched` the same way `state` does.
+ * `?channel=`/`?topic=`/`?id=` are the address filters every bus read
+ * shares, decided on each request envelope's own `to`/`id` fields with no
+ * registry dependence: `channel` keeps requests addressed to
+ * `group:<channel>:*` — the room's whole traffic under every topic —
+ * `topic` keeps requests addressed to a well-formed `group:<room>:<topic>`
+ * label carrying that exact topic component through the shared
+ * `groupAddressTopicOf` match, composing with `channel` into one room AND
+ * one topic, and `id` keeps only the request whose own wire id is strictly
+ * equal. Under any of them the board reports `matched` the same way a
+ * time bound does. */
 import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { ApiModule } from './api-modules.js';
@@ -38,6 +48,7 @@ import {
 } from '../comms/work-board.js';
 import { WORK_ITEM_STATES, type WorkItemState } from '../comms/work-item-state.js';
 import { parseSince } from '../fleet/agent-messages.js';
+import { agentChannelNameSchema } from '../agents/bus-identity.js';
 import { workResultBody, type WorkResultBody } from '../comms/work-result-body.js';
 import { postBusReply, replyResult, type ReplyResult } from '../fleet/bus-reply-post.js';
 import { sanitizePublicJson } from '../util/public-json.js';
@@ -50,11 +61,13 @@ export const VERSE_FLEET_WORK_RESULT_PATH = `${VERSE_FLEET_WORK_BOARD_PATH}/resu
 export const WORK_RESULT_MAX_BODY_BYTES = 16 * 1024;
 
 const MAX_THREAD_CHARS = 200;
+const MAX_ADDRESS_CHARS = 128;
+const ADDRESS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 export interface FleetWorkBoardApiDeps {
   /** Reader seam for tests. Default: listWorkBoard() at the server fleet root. */
   read?: (opts: { root: string; now: number; limit?: number; channelRef?: string; state?: WorkItemState;
-    since?: number; before?: number }) => WorkBoardResult;
+    since?: number; before?: number; channel?: string; topic?: string; id?: string }) => WorkBoardResult;
   /** Clock seam for tests; stamps asOf and feeds the classifier. */
   now?: () => Date;
   /** Poster seam for tests. Default: postBusReply() at the default fleet root, as the CLI. */
@@ -197,6 +210,25 @@ export function createFleetWorkBoardApi(deps: FleetWorkBoardApiDeps = {}): ApiMo
       }
       before = resolved;
     }
+    // The shared bus address filters, validated on the same strict
+    // channel-name grammar every other bus read's --channel/--topic takes;
+    // `id` takes the printable routing-label bound every bus --id read
+    // validates. A malformed value is a 400, never a silently widened match.
+    const channel = params.get('channel');
+    if (channel !== null && !agentChannelNameSchema.safeParse(channel).success) {
+      sendJson(res, 400, { error: 'channel takes a bus channel name (a-z, 0-9, _ -; 1-32 chars).' });
+      return true;
+    }
+    const topic = params.get('topic');
+    if (topic !== null && !agentChannelNameSchema.safeParse(topic).success) {
+      sendJson(res, 400, { error: 'topic takes a bus channel name (a-z, 0-9, _ -; 1-32 chars).' });
+      return true;
+    }
+    const id = params.get('id');
+    if (id !== null && (id.length > MAX_ADDRESS_CHARS || !ADDRESS_LABEL.test(id))) {
+      sendJson(res, 400, { error: `id takes a printable routing label of 1-${MAX_ADDRESS_CHARS} characters.` });
+      return true;
+    }
     let board: WorkBoardResult;
     try {
       board = read({
@@ -207,6 +239,9 @@ export function createFleetWorkBoardApi(deps: FleetWorkBoardApiDeps = {}): ApiMo
         ...(state !== null ? { state: state as WorkItemState } : {}),
         ...(since === undefined ? {} : { since }),
         ...(before === undefined ? {} : { before }),
+        ...(channel === null ? {} : { channel }),
+        ...(topic === null ? {} : { topic }),
+        ...(id === null ? {} : { id }),
       });
     } catch {
       board = { items: [], inbox: 'unavailable', truncated: false, claims: 'unavailable' };

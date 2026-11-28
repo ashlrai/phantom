@@ -16,19 +16,27 @@
  * dispatched an item the legacy path blocked on throttle, budget or
  * resource pause).
  *
- * divergenceStats() evaluates the CONTRACT-M334 stage-2 exit criteria —
+ * divergenceStats() encodes the CONTRACT-M334 stage-2 exit criteria —
  * at least 200 shadowed decisions, under 2% divergence and ZERO
  * safety-relevant divergences before the gateway may replace the legacy
- * path — but nothing ever calls it, and readGatewayShadow has no caller
- * either: the journal is write-only evidence. Until now a shadow that
- * kept disagreeing with legacy, or kept would-dispatching work the
- * legacy path deliberately blocked, never became work — the flip
- * decision had no instrument feeding it and a latent safety regression
- * sat in a file no report reads.
+ * path — but nothing calls it: the journal was write-only evidence, and
+ * a shadow that kept disagreeing with legacy, or kept
+ * would-dispatching work the legacy path deliberately blocked, never
+ * became work — the flip decision had no instrument feeding it and a
+ * latent safety regression sat in a file no report reads.
  *
  * gatewayShadowBacklogItems carries the same journal into discoverBacklog,
  * so `phm improve discover` and the scheduler's autoDiscover queue it
- * exactly like the sibling fleet-evidence sources beside it.
+ * exactly like the sibling fleet-evidence sources beside it. Two evidence
+ * kinds cover the windowed recurrence above; a third evaluates the
+ * stage-2 exit criteria over the FULL journal — every
+ * gateway-shadow-*.jsonl day-file, not just the 7-day window — so the
+ * soak's verdict reaches the backlog: a journal that clears the bar
+ * queues the stage-3 gateway default flip, and a journal with enough
+ * decisions whose cumulative record fails the bar surfaces the blocker
+ * the window cannot see (an old safety-relevant row or an all-time rate
+ * over tolerance still bars the flip forever — the journal is
+ * append-only and the contract's counters never reset).
  *
  * Honesty rules, same as every other backlog source:
  *  - Read-only. The per-day files are listed and tail-read through
@@ -55,6 +63,19 @@
  *    decisions AND the measured divergence rate reaches
  *    GATEWAY_SHADOW_DIVERGENCE_RATE, the stage-2 tolerance itself — a
  *    small sample or a healthy shadow stays quiet.
+ *  - The flip verdict is cumulative, not windowed. The stage-2 exit
+ *    criteria belong to the whole soak, so the verdict read opens every
+ *    gateway-shadow-*.jsonl file the instrument would read — same
+ *    prefix/suffix filter, same newest-first order — under the same
+ *    per-file tail bound plus a total byte cap. Any file that cannot be
+ *    read completely makes the verdict incomplete and no verdict item
+ *    emits: a partial journal can neither prove the criteria met nor
+ *    prove them failed, so unknown stays unknown. Rows count under the
+ *    instrument's own looser contract here (string ts, boolean diverged;
+ *    safetyRelevant by truthiness) so the verdict matches what
+ *    divergenceStats() would report, and it emits only once the journal
+ *    holds GATEWAY_SHADOW_FLIP_MIN_DECISIONS rows — the contract's own
+ *    evidence bar — as either the ready item or the blocked item.
  *  - Fleet machinery only. Shadow rows record no repository — the
  *    gateway shadows every dispatch this install makes — so items emit
  *    only when the backlog target's repository name is 'phantom', the
@@ -101,6 +122,19 @@ export const GATEWAY_SHADOW_MIN_DECISIONS = 50;
  * exit criteria at 2% or above, so the feed emits at the same bar.
  */
 export const GATEWAY_SHADOW_DIVERGENCE_RATE = 0.02;
+/**
+ * The CONTRACT-M334 stage-2 exit criteria, mirrored from divergenceStats()
+ * (src/core/fabric/gateway-shadow.ts): the soak passes at >=200 shadowed
+ * decisions, under 2% divergence and ZERO safety-relevant divergences —
+ * the bar the stage-3 'gateway' default flip waits on. The safety bar is
+ * the literal zero the contract names; no constant is needed for it.
+ */
+export const GATEWAY_SHADOW_FLIP_MIN_DECISIONS = 200;
+export const GATEWAY_SHADOW_FLIP_MAX_DIVERGENCE_RATE = 0.02;
+/** Total bytes the cumulative verdict read may consume across all
+ * day-files; beyond it the oldest rows are unreachable and the verdict
+ * stays unknown rather than guessing from a partial journal. */
+const READINESS_TOTAL_BYTES = 64 * 1024 * 1024;
 /** Evidence window: seven days, the same convention the sibling feeds anchor on. */
 export const GATEWAY_SHADOW_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 /**
@@ -230,7 +264,102 @@ async function readShadowDays(fabricDir: string, windowStartDay: string, untilDa
   return { rows, truncated };
 }
 
-const EVIDENCE = 'The evidence is fabric/gateway-shadow-<UTC-day>.jsonl under the Phantom state directory (~/.ashlr/fabric), appended by the daemon dispatch path\'s observe-only InferenceGateway shadow when foundry.fabric.gatewayShadow is on — one row per shadowed decision with the legacy outcome, the gateway\'s would-be outcome and the diverged/safetyRelevant verdicts compareDecisions derives (src/core/fabric/gateway-shadow.ts, src/core/daemon/loop.ts shadowGateway). readGatewayShadow and divergenceStats — the CONTRACT-M334 stage-2 exit-criteria evaluator — exist but have no caller, so this journal is the only record; there is no report command for it.';
+/** One journal row under the instrument's own record contract — the same
+ * acceptance readGatewayShadow applies (string ts, boolean diverged), so
+ * the verdict counts exactly the rows divergenceStats() would count.
+ * safetyRelevant stays raw and is counted by truthiness, the same filter
+ * divergenceStats uses. */
+interface ReadinessRow {
+  diverged: boolean;
+  safetyRelevant: unknown;
+}
+
+function readinessRowFrom(line: string): ReadinessRow | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed)) return null;
+  const ts = parsed['ts'];
+  const diverged = parsed['diverged'];
+  if (typeof ts !== 'string' || typeof diverged !== 'boolean') return null;
+  return { diverged, safetyRelevant: parsed['safetyRelevant'] };
+}
+
+/** The CONTRACT-M334 stage-2 verdict over the complete shadow journal.
+ * readFlipVerdict returns null instead of an incomplete verdict: a partial
+ * journal can neither prove the criteria met nor prove them failed. */
+export interface ShadowFlipVerdict {
+  /** Rows the instrument's record contract accepted — divergenceStats()'s `decisions`. */
+  decisions: number;
+  divergences: number;
+  /** safetyRelevant rows counted by truthiness — divergenceStats()'s `safetyRelevant`. */
+  safetyRelevant: number;
+  divergenceRate: number;
+  /** The stage-2 exit criteria: >=200 decisions, <2% divergence, ZERO safety-relevant. */
+  ready: boolean;
+}
+
+/**
+ * Evaluate the stage-2 exit criteria over the FULL shadow journal — every
+ * gateway-shadow-*.jsonl file the instrument would read (same prefix/suffix
+ * filter, same newest-first order), each under the windowed read's per-file
+ * tail bound plus a total byte cap. Any file that truncates or cannot be
+ * read makes the verdict incomplete: a partial journal can neither prove
+ * the criteria met nor prove them failed, so the fold emits nothing rather
+ * than guess — unknown stays unknown. A missing or empty fabric dir is a
+ * complete read of zero rows: the soak simply has not run. Never throws.
+ */
+async function readFlipVerdict(fabricDir: string): Promise<ShadowFlipVerdict | null> {
+  let names: string[];
+  try {
+    names = await readdir(fabricDir);
+  } catch {
+    return null;
+  }
+  const files = names
+    .filter((name) => name.startsWith('gateway-shadow-') && name.endsWith('.jsonl'))
+    .sort()
+    .reverse();
+  const rows: ReadinessRow[] = [];
+  let bytes = 0;
+  let complete = true;
+  for (const name of files) {
+    if (bytes >= READINESS_TOTAL_BYTES) {
+      complete = false;
+      break;
+    }
+    const tail = await readTail(join(fabricDir, name), SHADOW_FILE_TAIL_BYTES);
+    if (tail === null || tail.truncated) {
+      complete = false;
+      break;
+    }
+    bytes += Buffer.byteLength(tail.text, 'utf8');
+    for (const line of tail.text.split('\n')) {
+      if (!line.trim()) continue;
+      const row = readinessRowFrom(line);
+      if (row !== null) rows.push(row);
+    }
+  }
+  if (!complete) return null;
+  const decisions = rows.length;
+  const divergences = rows.filter((row) => row.diverged).length;
+  const safetyRelevant = rows.filter((row) => row.safetyRelevant).length;
+  const divergenceRate = decisions > 0 ? divergences / decisions : 0;
+  return {
+    decisions,
+    divergences,
+    safetyRelevant,
+    divergenceRate,
+    ready: decisions >= GATEWAY_SHADOW_FLIP_MIN_DECISIONS
+      && divergenceRate < GATEWAY_SHADOW_FLIP_MAX_DIVERGENCE_RATE
+      && safetyRelevant === 0,
+  };
+}
+
+const EVIDENCE = 'The evidence is fabric/gateway-shadow-<UTC-day>.jsonl under the Phantom state directory (~/.ashlr/fabric), appended by the daemon dispatch path\'s observe-only InferenceGateway shadow when foundry.fabric.gatewayShadow is on — one row per shadowed decision with the legacy outcome, the gateway\'s would-be outcome and the diverged/safetyRelevant verdicts compareDecisions derives (src/core/fabric/gateway-shadow.ts, src/core/daemon/loop.ts shadowGateway). divergenceStats() in the same module encodes the CONTRACT-M334 stage-2 exit criteria; this feed evaluates the same criteria — >=200 decisions, <2% divergence, ZERO safety-relevant — over the full journal for the flip verdict, while the windowed items measure only the last 7 days.';
 
 const NO_CHANGE = 'If the window has rolled forward, foundry.fabric.gatewayShadow is off or fabric.gateway already flipped on, the disagreements were a transient routing-state window, or the cause is owner-side config — report no-change and name the evidence.';
 
@@ -309,6 +438,57 @@ function divergenceItem(decisions: number, diverged: number, safetyCount: number
   };
 }
 
+function flipReadyPrompt(v: ShadowFlipVerdict): string {
+  const lines = [
+    `Phantom's InferenceGateway shadow soak met the CONTRACT-M334 stage-2 exit criteria — the complete shadow journal holds ${v.decisions} shadowed decisions with ${v.divergences} divergence(s) (${pct(v.divergenceRate)}) and zero safety-relevant rows, clearing the >=${GATEWAY_SHADOW_FLIP_MIN_DECISIONS} decisions / <${pct(GATEWAY_SHADOW_FLIP_MAX_DIVERGENCE_RATE)} divergence / ZERO safety-relevant bar that gates the stage-3 'gateway' default flip — the self-improvement work this backlog exists for.`,
+    '',
+    `Stage 3 flips defaults one line each, in contract order: concurrentDispatch → true (maxSlotsPerBackend: 2), then gateway → true one release later, then workhorseDispatch → true with the configured workhorse. Each flip is a one-line, revert-friendly commit, and a failed criterion at any stage reverts the newest flip and returns to stage 2. This item's work is the gateway default flip: check whether the concurrentDispatch flip has landed and the release cadence the contract names has passed, then make the one-line change flipping foundry.fabric.gateway's default to true.`,
+    '',
+    EVIDENCE,
+    '',
+    `The verdict reads the whole journal — every gateway-shadow-*.jsonl day-file, not the ${Math.round(GATEWAY_SHADOW_WINDOW_MS / 86_400_000)}-day window the sibling items use — with the same math divergenceStats() (src/core/fabric/gateway-shadow.ts) encodes for the contract instrument.`,
+    '',
+    `Check foundry.fabric.gatewayShadow and foundry.fabric.gateway in the effective config before changing defaults: if the gateway flip already landed, the shadow flag is off, or the journal was reset after this verdict, report no-change and name the evidence.`,
+  ];
+  return lines.join('\n');
+}
+
+function flipBlockedPrompt(v: ShadowFlipVerdict): string {
+  const safetyText = v.safetyRelevant === 1 ? '1 safety-relevant row' : `${v.safetyRelevant} safety-relevant rows`;
+  const lines = [
+    `Phantom's InferenceGateway shadow soak has produced a verdict and it is no — the complete shadow journal holds ${v.decisions} shadowed decisions with ${v.divergences} divergence(s) (${pct(v.divergenceRate)} against the <${pct(GATEWAY_SHADOW_FLIP_MAX_DIVERGENCE_RATE)} bar) and ${safetyText} against the ZERO bar, so the CONTRACT-M334 stage-2 exit criteria cannot pass on this journal and the stage-3 'gateway' default flip stays barred — the self-improvement work this backlog exists for.`,
+    '',
+    `The verdict is cumulative, not windowed: the journal is append-only and the contract's counters never reset, so a soak that failed early and then ran clean still reads blocked here — every recorded safety-relevant divergence counts against the ZERO bar for the life of the journal and the all-time divergence rate counts against the tolerance. The windowed sibling items only see the last ${Math.round(GATEWAY_SHADOW_WINDOW_MS / 86_400_000)} days; this verdict sees every row the shadow ever wrote.`,
+    '',
+    `Find out whether the recorded disagreements were a transient routing-state window or a real input gap: replay recorded workItemIds through the M247 gateway (src/core/fabric, gatewayDecide) and the legacy throttle/budget/resource guards it shadows in the daemon loop. If the divergence source is fixed the soak still needs a counter reset — the contract names one only for a failed stage-3 criterion and no reset mechanism exists in code or the journal format, so restarting the count is an owner/contract decision, not more shadow data. If the criteria themselves should change, that is a contract amendment. Check foundry.fabric.gatewayShadow/gateway in the effective config first. ${NO_CHANGE}`,
+  ];
+  return lines.join('\n');
+}
+
+function flipReadyItem(v: ShadowFlipVerdict, repo: string): CloudBacklogItem {
+  const id = `gateway-shadow-flip-ready-${createHash('sha256').update('gateway-shadow:flip-ready').digest('hex').slice(0, 16)}`;
+  return {
+    id,
+    title: `InferenceGateway shadow passed the stage-2 exit criteria — queue the gateway flip`.slice(0, MAX_TITLE_CHARS),
+    prompt: flipReadyPrompt(v),
+    area: 'gateway-shadow',
+    priority: 3,
+    ...(CLOUD_REPO_PATTERN.test(repo) ? { repo } : {}),
+  };
+}
+
+function flipBlockedItem(v: ShadowFlipVerdict, repo: string): CloudBacklogItem {
+  const id = `gateway-shadow-flip-blocked-${createHash('sha256').update('gateway-shadow:flip-blocked').digest('hex').slice(0, 16)}`;
+  return {
+    id,
+    title: `InferenceGateway shadow soak failed the stage-2 exit criteria`.slice(0, MAX_TITLE_CHARS),
+    prompt: flipBlockedPrompt(v),
+    area: 'gateway-shadow',
+    priority: 3,
+    ...(CLOUD_REPO_PATTERN.test(repo) ? { repo } : {}),
+  };
+}
+
 interface PairCell extends PairTally {
   key: string;
   legacyBackend: string;
@@ -337,35 +517,47 @@ export async function gatewayShadowBacklogItems(opts: GatewayShadowItemsOptions)
     const windowStartMs = now - windowMs;
     const untilMs = now + GATEWAY_SHADOW_FUTURE_SKEW_MS;
     const inWindow = rows.filter((row) => row.atMs >= windowStartMs && row.atMs <= untilMs);
-    if (inWindow.length === 0) return [];
 
-    let safetyCount = 0;
-    let divergedCount = 0;
-    const pairs = new Map<string, PairCell>();
-    for (const row of inWindow) {
-      if (row.safetyRelevant) safetyCount += 1;
-      if (row.diverged) divergedCount += 1;
-      const legacyBackend = fieldText(row.legacyBackend);
-      const gatewayBackend = fieldText(row.gatewayBackend);
-      if (legacyBackend === '' || gatewayBackend === '') continue;
-      const key = `${legacyBackend}${gatewayBackend}`;
-      const cell = pairs.get(key) ?? { key, legacyBackend, gatewayBackend, diverged: 0, total: 0 };
-      cell.total += 1;
-      if (row.diverged) cell.diverged += 1;
-      pairs.set(key, cell);
+    const candidates: CloudBacklogItem[] = [];
+    if (inWindow.length > 0) {
+      let safetyCount = 0;
+      let divergedCount = 0;
+      const pairs = new Map<string, PairCell>();
+      for (const row of inWindow) {
+        if (row.safetyRelevant) safetyCount += 1;
+        if (row.diverged) divergedCount += 1;
+        const legacyBackend = fieldText(row.legacyBackend);
+        const gatewayBackend = fieldText(row.gatewayBackend);
+        if (legacyBackend === '' || gatewayBackend === '') continue;
+        const key = `${legacyBackend}${gatewayBackend}`;
+        const cell = pairs.get(key) ?? { key, legacyBackend, gatewayBackend, diverged: 0, total: 0 };
+        cell.total += 1;
+        if (row.diverged) cell.diverged += 1;
+        pairs.set(key, cell);
+      }
+
+      const decisions = inWindow.length;
+      // The safety kind is contract-fatal for the flip, so its item survives limit truncation first.
+      if (safetyCount >= GATEWAY_SHADOW_SAFETY_MIN) candidates.push(safetyItem(safetyCount, decisions, truncated, repo));
+      if (decisions >= GATEWAY_SHADOW_MIN_DECISIONS && divergedCount / decisions >= GATEWAY_SHADOW_DIVERGENCE_RATE) {
+        const topPairs = [...pairs.values()]
+          .filter((cell) => cell.diverged > 0)
+          .sort((a, b) => b.diverged - a.diverged || b.total - a.total || a.key.localeCompare(b.key))
+          .slice(0, PROMPT_PAIRS_MAX)
+          .map((cell) => ({ diverged: cell.diverged, total: cell.total, legacyBackend: cell.legacyBackend, gatewayBackend: cell.gatewayBackend }));
+        candidates.push(divergenceItem(decisions, divergedCount, safetyCount, topPairs, truncated, repo));
+      }
     }
 
-    const decisions = inWindow.length;
-    const candidates: CloudBacklogItem[] = [];
-    // The safety kind is contract-fatal for the flip, so its item survives limit truncation first.
-    if (safetyCount >= GATEWAY_SHADOW_SAFETY_MIN) candidates.push(safetyItem(safetyCount, decisions, truncated, repo));
-    if (decisions >= GATEWAY_SHADOW_MIN_DECISIONS && divergedCount / decisions >= GATEWAY_SHADOW_DIVERGENCE_RATE) {
-      const topPairs = [...pairs.values()]
-        .filter((cell) => cell.diverged > 0)
-        .sort((a, b) => b.diverged - a.diverged || b.total - a.total || a.key.localeCompare(b.key))
-        .slice(0, PROMPT_PAIRS_MAX)
-        .map((cell) => ({ diverged: cell.diverged, total: cell.total, legacyBackend: cell.legacyBackend, gatewayBackend: cell.gatewayBackend }));
-      candidates.push(divergenceItem(decisions, divergedCount, safetyCount, topPairs, truncated, repo));
+    // The CONTRACT-M334 stage-2 verdict is cumulative, not windowed: it
+    // reads every day-file the shadow ever wrote, so a soak that ended
+    // before the window — or failed on rows the window no longer holds —
+    // still reports its verdict. An inconclusive read emits nothing:
+    // unknown stays unknown.
+    const verdict = await readFlipVerdict(fabricDir);
+    if (verdict !== null) {
+      if (verdict.ready) candidates.push(flipReadyItem(verdict, repo));
+      else if (verdict.decisions >= GATEWAY_SHADOW_FLIP_MIN_DECISIONS) candidates.push(flipBlockedItem(verdict, repo));
     }
 
     const limit = Math.max(1, Math.min(opts.limit ?? GATEWAY_SHADOW_MAX_ITEMS, GATEWAY_SHADOW_ITEM_HARD_MAX));

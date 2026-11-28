@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { FleetLaneSnapshot, FleetLaneView } from '../src/core/fleet/lane-console.js';
+import { readStarved } from '../src/core/fleet/lane-starved.js';
 import { asLaneSupplyReport, buildLaneSupply, formatLaneSupply, readPlannerFacts } from '../src/core/fleet/lane-supply.js';
 
 const NOW = Date.parse('2026-11-20T12:00:00Z');
@@ -11,12 +12,25 @@ const lane = (name: string, over: Partial<FleetLaneView> = {}): FleetLaneView =>
   lane: name, queueDepth: 0, liveJobs: 0, mergesPerHour: null, startsInWindow: null, credit: credit(50),
   slotTarget: 4, hold: null, health: { verdict: 'ok', reason: '' } as FleetLaneView['health'], ...over,
 });
-const snapshot = (lanes: FleetLaneView[], openRows: number | null = null): FleetLaneSnapshot => ({
+const snapshot = (lanes: FleetLaneView[], openRows: number | null = 0): FleetLaneSnapshot => ({
   lanes,
   starved: { lanes: {}, waiting_elsewhere: 0, open_rows: openRows },
 } as FleetLaneSnapshot);
 
 describe('lane supply verdicts', () => {
+  it.each([0, 1, null])('uses projected launch headroom (%s) for idle alarms', freeSlots => {
+    const snap = snapshot([lane('claude', { liveJobs: 1, slotTarget: 8 })], 0);
+    snap.starved = readStarved([{
+      lane: 'claude', target: freeSlots === null ? null : 1 + freeSlots,
+      running: 1, ready: 0, held: false, drained: false,
+    }], {}, NOW, 0);
+    const report = buildLaneSupply(snap, null, NOW);
+    expect(report.lanes[0]).toMatchObject({ freeSlots, target: 8, running: 1 });
+    expect(report.idle).toEqual(freeSlots === 1 ? ['claude'] : []);
+    expect(report.alarm).toBe(freeSlots === 1 ? 'claude idle: 1 free slot, 50% left' : null);
+    if (freeSlots === 0) expect(report.lanes[0]?.text).toBe('claude: no launch slots available');
+  });
+
   it('raises the alarm for a lane with free slots, nothing queued and usage left', () => {
     const report = buildLaneSupply(snapshot([lane('claude', { liveJobs: 2, slotTarget: 8, credit: credit(68) })]), null, NOW);
     expect(report.lanes[0]).toMatchObject({ verdict: 'idle-with-usage-left', freeSlots: 6, usedPct: 32, leftPct: 68, hoursToReset: 48 });
@@ -30,9 +44,9 @@ describe('lane supply verdicts', () => {
     expect(report.alarm).toBeNull();
   });
 
-  it('says out of usage until the reset for a 100% pool, even with free slots', () => {
+  it('reports zero launchable slots and the reset for an exhausted pool below target', () => {
     const [row] = buildLaneSupply(snapshot([lane('codex', { credit: credit(0, '2026-11-21T06:30:00Z') })]), null, NOW).lanes;
-    expect(row).toMatchObject({ verdict: 'out-of-usage', usedPct: 100, hoursToReset: 18.5 });
+    expect(row).toMatchObject({ verdict: 'out-of-usage', freeSlots: 0, target: 4, running: 0, usedPct: 100, hoursToReset: 18.5 });
     expect(row!.text).toBe('codex out of usage until 2026-11-21 06:30 UTC');
   });
 
@@ -66,12 +80,17 @@ describe('lane supply verdicts', () => {
     expect(report.alarm).toBeNull();
   });
 
-  it('still alarms when the lane-open count is zero or unknown', () => {
-    for (const openRows of [0, null]) {
-      const report = buildLaneSupply(snapshot([lane('claude', { liveJobs: 2, slotTarget: 8, credit: credit(68) })], openRows), null, NOW);
-      expect(report.lanes[0]!.verdict).toBe('idle-with-usage-left');
-      expect(report.idle).toEqual(['claude']);
-    }
+  it.each(['codex-local', 'omlx'])('keeps the idle alarm for %s when only open work waits', local => {
+    const report = buildLaneSupply(snapshot([lane(local, { credit: credit(68) })], 12), null, NOW);
+    expect(report.lanes[0]).toMatchObject({ verdict: 'idle-with-usage-left', leftPct: 68 });
+    expect(report.idle).toEqual([local]);
+  });
+
+  it('withholds the idle alarm when lane-open supply is unknown despite a known empty lane queue', () => {
+    const report = buildLaneSupply(snapshot([lane('claude', { liveJobs: 2, slotTarget: 8, credit: credit(68) })], null), null, NOW);
+    expect(report.lanes[0]).toMatchObject({ verdict: 'unknown', queued: 0, freeSlots: 6, leftPct: 68, detail: 'lane-open supply unknown' });
+    expect(report.idle).toEqual([]);
+    expect(report.alarm).toBeNull();
   });
 
   it('keeps out-of-usage and held verdicts ahead of open supply', () => {
@@ -81,6 +100,21 @@ describe('lane supply verdicts', () => {
     ], 5), null, NOW);
     expect(report.lanes.map(l => l.verdict)).toEqual(['out-of-usage', 'held']);
     expect(report.alarm).toBeNull();
+  });
+
+  it('reports free slots with an unreadable queue as unknown, never busy or idle', () => {
+    const report = buildLaneSupply(snapshot([lane('claude', { liveJobs: 1, queueDepth: null })]), null, NOW);
+    expect(report.lanes[0]).toMatchObject({ verdict: 'unknown', queued: null, freeSlots: 3 });
+    expect(report.lanes[0]!.text).toBe('claude: 1 of 4 running, queue depth unknown');
+    expect(report.lanes[0]!.text).not.toContain('0 queued');
+    expect(report.idle).toEqual([]);
+    expect(report.alarm).toBeNull();
+  });
+
+  it('still calls a lane at target busy when the queue read is unknown', () => {
+    const report = buildLaneSupply(snapshot([lane('claude', { liveJobs: 4, queueDepth: null })]), null, NOW);
+    expect(report.lanes[0]).toMatchObject({ verdict: 'busy', freeSlots: 0 });
+    expect(report.lanes[0]!.text).toBe('claude busy: 4 of 4 running, unknown queued');
   });
 });
 

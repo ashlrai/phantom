@@ -11,6 +11,10 @@ import type { NodeBeatWatchDeps } from './node-beat-watch.js';
 export interface NodeFleetDeps {
   store?: NodesStore;
   now?: () => number;
+  /** This machine's gh login check — exit code only, never a credential;
+   * defaults to `gh auth status` via probeLocalAuth. Feeds `beat
+   * --probe-auth`, the bare join's gh lane detection, and the join reply's
+   * ghAuth when the advertised caps include gh. */
   probeAuth?: () => NodeAuth;
   /** This build's version for the join `phm-<version>` cap and the status/list
    * drift target; defaults to localPhmVersion. */
@@ -24,6 +28,17 @@ export interface NodeFleetDeps {
   /** Test seam for `join --watch`: forwarded to the beat watch loop (run, sleep,
    * signal, capacity/host-stats measurement). */
   watch?: NodeBeatWatchDeps;
+  /** Test seam for the bare join's sign-in lane probe (provider CLIs plus the
+   * gh login check, exit codes only); defaults to this machine's real probe.
+   * An explicit --caps skips the lane probe — though a --caps that advertises
+   * gh still pays the one gh login check the reply reports as ghAuth. */
+  providerLanes?: () => string[];
+  /** Test seam for the bare join's installed-agent-CLI probe (file presence at
+   * allowlisted paths only — no execution, no sign-in check, no credential
+   * reads); defaults to this machine's real probe. When providerLanes is
+   * injected the machine probe is stubbed, so this defaults to an empty list
+   * unless injected too. */
+  installedClis?: () => string[];
 }
 
 
@@ -82,12 +97,35 @@ function planEmptyNote(nodes: DriveNodes, owner: string | undefined): string {
     const jobs = nodes.snapshot().jobs.filter(j => j.owner && (owner === undefined || j.owner === owner));
     const scope = owner === undefined ? 'any owner scope' : `owner '${owner}'`;
     if (!jobs.length) {
-      return `No jobs queued in ${scope}. Enqueue one: phm node enqueue --job <id> --owner ${owner ?? '<scope>'}`;
+      // The same unknown-scope guard the status empty-scope hint applies: a
+      // mistyped --owner must not be invited to enqueue into a scope fragment
+      // no node serves, so the note names the scopes the store does know —
+      // but only when the requested scope is absent from them (a scope with a
+      // node and no jobs is legitimate and keeps the plain enqueue line). With
+      // no --owner at all, one known scope also replaces the <scope>
+      // placeholder with a runnable command.
+      const known = knownOwnerScopes(nodes) ?? [];
+      const hint = known.length > 0 && (owner === undefined || !known.includes(owner))
+        ? ` This store knows: ${known.join(', ')}.` : '';
+      const target = owner ?? (known.length === 1 ? known[0]! : '<scope>');
+      return `No jobs queued in ${scope}.${hint} Enqueue one: phm node enqueue --job <id> --owner ${target}`;
     }
     const counts = { pending: 0, running: 0, completed: 0 };
     for (const j of jobs) counts[j.state] += 1;
     return `No routable jobs. ${jobs.length} job(s) in ${scope}: ${counts.pending} pending, ${counts.running} running, ${counts.completed} completed.`;
   } catch { return 'No routable jobs.'; }
+}
+
+/** Lanes a bare standalone join advertises from this machine's own sign-ins:
+ * the same exit-code-only provider probe a pool worker runs, plus `gh` when
+ * the local gh login check passes. Sign-in state is read on this machine only —
+ * no credential, token or auth file leaves it. The gh check's own verdict
+ * rides along so the join reply can name this machine's login state without
+ * paying for a second probe. */
+async function joinSignInLanes(probeAuth: () => NodeAuth): Promise<{ lanes: string[]; ghAuth: NodeAuth }> {
+  const { probeProviderBinaries } = await import('../core/drive/nodes/worker.js');
+  const ghAuth = probeAuth();
+  return { lanes: [...Object.keys(probeProviderBinaries()), ...(ghAuth === 'ok' ? ['gh'] : [])].sort(), ghAuth };
 }
 
 function text(verb: string, out: Record<string, unknown>, notes?: {
@@ -131,6 +169,40 @@ function text(verb: string, out: Record<string, unknown>, notes?: {
       ].filter((part): part is string => part !== null);
       lines.push(`This join replaces the profile the node last advertised and drops ${lost.join('; ')}. Name them again to keep them:`,
         `  ${String(dropped.restore)}`);
+    }
+    // A bare join advertises whatever this machine's sign-ins support; name
+    // the detected set so the caps line never reads as a choice the operator
+    // made, and point at --caps for a different advertisement. An empty probe
+    // is the first-run case that matters most: the node advertises no sign-in
+    // lanes, so say that and name the way to give it some instead of letting
+    // `caps: phm-<version>` read as a working advertisement.
+    const auto = out['autoCaps'] as string[] | undefined;
+    if (auto !== undefined) {
+      lines.push(auto.length
+        ? `Caps auto-detected from this machine's sign-ins: ${auto.join(', ')}. Pass --caps to advertise a different set.`
+        : 'No codex, claude or gh sign-ins detected on this machine — the join advertises no sign-in lanes. Sign in to one and join again, or pass --caps to advertise lanes yourself — it accepts any capability name, and auto-detect probes only the codex, claude and gh sign-ins.');
+    }
+    // The bare join's installed-CLI probe names the community agent CLIs the
+    // sign-in probe does not cover, so a member whose tools are aider, gemini
+    // or the other measured harnesses sees concrete --caps names instead of a
+    // dead end. File presence only — "installed" never claims a sign-in, and
+    // --caps replaces the whole advertisement, so the example keeps the
+    // sign-in lanes the auto-detect already found.
+    const installed = out['installedClis'] as string[] | undefined;
+    if (installed !== undefined && installed.length > 0) {
+      const all = [...new Set([...(auto ?? []), ...installed])].sort();
+      lines.push(`Agent CLIs installed on this machine that --caps can advertise: ${installed.join(', ')}. Installed is not signed in — each CLI still needs its own login. --caps replaces the whole set, so to keep the sign-in lanes too: --caps ${all.join(',')}`);
+    }
+    // gh is advertised but this machine's login is not verified ok: name the
+    // state and the fix at join — where `gh auth login` is still cheap —
+    // because routing refuses gh jobs until a --probe-auth beat reports ok,
+    // and the first unrouted plan would otherwise be the first place the
+    // mismatch surfaces. 'ok' stays quiet: the caps line already carries it.
+    const ghAuth = out['ghAuth'];
+    if (ghAuth === 'missing') {
+      lines.push('gh is advertised but gh reports no login on this machine — gh jobs will not route here until `gh auth login` runs and a --probe-auth beat reports ok.');
+    } else if (ghAuth === 'unknown') {
+      lines.push('gh is advertised but this machine could not check its gh login — gh jobs route only while a --probe-auth beat reports ok; install gh and run `gh auth login` if it is missing.');
     }
     return lines.join('\n');
   }
@@ -207,9 +279,30 @@ function text(verb: string, out: Record<string, unknown>, notes?: {
   }
   if (verb === 'enqueue') {
     // enqueued:false means the job id is already taken — enqueue is idempotent
-    // on the id, so this is a fact, not a failure.
+    // on the id, so this is a fact, not a failure. When the stored spec differs
+    // from this request the flat "nothing changed" would hide that the queued
+    // job is not what was asked for; name the state and the differing fields
+    // instead. Job ids are single-use — withdraw cannot free one — so the only
+    // fix is a new id.
     const jobId = String(out['jobId']);
-    return out['enqueued'] === true ? `Enqueued ${jobId}.` : `Job ${jobId} already exists; nothing changed.`;
+    if (out['enqueued'] === true) return `Enqueued ${jobId}.`;
+    const existing = out['existing'] as { state?: string; owner?: string | null; producerWithdrawn?: true;
+      differs?: { field: string; queued: string; requested: string }[] } | undefined;
+    if (existing === undefined) return `Job ${jobId} already exists; nothing changed.`;
+    const state = existing.state === 'completed'
+      ? (existing.producerWithdrawn === true ? 'completed (withdrawn by the producer)' : 'completed')
+      : existing.state === 'running' ? 'running' : 'pending';
+    const owner = typeof existing.owner === 'string' && existing.owner ? ` under owner ${existing.owner}` : '';
+    const differs = existing.differs ?? [];
+    if (differs.length === 0) {
+      // An identical retry on live work changed nothing; on a finished job the
+      // same words would hide that the id is dead and stays reserved.
+      return existing.state === 'completed'
+        ? `Job ${jobId} already exists and is ${state}; job ids are single-use — pick a new id for different work.`
+        : `Job ${jobId} already exists; nothing changed.`;
+    }
+    const diffs = differs.map(d => `${d.field} (queued ${d.queued}; requested ${d.requested})`).join(', ');
+    return `Job ${jobId} already exists — ${state}${owner} — spec differs: ${diffs}. Job ids are single-use — pick a new id for different work.`;
   }
   if (verb === 'withdraw') {
     const jobId = String(out['jobId']);
@@ -302,6 +395,10 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
   // flag value (values starting with `--` are refused), so argv alone proves
   // the caller asked for JSON even when flag parsing fails first.
   const json = args.includes('--json');
+  // Operator-facing label for the standalone store, resolved once the store
+  // modules load; the catch's fix text names the real $ASHLR_HOME/nodes
+  // (home-contracted) instead of assuming the default ~/.ashlr spelling.
+  let nodesDirLabel = '~/.ashlr/nodes';
   try {
     // `join --watch` is a dispatcher-level keep-alive like `beat --watch`: the
     // watch flags are stripped here so the fleet parser never sees them, and a
@@ -327,16 +424,29 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       }
     }
     // Parsing happens first and the store modules load after it, so a usage error never touches (or creates) state.
-    const [{ DriveNodes, LocalNodesStore }, { probeLocalAuth }, { ashlrHome }, { canonicalPath, privateDirectory }, { join },
-      { localPhmVersion, versionCap, versionFromCaps, planNodeSelfUpdate }, { probeLocalLanePlan }] = await Promise.all([
+    const [{ DriveNodes, LocalNodesStore }, { probeLocalAuth }, { ashlrHome, ashlrHomePath }, { canonicalPath, privateDirectory }, { join },
+      { localPhmVersion, versionCap, versionFromCaps, planNodeSelfUpdate }, { probeLocalLanePlan }, { installedAgentClis }] = await Promise.all([
       import('../core/drive/nodes/index.js'), import('../core/drive/nodes/auth-probe.js'),
       import('../core/cloud/store.js'), import('../core/universe/artifacts.js'), import('node:path'),
-      import('../core/drive/nodes/phm-version.js'), import('../core/drive/nodes/local-model-caps.js')]);
+      import('../core/drive/nodes/phm-version.js'), import('../core/drive/nodes/local-model-caps.js'),
+      import('../core/drive/nodes/provider-binary.js')]);
+    nodesDirLabel = ashlrHomePath('nodes');
     const store: NodesStore = deps.store ?? { transaction: fn => new LocalNodesStore(privateDirectory(canonicalPath(join(ashlrHome(), 'nodes')))).transaction(fn) };
     const drive = new DriveNodes(store, deps.now ? { now: deps.now } : {});
     // Join's lane probe runs once; a malformed local-lanes.json rides the reply
     // as a diagnostic below instead of silently costing the node its lane caps.
     let localLaneError: string | null = null;
+    // The sign-in lanes a bare join advertised, named in the reply so the caps
+    // list never reads as a choice the operator made.
+    let autoCaps: string[] | undefined;
+    // The community agent CLIs installed on this machine that the sign-in
+    // probe does not cover, named in the reply as --caps candidates.
+    let installedClis: string[] | undefined;
+    // The gh login verdict the bare join's sign-in probe already paid for;
+    // the reply reuses it instead of probing twice. An explicit --caps — or
+    // an injected providerLanes seam — leaves it unset, and the reply probes
+    // once when the advertised caps include gh.
+    let joinGhAuth: NodeAuth | undefined;
     if (verb === 'join') {
       // A standalone join defaults --node to this computer's sanitized hostname,
       // the same default a pool join applies. Like the version cap below it stays
@@ -347,6 +457,44 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       if (!flags.has('--node')) {
         const id = (deps.hostname ?? hostname)().replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 100);
         if (validId(id)) flags.set('--node', id);
+      }
+      // A bare join (no --caps) advertises the lanes this machine's own
+      // sign-ins support — the same exit-code-only probe a pool worker runs —
+      // so a first node does not have to know the cap names: sign in to codex,
+      // claude or gh here and the join advertises that lane. An explicit
+      // --caps stays the complete manual advertisement and skips the probe.
+      if (!flags.has('--caps')) {
+        const detected: { lanes: string[]; ghAuth?: NodeAuth } = deps.providerLanes !== undefined
+          ? { lanes: deps.providerLanes() }
+          : await joinSignInLanes(deps.probeAuth ?? probeLocalAuth);
+        const lanes = [...new Set(detected.lanes)].sort();
+        // The probe outcome rides the reply even when empty: autoCaps: [] says
+        // "probed, found no sign-ins" where an absent key means the operator
+        // passed --caps and no probe ran — the same distinction the pool
+        // worker's 'no-local-provider-login' hold makes for a lane-less join.
+        autoCaps = lanes;
+        joinGhAuth = detected.ghAuth;
+        if (lanes.length > 0) flags.set('--caps', lanes.join(','));
+        // The sign-in probe covers only codex, claude and gh; a community node
+        // whose agent CLIs are aider, gemini or the other measured harnesses
+        // would otherwise join with no lanes and no hint that --caps takes any
+        // capability name. Name the installed CLIs as candidates — file
+        // presence only, so "installed" never claims "signed in".
+        installedClis = deps.installedClis !== undefined ? deps.installedClis()
+          : deps.providerLanes !== undefined ? [] : installedAgentClis();
+      } else {
+        // An explicit --caps that names nothing is a scripting accident
+        // (`--caps "$EMPTY"`), not a deliberate empty advertisement: silently
+        // joining with zero work caps where a bare join would have
+        // auto-detected this machine's sign-ins leaves a first-run node that
+        // looks joined but can never take a lane job. The pool wire still
+        // accepts an empty --caps (a lane-less worker legitimately joins with
+        // none), so this refusal stays on the standalone CLI path only.
+        const named = (flags.get('--caps') ?? '').split(',').map(c => c.trim()).filter(Boolean);
+        if (named.length === 0) {
+          throw new UsageError('bad-caps', '--caps needs at least one capability.',
+            'Omit --caps to auto-detect this machine\'s sign-ins, or name capabilities such as build,gh. Run: phm node --help');
+        }
       }
       // A standalone join advertises this build as a `phm-<version>` cap, the same
       // report a pool worker sends, so `phm node self-update` reads a real version
@@ -394,17 +542,40 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
     // a working local gh login.
     if (verb === 'join') {
       const caps = out['caps'];
-      const probe = Array.isArray(caps) && caps.includes('gh') ? ' --probe-auth' : '';
+      const advertisesGh = Array.isArray(caps) && caps.includes('gh');
+      const probe = advertisesGh ? ' --probe-auth' : '';
       out['next'] = `phm node beat --node ${String(out['nodeId'])} --session ${String(out['session'])}${probe} --watch`;
       // This path only runs with no pool config (cmdNodePool owns pooled
       // joins), so the store is this machine's private ~/.ashlr/nodes: name
       // that boundary in the reply instead of letting a first-time node
       // assume it joined a shared fleet.
       out['registry'] = 'local';
+      if (autoCaps !== undefined) {
+        out['autoCaps'] = autoCaps;
+        // Installed CLIs ride only when the probe found some: an empty list
+        // would claim "probed, found none" where the field's absence already
+        // says the bare-join machine probe was stubbed or found nothing worth
+        // naming.
+        if (installedClis !== undefined && installedClis.length > 0) out['installedClis'] = installedClis;
+      }
       // The node joined without its lane caps; name the broken file so the
       // first-run output says why instead of looking never-configured.
       if (localLaneError !== null) {
         out['localLanes'] = { state: 'invalid', error: localLaneError, fix: 'Run: phm node lanes' };
+      }
+      // An advertised gh cap routes gh jobs only while a --probe-auth beat
+      // reports ok, so the reply names this machine's login state at join —
+      // where `gh auth login` is still cheap — instead of leaving the first
+      // unrouted plan to discover the mismatch. A bare join's sign-in probe
+      // already answered; an explicit --caps pays the same exit-code-only
+      // check a --probe-auth beat runs, once. A probe seam that throws
+      // reports 'unknown': the check could not verify the login.
+      if (advertisesGh) {
+        let ghAuth = joinGhAuth;
+        if (ghAuth === undefined) {
+          try { ghAuth = (deps.probeAuth ?? probeLocalAuth)(); } catch { ghAuth = 'unknown'; }
+        }
+        out['ghAuth'] = ghAuth;
       }
     }
     // status/list name each expired node's rejoin command. Text only: the
@@ -455,10 +626,10 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
     const known = error instanceof UsageError;
     // Validation, privacy and lock messages in this stack are fixed operator-facing
     // strings (no values echoed), so they are shown; anything else stays masked.
-    const operatorMessage = /^(?:Invalid |Drive |Universe storage|Unsafe drive|Cannot create filesystem root)/;
+    const operatorMessage = /^(?:Invalid |Drive |(?:Universe|Private) storage|Unsafe drive|Cannot create filesystem root)/;
     const message = error instanceof Error && (known || operatorMessage.test(error.message)) ? error.message : 'Node store unavailable or invalid.';
     const fix = known ? error.fix : /^Invalid drive/.test(message) ? 'Check ids (letters, digits, . _ : / -), caps (lowercase) and secret NAMES (UPPER_SNAKE). Run: phm node --help'
-      : 'Check that ~/.ashlr/nodes is a private (0700) directory you own, and that no other process holds its lock.';
+      : `Check that ${nodesDirLabel} is a private (0700) directory you own, and that no other process holds its lock.`;
     const code = known ? error.code : 'rejected';
     if (json) console.log(JSON.stringify({ schemaVersion: 1, command: verb, error: { code, message, fix } }));
     else console.error(`${message} Fix: ${fix}`);

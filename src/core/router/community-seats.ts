@@ -40,6 +40,23 @@
  *   - 'unknown' never counts as held or reverted. A revert verdict is
  *     'yes' only when the standing revert ledger positively matched the
  *     PR; 'unknown' tallies separately and never moves a rate.
+ *   - Latency, review and CI evidence stay honest. `ttm_known` counts
+ *     only merges whose journaled `createdAt` parses at or before
+ *     `mergedAt`; `reviews_known` counts only rows carrying a journaled
+ *     `reviews` object — pre-fields rows read as unknown, never as
+ *     unreviewed or zero-latency. `unreviewed` is a real gh signal
+ *     (latestReviews empty), distinct from evidence never captured.
+ *     `ci_known` counts only rows carrying a journaled `ci` verdict —
+ *     the check-rollup outcome the sync's bounded per-PR `gh pr view`
+ *     read recorded; 'none' inside that vocabulary is a real empty
+ *     rollup (no CI ran), while a null `ci` (pre-fields rows, a failed
+ *     or capped read) never counts toward any verdict.
+ *   - Diff size stays honest the same way. `diff_known` counts only
+ *     rows carrying a journaled `diff` triple — gh's recorded
+ *     additions/deletions/changedFiles, frozen at merge; pre-fields
+ *     rows and malformed records never count, and
+ *     `diff_lines_mean`/`diff_files_mean` are means over that
+ *     denominator (null when it is empty), never guessed zeros.
  *   - Windowed on the merge. mergedAt is when the outside PR landed —
  *     the same evidence clock the improve fold applies; rows whose
  *     mergedAt does not parse or sits past the evaluation-time skew
@@ -51,16 +68,13 @@
  *   - Nothing here routes, weights or applies anything — the tallies are
  *     reported as evidence context only.
  */
-import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
-
 import {
   outsidePrOutcomeJournalPath,
   parseOutsidePrOutcomeJournal,
   type OutsidePrOutcomeJournalRow,
   type OutsidePrScanJournalRow,
 } from '../fleet/outside-pr-outcome-ledger.js';
-import { readLedgerTail } from './outcomes.js';
+import { readLedgerTail, resolveRouterRunsDir, type LedgerTailState } from './outcomes.js';
 
 /** Journal tail cap — the same 8 MiB bound the improve fold's dedup read applies. */
 export const COMMUNITY_SEATS_JOURNAL_MAX_BYTES = 8 * 1024 * 1024;
@@ -70,22 +84,22 @@ export const COMMUNITY_SEATS_JOURNAL_MAX_BYTES = 8 * 1024 * 1024;
  * covers the same cohort `phm fleet outside-outcomes` reports live.
  */
 export const COMMUNITY_SEATS_DEFAULT_WINDOW_DAYS = 30;
-export const COMMUNITY_SEATS_MAX_WINDOW_DAYS = 365;
+const COMMUNITY_SEATS_MAX_WINDOW_DAYS = 365;
 /**
  * Future-skew ceiling on mergedAt stamps — the sibling feeds' one-minute
  * tolerance for clock drift between the recording host and the merge
  * timestamp's source.
  */
-export const COMMUNITY_SEATS_FUTURE_SKEW_MS = 60_000;
+const COMMUNITY_SEATS_FUTURE_SKEW_MS = 60_000;
 /** Defensive bound on distinct agent buckets reported. */
-export const COMMUNITY_SEATS_MAX_SEATS = 32;
+const COMMUNITY_SEATS_MAX_SEATS = 32;
 /** Repo names quoted per coverage note; the scan lists at most MAX_REPOS upstream. */
 const COMMUNITY_SEATS_MAX_DEGRADED_REPOS = 8;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Journal-tail read states; readLedgerTail never returns 'too-large' (the tail is always bounded). */
-export type CommunitySeatsState = 'read' | 'missing' | 'unreadable' | 'not-file';
+export type CommunitySeatsState = LedgerTailState;
 
 /** One attributed agent's in-window outside-merge tallies. */
 export interface CommunitySeatOutcome {
@@ -107,6 +121,51 @@ export interface CommunitySeatOutcome {
   kept: number;
   /** Merges whose revert verdict the ledger could not support ('unknown'). */
   unknown: number;
+  /**
+   * Merges whose journaled createdAt parses at or before mergedAt — the
+   * open→merge latency denominator. Rows lacking a usable createdAt
+   * (pre-fields rows, gh gaps) never count.
+   */
+  ttm_known: number;
+  /** Mean open→merge minutes over ttm_known, one decimal; null when ttm_known is 0. */
+  ttm_minutes_mean: number | null;
+  /** Merges carrying a journaled reviews object — the review-evidence denominator. */
+  reviews_known: number;
+  /** reviews_known rows with at least one recorded reviewer (latestReviews non-empty). */
+  reviewed: number;
+  /** reviews_known rows gh returned with zero reviews — a real unreviewed signal, not missing evidence. */
+  unreviewed: number;
+  /** reviews_known rows whose reviewDecision is APPROVED. */
+  approved: number;
+  /** reviews_known rows whose reviewDecision is CHANGES_REQUESTED. */
+  changes_requested: number;
+  /** reviews_known rows whose reviewDecision is REVIEW_REQUIRED. */
+  review_required: number;
+  /**
+   * Merges carrying a journaled `ci` verdict — the CI-evidence
+   * denominator. Rows with a null `ci` (pre-fields rows, a failed or
+   * capped per-PR read) never count, matching the reviews rule.
+   */
+  ci_known: number;
+  /** ci_known rows whose head checks all passed ('success'). */
+  ci_passed: number;
+  /** ci_known rows with at least one failed head check ('failure'). */
+  ci_failed: number;
+  /** ci_known rows whose head checks were still incomplete ('pending'). */
+  ci_pending: number;
+  /** ci_known rows gh returned an empty rollup for — a real no-CI signal ('none'). */
+  ci_none: number;
+  /**
+   * Merges carrying a journaled `diff` triple — gh's recorded
+   * additions/deletions/changedFiles merge size, frozen at merge. Rows
+   * journaled before the field existed, gh rows missing it, and
+   * malformed records never count.
+   */
+  diff_known: number;
+  /** Mean additions+deletions lines over diff_known, one decimal; null when diff_known is 0. */
+  diff_lines_mean: number | null;
+  /** Mean changedFiles over diff_known, one decimal; null when diff_known is 0. */
+  diff_files_mean: number | null;
 }
 
 /** Coverage context from the journal's newest scan receipt; null when none parsed. */
@@ -137,6 +196,7 @@ export interface OutsidePrCommunitySeatsRead {
 }
 
 const mergedMs = (row: OutsidePrOutcomeJournalRow): number => Date.parse(row.mergedAt);
+const createdMs = (row: OutsidePrOutcomeJournalRow): number => (row.createdAt === null ? NaN : Date.parse(row.createdAt));
 
 /**
  * Pure: fold the journal's newest-per-PR outcome rows into per-agent
@@ -144,7 +204,9 @@ const mergedMs = (row: OutsidePrOutcomeJournalRow): number => Date.parse(row.mer
  * the evaluation time plus the future-skew tolerance, which is corrupt
  * evidence that never reaches a cell; rows whose mergedAt does not parse
  * are skipped the same way. 'unknown' verdicts tally as context and
- * never toward kept or reverted.
+ * never toward kept or reverted. Open→merge minutes count only when both
+ * stamps parse and the PR did not "open" after it merged; review tallies
+ * count only rows carrying a journaled reviews object.
  */
 export function foldCommunitySeats(
   rows: readonly OutsidePrOutcomeJournalRow[],
@@ -152,16 +214,55 @@ export function foldCommunitySeats(
 ): CommunitySeatOutcome[] {
   const sinceMs = opts.nowMs - opts.windowDays * DAY_MS;
   const untilMs = opts.nowMs + COMMUNITY_SEATS_FUTURE_SKEW_MS;
-  const byAgent = new Map<string | null, { prs: number; reverted: number; kept: number; unknown: number; repos: Set<string> }>();
+  const byAgent = new Map<string | null, {
+    prs: number; reverted: number; kept: number; unknown: number; repos: Set<string>;
+    ttmKnown: number; ttmMinutes: number;
+    reviewsKnown: number; reviewed: number; unreviewed: number;
+    approved: number; changesRequested: number; reviewRequired: number;
+    ciKnown: number; ciPassed: number; ciFailed: number; ciPending: number; ciNone: number;
+    diffKnown: number; diffLines: number; diffFiles: number;
+  }>();
   for (const row of rows) {
     const mergedAtMs = mergedMs(row);
     if (!Number.isFinite(mergedAtMs) || mergedAtMs < sinceMs || mergedAtMs > untilMs) continue;
-    const cell = byAgent.get(row.agent) ?? { prs: 0, reverted: 0, kept: 0, unknown: 0, repos: new Set<string>() };
+    const cell = byAgent.get(row.agent) ?? {
+      prs: 0, reverted: 0, kept: 0, unknown: 0, repos: new Set<string>(),
+      ttmKnown: 0, ttmMinutes: 0,
+      reviewsKnown: 0, reviewed: 0, unreviewed: 0,
+      approved: 0, changesRequested: 0, reviewRequired: 0,
+      ciKnown: 0, ciPassed: 0, ciFailed: 0, ciPending: 0, ciNone: 0,
+      diffKnown: 0, diffLines: 0, diffFiles: 0,
+    };
     cell.prs += 1;
     cell.repos.add(row.repo);
     if (row.reverted === 'yes') cell.reverted += 1;
     else if (row.reverted === 'unknown') cell.unknown += 1;
     else cell.kept += 1;
+    const openedMs = createdMs(row);
+    if (Number.isFinite(openedMs) && openedMs <= mergedAtMs) {
+      cell.ttmKnown += 1;
+      cell.ttmMinutes += (mergedAtMs - openedMs) / 60_000;
+    }
+    if (row.reviews !== null) {
+      cell.reviewsKnown += 1;
+      if (row.reviews.latest > 0) cell.reviewed += 1;
+      else cell.unreviewed += 1;
+      if (row.reviews.decision === 'APPROVED') cell.approved += 1;
+      else if (row.reviews.decision === 'CHANGES_REQUESTED') cell.changesRequested += 1;
+      else if (row.reviews.decision === 'REVIEW_REQUIRED') cell.reviewRequired += 1;
+    }
+    if (row.ci !== null) {
+      cell.ciKnown += 1;
+      if (row.ci === 'success') cell.ciPassed += 1;
+      else if (row.ci === 'failure') cell.ciFailed += 1;
+      else if (row.ci === 'pending') cell.ciPending += 1;
+      else if (row.ci === 'none') cell.ciNone += 1;
+    }
+    if (row.diff !== null) {
+      cell.diffKnown += 1;
+      cell.diffLines += row.diff.additions + row.diff.deletions;
+      cell.diffFiles += row.diff.changedFiles;
+    }
     byAgent.set(row.agent, cell);
   }
   return [...byAgent.entries()]
@@ -173,6 +274,22 @@ export function foldCommunitySeats(
       reverted: c.reverted,
       kept: c.kept,
       unknown: c.unknown,
+      ttm_known: c.ttmKnown,
+      ttm_minutes_mean: c.ttmKnown === 0 ? null : Math.round((c.ttmMinutes / c.ttmKnown) * 10) / 10,
+      reviews_known: c.reviewsKnown,
+      reviewed: c.reviewed,
+      unreviewed: c.unreviewed,
+      approved: c.approved,
+      changes_requested: c.changesRequested,
+      review_required: c.reviewRequired,
+      ci_known: c.ciKnown,
+      ci_passed: c.ciPassed,
+      ci_failed: c.ciFailed,
+      ci_pending: c.ciPending,
+      ci_none: c.ciNone,
+      diff_known: c.diffKnown,
+      diff_lines_mean: c.diffKnown === 0 ? null : Math.round((c.diffLines / c.diffKnown) * 10) / 10,
+      diff_files_mean: c.diffKnown === 0 ? null : Math.round((c.diffFiles / c.diffKnown) * 10) / 10,
     }))
     .sort((a, b) => b.prs - a.prs || (a.agent ?? '').localeCompare(b.agent ?? ''))
     .slice(0, COMMUNITY_SEATS_MAX_SEATS);
@@ -204,8 +321,7 @@ export async function readOutsidePrCommunitySeats(opts: {
   /** Clock anchoring the window and `since` (default: now). */
   now?: Date;
 } = {}): Promise<OutsidePrCommunitySeatsRead> {
-  const runsDir = opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
-  if (!isAbsolute(runsDir)) throw new RangeError('runsDir must be an absolute path');
+  const runsDir = resolveRouterRunsDir(opts.runsDir);
   const path = opts.journalPath ?? outsidePrOutcomeJournalPath(runsDir);
   const windowDays = Math.min(
     COMMUNITY_SEATS_MAX_WINDOW_DAYS,
@@ -220,7 +336,7 @@ export async function readOutsidePrCommunitySeats(opts: {
       window_days: windowDays, since, seats: [], coverage: null,
     };
   }
-  const parsed = parseOutsidePrOutcomeJournal(read.text);
+  const parsed = parseOutsidePrOutcomeJournal(read.text, nowMs);
   return {
     state: 'read',
     path,

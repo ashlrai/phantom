@@ -24,8 +24,7 @@
  *    bounded no-follow tail; nothing is written and no network is
  *    touched. A missing or unreadable file yields no items.
  *  - Rows count only under the writer's contract: schema
- *    'work-market.v1', an epoch-seconds `ts` inside the window (the
- *    route-decision fold allows five minutes of future skew), and the
+ *    'work-market.v1', an epoch-seconds `ts` inside the window, and the
  *    per-event fields each cell validates. Malformed lines, other
  *    schemas and other events are skipped, never guessed.
  *  - Route decisions collapse to each job's latest in-window row —
@@ -244,7 +243,7 @@ export function foldWorkMarket(text: string, nowMs: number, windowHours: number)
   const fold = emptyFold();
   const unfedTicks = new Map<number, ReturnType<typeof unfedTickLanes>>();
   const since = nowMs / 1000 - windowHours * 3600;
-  const until = nowMs / 1000 + 300;
+  const until = nowMs / 1000;
   for (const line of text.split('\n')) {
     // Cheap prefilter: the two evidence events are a minority of rows.
     if (!line.includes('"unfed_capacity"') && !line.includes('"route_decision"')) continue;
@@ -254,7 +253,6 @@ export function foldWorkMarket(text: string, nowMs: number, windowHours: number)
     const ts = row['ts'];
     if (typeof ts !== 'number' || !Number.isFinite(ts) || ts < since || ts > until) continue;
     if (row['event'] === 'unfed_capacity') {
-      if (ts > nowMs / 1000) continue;
       const snapshot = unfedTickLanes(row).filter(({ lane }) => LANE.test(lane));
       if (snapshot.length > 0) unfedTicks.set(ts, snapshot);
       continue;
@@ -263,7 +261,15 @@ export function foldWorkMarket(text: string, nowMs: number, windowHours: number)
     const job = row['job'];
     if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
     const prev = fold.latest.get(job);
-    if (prev !== undefined && prev.ts >= ts) continue;
+    if (prev !== undefined && prev.ts > ts) continue;
+    const chosen = laneField(row['chosen_lane']);
+    if (chosen === null && row['chosen_lane'] !== null) continue;
+    const preferred = laneField(row['preferred_lane']);
+    const rawCodes = row['reason_codes'];
+    // The dispatcher can reject requirements before it reads the lane hint.
+    const invalidRequirements = chosen === null && row['preferred_lane'] === undefined
+      && Array.isArray(rawCodes) && rawCodes.includes('invalid_requirements');
+    if (preferred === null && row['preferred_lane'] !== null && !invalidRequirements) continue;
     let overrideReason: string | null = null;
     let overrideFrom: string | null = null;
     let overrideTo: string | null = null;
@@ -272,7 +278,7 @@ export function foldWorkMarket(text: string, nowMs: number, windowHours: number)
       const from = laneField(o['from']);
       const to = laneField(o['to']);
       const reason = o['reason'];
-      if ((o['from'] === null || from !== null) && to !== null
+      if (from !== null && to !== null && from === preferred && to === chosen && from !== to
           && typeof reason === 'string' && CODE.test(reason)) {
         overrideReason = reason;
         overrideFrom = from;
@@ -282,12 +288,12 @@ export function foldWorkMarket(text: string, nowMs: number, windowHours: number)
     fold.latest.set(job, {
       ts,
       day: dayOf(ts),
-      chosen: laneField(row['chosen_lane']),
+      chosen,
       overrideReason,
       overrideFrom,
       overrideTo,
       rejected: rejectedLanes(row['rejected_lanes']),
-      decisionCodes: decisionCodes(row['reason_codes']),
+      decisionCodes: decisionCodes(rawCodes),
     });
   }
   for (const [ts, snapshot] of unfedTicks) {

@@ -31,14 +31,14 @@ import { devinHome, ensureDevinDirectory, listDevinTasks, writeDevinTask } from 
 import { DEVIN_SESSION_ID_PATTERN, type DevinTaskV1 } from './types.js';
 
 /** publish.sh's repo allowlist (`case "$NAME" in …`); also postrun_pr.py REPOS. */
-export const DEVIN_LAND_REPOS = ['phantom', 'phantom-secrets', 'ashlr-plugin', 'locus', 'lexicon', 'ashlr-md', 'ashlr-stack'] as const;
-export const DEVIN_LAND_UPSTREAM_OWNER = 'ashlrai';
-export const DEVIN_LAND_LANE = 'devin';
-export const DEVIN_LAND_TIER = 'frontier';
+const DEVIN_LAND_REPOS = ['phantom', 'phantom-secrets', 'ashlr-plugin', 'locus', 'lexicon', 'ashlr-md', 'ashlr-stack'] as const;
+const DEVIN_LAND_UPSTREAM_OWNER = 'ashlrai';
+const DEVIN_LAND_LANE = 'devin';
+const DEVIN_LAND_TIER = 'frontier';
 export const DEVIN_LAND_LEDGER_FILE = 'landings.jsonl';
-export const DEVIN_LAND_MAX_BUNDLE_BYTES = 200 * 1024 * 1024;
-export const DEVIN_LAND_MAX_PR_MD_BYTES = 256 * 1024;
-export const DEVIN_LAND_MAX_COMMITS = 100;
+const DEVIN_LAND_MAX_BUNDLE_BYTES = 200 * 1024 * 1024;
+const DEVIN_LAND_MAX_PR_MD_BYTES = 256 * 1024;
+const DEVIN_LAND_MAX_COMMITS = 100;
 const JOB_ID = /^[A-Za-z0-9._-]{1,80}$/;
 const BRANCH_NAME = /^[A-Za-z0-9._/-]{1,100}$/;
 const SHA = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
@@ -99,7 +99,7 @@ export interface DevinLandResult {
 
 class LandError extends Error {}
 
-export function normalizeLandRepo(input: string | undefined): string | null {
+function normalizeLandRepo(input: string | undefined): string | null {
   const raw = (input ?? 'phantom').trim();
   const name = raw.startsWith(`${DEVIN_LAND_UPSTREAM_OWNER}/`) ? raw.slice(DEVIN_LAND_UPSTREAM_OWNER.length + 1) : raw;
   return (DEVIN_LAND_REPOS as readonly string[]).includes(name) ? name : null;

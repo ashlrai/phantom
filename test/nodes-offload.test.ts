@@ -73,6 +73,17 @@ describe('nodes offload', () => {
     expect(d.recorded).toEqual([]);
   });
 
+  it('an unreadable queue is unknown, never "nothing is queued"; an empty one still is', async () => {
+    const unreadable = await readNodesOffload(deps(busy, { readQueue: async () => { throw new Error('no order file'); } }), { dryRun: true });
+    expect(unreadable.moves).toEqual([]);
+    expect(unreadable.stays).toEqual([]);
+    expect(unreadable.summary).not.toMatch(/nothing is queued/);
+    expect(unreadable.summary).toMatch(/ready queue could not be read/);
+    expect(unreadable.reasons).toContain('queue unreadable; ready jobs unknown');
+    const empty = await readNodesOffload(deps(busy, { jobs: [] }), { dryRun: true });
+    expect(empty.summary).toMatch(/nothing is queued/);
+  });
+
   it('host fine: nothing moves', async () => {
     const d = deps(fine);
     const report = await readNodesOffload(d, { dryRun: false });
@@ -102,6 +113,18 @@ describe('nodes offload', () => {
     const unknown = await readNodesOffload(deps({ load: { load1: null, load5: null, load15: null, cores: null, ratio: null }, admission: { state: 'unknown', why: null, settleSeconds: null, load1: null, ownedLoad1: null }, memory: memory(true) }), { dryRun: true });
     expect(unknown.host.state).toBe('unknown');
     expect(unknown.moves).toEqual([]);
+  });
+
+  it('never moves a ready row whose job already runs on a node under the bridge id', async () => {
+    // The claim bridge enqueues a ready row as `ready:<job>:<attempt>`
+    // (routerJobId in drive/nodes/ready-bridge.ts), so jobsRunning carries
+    // node job ids, not ready-row ids. A re-queued row for the same job must
+    // still count as running.
+    const running = [node('node-a', { slots: 2 }), node('node-b', { slots: 4 })];
+    const live = [{ id: 'ready:j1:1', state: 'running', claim: { nodeId: 'node-a', session: 1, jobId: 'ready:j1:1', expiresAt: NOW + 30_000 } } as unknown as NodesState['jobs'][number]];
+    const report = await readNodesOffload(deps(busy, { nodes: running, running: live }), { dryRun: true });
+    expect(report.stays.find(s => s.job === 'j1')?.why).toMatch(/already running/);
+    expect(report.moves.map(m => m.job)).toEqual(['j2', 'j3']);
   });
 
   it('resolves market lanes to the node cap the bridge requires; host-bound lanes stay', async () => {

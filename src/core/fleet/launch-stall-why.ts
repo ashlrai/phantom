@@ -133,7 +133,10 @@ export async function readLaunchStallFacts(runsDir = process.env.ASHLR_RUNS_DIR 
     readText(join(runsDir, 'metrics', 'jobs.jsonl')),
   ]);
   const used = lanesOf(resources);
-  const rows = ready === null ? [] : parseReadyTsv(ready, routerQueue).rows;
+  // uniqueReady: ready.tsv can carry repeated READY rows for one job; the
+  // launch head is jobs, so the first valid row per job wins — the same
+  // each-job-once rule every other supply reader applies.
+  const rows = ready === null ? [] : parseReadyTsv(ready, routerQueue, true).rows;
   const launches = launchLog === null ? null : parseJobLaunches(launchLog).latest;
   const merges = new Map<string, number>();
   for (const e of ledger === null ? [] : parseJobsJsonl(ledger).events) {
@@ -151,7 +154,8 @@ export async function readLaunchStallFacts(runsDir = process.env.ASHLR_RUNS_DIR 
       lastMergeAt: merge === undefined ? undefined : new Date(merge).toISOString(),
       // A ready row whose status is not READY is a blocked head line; its status is the blocker.
       // Parked rows are not launch candidates (dispatchd skips them and does not count them
-      // in `queued`), so the head lines are the first non-parked rows in queue order.
+      // in `queued`), so the head lines are the first non-parked rows in queue order, each
+      // job once via its first valid READY row.
       headLines: rows.filter(r => r.pool === lane && r.id && !PARKED_STATUS.test(r.status)).slice(0, HEAD_LINES)
         .map(r => ({ id: r.id!, ...(r.status !== 'READY' ? { blockedBy: r.status.toLowerCase() } : {}) })),
     };

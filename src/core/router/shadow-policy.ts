@@ -1,21 +1,21 @@
-import { constants } from 'node:fs';
-import { mkdir, open } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { enumerateRouteCandidates, rankRouteCandidates, type RouteSources } from '../routing/decision-candidates.js';
 import { routeIdSchema, type RouteCandidate, type RouteReport, type RouteRequest } from '../routing/decision-schema.js';
 import { type ControllerQualityReceipt } from './controller-quality.js';
-import { readLedgerTail, readRouterOutcomes, type RouterOutcome } from './outcomes.js';
+import {
+  appendLedgerLine, isLedgerRecord, parseJsonObjectLine, readLedgerTail, readRouterOutcomes,
+  resolveRouterRunsDir, type LedgerTailState, type RouterOutcome,
+} from './outcomes.js';
 
 export const SHADOW_POLICY_LEDGER_RELATIVE = join('metrics', 'route.shadow.jsonl');
 export const SHADOW_POLICY_RECORD_SCHEMA = 'route.shadow.v1' as const;
 export const SHADOW_POLICY_REPORT_SCHEMA = 'route.shadow-report.v1' as const;
 export const SHADOW_POLICY_LEDGER_LIMIT = 8 * 1024 * 1024;
-export const DEFAULT_SHADOW_POLICY = 'class-failure-avoidance' as const;
-export const DEFAULT_MIN_SUPPORT = 3;
-export const FAILURE_RATE_DEADBAND = 0.1;
+const DEFAULT_SHADOW_POLICY = 'class-failure-avoidance' as const;
+const DEFAULT_MIN_SUPPORT = 3;
+const FAILURE_RATE_DEADBAND = 0.1;
 
-export type ShadowPolicyName = typeof DEFAULT_SHADOW_POLICY;
+export type ShadowPolicyName = 'class-failure-avoidance';
 export type ShadowSupportStatus = 'supported' | 'insufficient_support' | 'no_candidates';
 
 const SHADOW_POLICIES: ReadonlySet<string> = new Set([DEFAULT_SHADOW_POLICY]);
@@ -48,7 +48,7 @@ export interface ShadowTaskClassGroup {
 
 export interface ShadowPolicyReport {
   schema: typeof SHADOW_POLICY_REPORT_SCHEMA; advisory: true; dispatched: false;
-  policy: ShadowPolicyName | null; state: 'read' | 'missing' | 'unreadable' | 'not-file';
+  policy: ShadowPolicyName | null; state: LedgerTailState;
   truncated: boolean; path: string; invalid_rows: number;
   total_decisions: number; agreed: number; disagreed: number; insufficient_support: number; no_candidates: number;
   outcomes: {
@@ -74,8 +74,8 @@ function classifyOutcome(o: Pick<RouterOutcome, 'merged' | 'reverted'>): { outco
 }
 
 function validDistribution(value: unknown, eligible: readonly string[]): Record<string, number> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const map = value as Record<string, unknown>;
+  if (!isLedgerRecord(value)) return null;
+  const map = value;
   if (eligible.length === 0 || Object.keys(map).length !== eligible.length) return null;
   let sum = 0;
   const out: Record<string, number> = {};
@@ -164,18 +164,13 @@ export async function recordShadowPolicyDecision(root: string, record: ShadowPol
   if (record.job !== null) routeIdSchema.parse(record.job);
   routeIdSchema.parse(record.repo);
   const path = join(root, SHADOW_POLICY_LEDGER_RELATIVE);
-  await mkdir(join(root, 'metrics'), { recursive: true });
-  const fd = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
-  try {
-    if (!(await fd.stat()).isFile()) throw new Error('Invalid shadow ledger');
-    await fd.writeFile(JSON.stringify(record) + '\n');
-  } finally { await fd.close(); }
+  await appendLedgerLine(path, JSON.stringify(record), 'Invalid shadow ledger');
   return path;
 }
 
 function parseShadowRecord(raw: unknown): ShadowPolicyRecord | null {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const r = raw as Record<string, unknown>;
+  if (!isLedgerRecord(raw)) return null;
+  const r = raw;
   if (r['schema'] !== SHADOW_POLICY_RECORD_SCHEMA || r['advisory'] !== true || r['dispatched'] !== false) return null;
   if (typeof r['policy'] !== 'string' || !isShadowPolicyName(r['policy'])) return null;
   if (typeof r['repo'] !== 'string' || !routeIdSchema.safeParse(r['repo']).success) return null;
@@ -221,8 +216,7 @@ function summarizeOffPolicy(rows: readonly { eligible: string[]; action: string;
 
 /** Compare recorded shadow decisions against recorded outcomes; unknown outcomes stay null. */
 export async function buildShadowPolicyReport(opts: { runsDir?: string; policy?: ShadowPolicyName } = {}): Promise<ShadowPolicyReport> {
-  const runsDir = opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
-  if (!isAbsolute(runsDir)) throw new RangeError('runsDir must be an absolute path');
+  const runsDir = resolveRouterRunsDir(opts.runsDir);
   const path = join(runsDir, SHADOW_POLICY_LEDGER_RELATIVE);
   const tail = await readLedgerTail(path, SHADOW_POLICY_LEDGER_LIMIT);
   const gate = {
@@ -244,11 +238,9 @@ export async function buildShadowPolicyReport(opts: { runsDir?: string; policy?:
   let invalidRows = 0;
   for (const line of tail.text.split(/\r?\n/)) {
     if (!line.trim()) continue;
-    try {
-      const parsed = parseShadowRecord(JSON.parse(line));
-      if (!parsed) { invalidRows += 1; continue; }
-      if (!opts.policy || parsed.policy === opts.policy) records.push(parsed);
-    } catch { invalidRows += 1; }
+    const parsed = parseShadowRecord(parseJsonObjectLine(line));
+    if (!parsed) { invalidRows += 1; continue; }
+    if (!opts.policy || parsed.policy === opts.policy) records.push(parsed);
   }
   const outcomesRead = await readRouterOutcomes({ runsDir });
   const outcomeByJob = new Map(outcomesRead.outcomes.map(o => [o.job_id, o]));

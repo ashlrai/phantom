@@ -11,6 +11,7 @@ import { CHANNEL_IDS, type ChannelAdapter, type ChannelId, type DeliverResult } 
 import { getChannelAdapter, listChannelRegistry } from '../agents/channel-registry.js';
 import { readLocalSendPolicy } from '../agents/send-gate.js';
 import { createDraft } from '../cos/drafts.js';
+import { scrubSecrets } from '../util/scrub.js';
 import { COMMS_AGENT_ROLE } from './role.js';
 import {
   decideSend, readKillState, readPauseState,
@@ -21,7 +22,7 @@ import {
   appendArchive, appendDraft, appendOwnerNotice, appendRunRecord, appendSendLog, listDrafts, readInbox, readOwnerApprovals, readRunJournal, readSendLog, writeInbox,
   type ApprovalsReason, type CommsDraft, type CommsRunRecord, type OwnerApprovals,
 } from './store.js';
-import { triageInbox, type InboxMessage } from './triage.js';
+import { triageInbox, type InboxMessage, type TriageSummary } from './triage.js';
 
 export interface LinkedInConnector {
   mode: 'official-api' | 'sanctioned-connector';
@@ -59,6 +60,10 @@ export interface CommsRunReport {
   laneReason: string;
   grokRequired: false;
   triage: { kept: number; archived: number; drafted: number; deleted: 0 };
+  /** One entry per inbox message the pass classified — id, mail class and
+   * the scrubbed one-line summary — so the report says which mail was kept,
+   * archived or drafted, not only how many. */
+  summaries: TriageSummary[];
   sends: Array<{ transport: CommsTransport; recipient: string; status: DeliverResult['status']; reason: string }>;
 }
 
@@ -331,6 +336,7 @@ export async function runCommsAgent(options: CommsRunOptions): Promise<CommsRunR
       drafted: sends.filter(send => send.status === 'drafted').length,
       deleted: 0,
     },
+    summaries: triage.summaries,
     sends,
   };
   // The run journal is the pass's own audit record: `status` reads it to say
@@ -344,6 +350,7 @@ export async function runCommsAgent(options: CommsRunOptions): Promise<CommsRunR
     laneReason: report.laneReason,
     triage: report.triage,
     sends: report.sends,
+    summaries: report.summaries,
   };
   try { await appendRunRecord(options.runsDir, record); }
   catch { /* See above: bookkeeping never rewrites a completed pass. */ }
@@ -384,7 +391,10 @@ export async function commsStatus(runsDir: string, deps: {
    * journal cannot be read or holds no readable record — a pass may have run,
    * the answer is unknown, never reported as never-ran. `run` is null unless
    * source is 'available'. A pass that failed mid-flight appends nothing, so
-   * a stale `at` is itself the signal that passes are not completing. */
+   * a stale `at` is itself the signal that passes are not completing.
+   * `summaries` carries the pass's per-message triage decisions; it is null
+   * on records written before the field existed — those passes recorded
+   * counts only, so the decisions are unknown, never reported as none. */
   lastRun: {
     source: 'missing' | 'available' | 'unavailable';
     run: {
@@ -395,6 +405,7 @@ export async function commsStatus(runsDir: string, deps: {
       archived: number;
       drafted: number;
       sendOutcomes: { sent: number; drafted: number; refused: number };
+      summaries: TriageSummary[] | null;
     } | null;
   };
 }> {
@@ -422,6 +433,7 @@ export async function commsStatus(runsDir: string, deps: {
         archived: record.triage.archived,
         drafted: record.triage.drafted,
         sendOutcomes,
+        summaries: record.summaries ?? null,
       } };
     }).catch(() => ({ source: 'unavailable' as const, run: null })),
   ]);
@@ -447,6 +459,13 @@ export async function commsStatus(runsDir: string, deps: {
 export const COMMS_DRAFT_STATUSES = ['pending', 'sent', 'all'] as const;
 export type CommsDraftStatusFilter = (typeof COMMS_DRAFT_STATUSES)[number];
 
+/** Longest `--contains` needle the drafts read accepts; the subject/body text it matches is already bounded far shorter. */
+export const COMMS_DRAFTS_CONTAINS_MAX = 512;
+/** Longest `--to` recipient the drafts read accepts — the send policy's own recipient bound. */
+export const COMMS_DRAFTS_TO_MAX = 256;
+/** Largest page `--limit` returns — the unified inbox's own item cap. */
+export const COMMS_DRAFTS_LIMIT_MAX = 200;
+
 export interface CommsDraftsFilter {
   /** `pending` (default) lists only owner approvals; `sent` lists delivered
    * replies with their `resolvedAt`; `all` lists both. */
@@ -454,16 +473,83 @@ export interface CommsDraftsFilter {
   /** Narrow to one transport (`email`, `imessage`, `linkedin`, `bus`,
    * `slack`, `telegram`, `handoff`). */
   transport?: CommsTransport;
+  /** Keep only drafts addressed to this exact recipient — the same exact
+   * transport+recipient pairing standing approvals apply, never a
+   * case-folded or substring match. */
+  to?: string;
+  /** Keep only drafts whose scrubbed subject or body carries the needle as a
+   * case-insensitive substring; whitespace collapses on both sides so a
+   * phrase typed across a line break still finds its draft. Transport,
+   * recipient, ids and timestamps are not search text — `transport`, `to`,
+   * `id`, `since` and `before` cover those. */
+  contains?: string;
+  /** Keep only drafts whose `createdAt` stamp is at or after this epoch ms;
+   * `before` is the exclusive upper bound, composing into one
+   * [since, before) window on when the reply was drafted — never on
+   * `resolvedAt`, which only a sent record carries. A record whose
+   * `createdAt` does not parse can prove no window membership, so it drops
+   * out under either bound rather than guessing a time. */
+  since?: number;
+  before?: number;
+  /** Keep only the draft whose id strictly equals this value. */
+  id?: string;
+  /** Cap the returned page, oldest first; `matched` still reports the true
+   * filtered total. */
+  limit?: number;
 }
 
-export async function commsDrafts(runsDir: string, filter: CommsDraftsFilter = {}): Promise<{ ok: true; drafts: CommsDraft[] }> {
+export interface CommsDraftsResult {
+  ok: true;
+  drafts: CommsDraft[];
+  /** The true filtered total before `limit` clipped the page. */
+  matched: number;
+  truncated: boolean;
+}
+
+/**
+ * The `--contains` verdict for one draft: the scrubbed subject and body —
+ * the only free-text fields a draft carries — lowercased with whitespace
+ * collapsed like every shared `--contains` haystack, so a secret-shaped
+ * value stays unfindable even though it sits in the stored record.
+ */
+function commsDraftContainsMatch(draft: CommsDraft, needle: string): boolean {
+  return scrubSecrets(`${draft.subject}\n${draft.body}`)
+    .toLowerCase().replace(/\s+/g, ' ').includes(needle);
+}
+
+/**
+ * The normalized form of a `contains` filter value: lowercase, whitespace
+ * collapsed, trimmed — the same fold `busReadContainsNeedle` applies. An
+ * absent or blank needle matches everything.
+ */
+function commsDraftsNeedle(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const needle = value.toLowerCase().replace(/\s+/g, ' ').trim();
+  return needle === '' ? undefined : needle;
+}
+
+export async function commsDrafts(runsDir: string, filter: CommsDraftsFilter = {}): Promise<CommsDraftsResult> {
   const status = filter.status ?? 'pending';
-  return {
-    ok: true,
-    drafts: (await listDrafts(runsDir))
-      .filter(draft => (status === 'all' || draft.status === status)
-        && (filter.transport === undefined || draft.transport === filter.transport)),
-  };
+  const to = filter.to?.trim();
+  const needle = commsDraftsNeedle(filter.contains);
+  const hasWindow = filter.since !== undefined || filter.before !== undefined;
+  const matched = (await listDrafts(runsDir)).filter(draft => {
+    if (status !== 'all' && draft.status !== status) return false;
+    if (filter.transport !== undefined && draft.transport !== filter.transport) return false;
+    if (to !== undefined && to !== '' && draft.recipient !== to) return false;
+    if (needle !== undefined && !commsDraftContainsMatch(draft, needle)) return false;
+    if (filter.id !== undefined && draft.id !== filter.id) return false;
+    if (hasWindow) {
+      const created = Date.parse(draft.createdAt);
+      if (!Number.isFinite(created)
+          || (filter.since !== undefined && created < filter.since)
+          || (filter.before !== undefined && created >= filter.before)) return false;
+    }
+    return true;
+  });
+  const limit = filter.limit;
+  const page = limit === undefined ? matched : matched.slice(0, Math.max(0, limit));
+  return { ok: true, drafts: page, matched: matched.length, truncated: page.length < matched.length };
 }
 
 export function preservedIds(before: readonly InboxMessage[], kept: readonly InboxMessage[], archived: readonly InboxMessage[]): boolean {

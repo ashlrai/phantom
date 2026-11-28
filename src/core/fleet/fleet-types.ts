@@ -20,6 +20,7 @@
  * imports and plain constants, no node: modules.
  */
 import type { RoutingDifficulty, SeatDecision } from '../routing/types.js';
+import type { FleetReplicaSource } from './fleet-replica.js';
 import type { LiveJobsReport } from './live-jobs.js';
 
 // ---------------------------------------------------------------------------
@@ -536,6 +537,16 @@ export interface FleetLiveRun {
   seatDecision: SeatDecision | null;
 }
 
+/**
+ * The `capReason` the live snapshot stamps on every lane when no standing tick
+ * has reported lanes recently. `slots` is then a placeholder, not an observation:
+ * readers must treat capacity as unknown rather than an observed count. The
+ * producer (verse/fleet-live-api.ts) and every consumer (the CLI lane-slots
+ * read, the Fleet UI chips) compare against this one constant so the sentinel
+ * cannot drift into a silently wrong "0 slots".
+ */
+export const STALE_STANDING_TICK_REASON = 'No standing tick has reported lanes in the last 10 minutes.';
+
 export interface FleetLaneState {
   lane: FleetEngine;
   /** Slots this lane may use right now. 0 = off. */
@@ -543,6 +554,12 @@ export interface FleetLaneState {
   busy: number;
   /** Why `slots` differs from the lane's default (presence, Leader, budget, grant); null = default. */
   capReason: string | null;
+}
+
+export interface FleetLiveLaneState extends Omit<FleetLaneState, 'slots' | 'busy'> {
+  slots: number | null;
+  busy: number | null;
+  machine?: string;
 }
 
 export interface FleetFunnelStage {
@@ -609,9 +626,10 @@ export type FleetLiveState = 'dark' | 'idle' | 'running' | 'paused' | 'stopped';
 
 export interface FleetLiveSnapshotV1 {
   liveJobs?: LiveJobsReport;
+  source?: FleetReplicaSource;
   v: 1;
   generatedAt: string;
-  state: FleetLiveState;
+  state: FleetLiveState | null;
   stateReason: string | null;
   /** When the fleet last did anything; null = never / unknown. */
   lastActivityAt: string | null;
@@ -635,7 +653,7 @@ export interface FleetLiveSnapshotV1 {
   summary: FleetLiveSummary;
   /** Short commit of the build serving this view; null/absent = unknown. */
   commit?: string | null;
-  lanes: FleetLaneState[];
+  lanes: FleetLiveLaneState[];
   /** Live runs plus the last 12 h (Swimlane), newest first. */
   runs: FleetLiveRun[];
   funnel: FleetGateFunnel | null;

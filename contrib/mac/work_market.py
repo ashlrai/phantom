@@ -127,6 +127,25 @@ def repo_priority(home, repo):
     except (OSError, UnicodeError): return "normal"
 
 
+def apply_repo_priority_requests(home):
+    directory = Path(home) / ".ashlr"
+    requests = directory / "repo-priority-requests"
+    applied = directory / "repo-priority"
+    if not requests.is_dir(): return
+    applied.mkdir(mode=0o700, exist_ok=True)
+    for request in requests.iterdir():
+        if "@" not in request.name or repo_key(request.name.replace("@", "/", 1)) != request.name.replace("@", "/", 1):
+            continue
+        try:
+            fd = os.open(request, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, "rb") as source:
+                if not stat.S_ISREG(os.fstat(source.fileno()).st_mode): continue
+                if source.read(17).strip() not in (b"normal", b"boost", b"pause"): continue
+            os.replace(request, applied / request.name)
+        except OSError:
+            continue
+
+
 FRESHNESS_WEEK = 7 * 86400
 FRESHNESS_JOB = re.compile(r"RQ-(DOCS|SITE)-FRESHNESS-([a-z0-9][a-z0-9._-]{0,99})-([0-9]{1,8})")
 FRESHNESS_VERDICTS = {"docs": {"clean", "drift", "unknown"},

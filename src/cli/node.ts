@@ -1,4 +1,4 @@
-import { NODE_FLEET_USAGE, NODE_FLEET_VERBS, nodeFleetVerbUsage } from './node-fleet-usage.js';
+import { NODE_FLEET_USAGE, NODE_FLEET_VERBS, nodeFleetVerbUsage, nodeReplicaUsage } from './node-fleet-usage.js';
 
 /** `bootstrap` is planning only: no provisioning, host inspection, credentials, or registry I/O.
  * The other verbs (see node-fleet.ts) are the local node registry, router and job leases.
@@ -97,6 +97,15 @@ async function scopedNodeHelp(
     case 'run-once':
     case 'rpc':
       return `${NODE_POOL_USAGE}${pointer}`;
+    case 'replica': {
+      // Not a pool-enrollment verb: it reads or refreshes this computer's
+      // read-only copy of the fleet leader's state, so it gets its own two
+      // usage lines rather than the whole pool cluster. If those lines ever
+      // leave the fleet block, fall back to the full command list.
+      const usage = nodeReplicaUsage();
+      if (!usage) return null;
+      return `${usage}\nstatus reports the snapshot's source and freshness; sync refreshes it from the leader over SSH (--leader saves the alias). It never imports authority or changes node admission.${pointer}`;
+    }
     case 'light':
     case 'lanes':
       return `${extraUsageLines(verb)}${pointer}`;
@@ -112,13 +121,18 @@ export async function cmdNode(args: string[]): Promise<number> {
   if (args[0] === 'light' && !args.includes('--help') && !args.includes('-h')) {
     return (await import('./node-light.js')).cmdNodeLight(args.slice(1));
   }
-  // Only first pool enrollment (`--primary`) must bypass the standalone parser:
-  // --primary/--backup are not node-fleet flags. Every other join form — bare,
-  // --json-only or explicit — reaches cmdNodeFleet, which delegates to the pool
-  // only when a pool config exists and otherwise answers with the standalone
-  // registry's own usage error.
+  // Only first pool enrollment (`--primary`/`--backup`) must bypass the
+  // standalone parser: neither is a node-fleet flag, and `--backup` has no
+  // standalone meaning at all, so either one alone still means pool
+  // enrollment — route it there for the real alias check instead of the
+  // standalone parser's "flag not supported". Every other join form — bare,
+  // --json-only or explicit — reaches cmdNodeFleet, which delegates to the
+  // pool only when a pool config exists and otherwise answers with the
+  // standalone registry's own usage error.
+  const poolJoinFlag = (a: string) =>
+    a === '--primary' || a.startsWith('--primary=') || a === '--backup' || a.startsWith('--backup=');
   if (!args.includes('--help') && !args.includes('-h') &&
-      (['pool', 'rpc', 'watch', 'worker'].includes(args[0] ?? '') || (args[0] === 'join' && args.includes('--primary')))) {
+      (['pool', 'rpc', 'watch', 'worker', 'replica'].includes(args[0] ?? '') || (args[0] === 'join' && args.some(poolJoinFlag)))) {
     return (await import('./node-pool.js')).cmdNodePool(args[0]!, args.slice(1));
   }
   if ((args[0] === 'capacity' || args[0] === 'route') && !args.includes('--help') && !args.includes('-h')) {

@@ -23,6 +23,15 @@ describe('shebangInterpreter', () => {
       ['#!/usr/bin/env perl', 'perl'],
       ['#!/usr/bin/perl5.34', 'perl'],
       ['#!/usr/bin/env -S perl -w', 'perl'],
+      ['#!/usr/bin/env -u FOO node', 'node'],
+      ['#!/usr/bin/env --unset FOO node', 'node'],
+      ['#!/usr/bin/env -C /tmp python3', 'python'],
+      ['#!/usr/bin/env --chdir /tmp bash', 'shell'],
+      ['#!/usr/bin/env --argv0 tool node', 'node'],
+      ['#!/usr/bin/env -uFOO node', 'node'],
+      ['#!/usr/bin/env --unset=FOO node', 'node'],
+      ['#!/usr/bin/env -u FOO -C /tmp node', 'node'],
+      ['#!/usr/bin/env -u', null],
     ];
     for (const [line, kind] of cases) expect(shebangInterpreter(line), line).toBe(kind);
   });

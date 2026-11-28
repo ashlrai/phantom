@@ -31,7 +31,7 @@ import type {
 } from '../types.js';
 import { listIssuesAsync, githubCiStatusAsync } from '../integrations/github.js';
 import { isTrivialItem, isNonCodePath } from './value-filter.js';
-import { scoreItem } from './scoring.js';
+import { isPlainRecord, normalizePathSeparators, scoreItem } from './scoring.js';
 import { listGoals } from '../goals/store.js';
 import { readOutcomeGoalForScan } from '../goals/outcome-runtime.js';
 import { createProposalMilestoneCompletionPredicate } from '../goals/completion.js';
@@ -105,7 +105,6 @@ const IGNORE_DIRS: ReadonlySet<string> = new Set([
   'refs',
   'third_party',
   'third-party',
-  'vendor',
   'vendors',
   'examples',
   'fixtures',
@@ -143,7 +142,7 @@ const IGNORE_VENDORED_PATH_RE = /(?:^|\/)(?:[a-z0-9_-]+-lib|site-packages)\//i;
  */
 export function isIgnoredPath(filePath: string): boolean {
   // Normalise separators so we can reliably split on '/'
-  const normalised = filePath.replace(/\\/g, '/');
+  const normalised = normalizePathSeparators(filePath);
   const segments = normalised.split('/');
   for (const seg of segments) {
     if (seg && IGNORE_DIRS.has(seg)) return true;
@@ -193,10 +192,8 @@ function boundedGoalDisplayTitle(objective: string, milestoneTitle: string): str
   let objectiveBudget = Math.min(objective.length, Math.floor(available / 2));
   const milestoneBudget = Math.min(milestoneTitle.length, available - objectiveBudget);
   objectiveBudget = Math.min(objective.length, available - milestoneBudget);
-  const truncate = (value: string, max: number): string =>
-    value.length <= max ? value : `${value.slice(0, Math.max(0, max - 3)).trimEnd()}...`;
 
-  return `${prefix}${truncate(objective, objectiveBudget)}${separator}${truncate(milestoneTitle, milestoneBudget)}`;
+  return `${prefix}${boundedWorkItemText(objective, objectiveBudget)}${separator}${boundedWorkItemText(milestoneTitle, milestoneBudget)}`;
 }
 
 function boundedWorkItemText(value: string, max: number): string {
@@ -371,7 +368,7 @@ export async function scanIssues(repo: string): Promise<WorkItem[]> {
  * root scripts, tooling, and other non-product code are never emitted.
  */
 export function isFirstPartySourcePath(filePath: string): boolean {
-  const normalised = filePath.replace(/\\/g, '/').replace(/^\.\//, '');
+  const normalised = normalizePathSeparators(filePath).replace(/^\.\//, '');
   // Fast path: relative path starting with a first-party root.
   if (
     normalised.startsWith('src/') ||
@@ -730,22 +727,24 @@ function mergeVerifyContractItems(repo: string, profile: RepoExecutionProfile): 
 // ---------------------------------------------------------------------------
 
 /**
- * Run `npm outdated --json` in repo. Returns parsed JSON or null.
+ * Run `npm <outdated|audit> --json` in repo. Returns parsed JSON object or null.
  * Bounded: timeout, never installs, --no-fund suppresses network noise.
  */
-async function npmOutdated(repo: string): Promise<Record<string, unknown> | null> {
+async function npmJsonCommand(
+  repo: string,
+  subcommand: 'outdated' | 'audit',
+): Promise<Record<string, unknown> | null> {
   try {
-    // npm outdated exits 1 when there are outdated packages — capture stdout anyway
+    // Both npm outdated and npm audit exit non-zero when findings exist but still emit JSON stdout
     const { stdout } = await execFileAsync(
       'npm',
-      ['outdated', '--json', '--no-fund', '--ignore-scripts'],
+      [subcommand, '--json', '--no-fund', '--ignore-scripts'],
       {
         cwd: repo,
         timeout: NPM_TIMEOUT_MS,
         maxBuffer: 512 * 1024,
       },
     ).catch((err: unknown) => {
-      // npm outdated exits non-zero when packages are outdated but still emits JSON stdout
       const e = err as { stdout?: string };
       if (e?.stdout) return { stdout: e.stdout };
       throw err;
@@ -753,38 +752,7 @@ async function npmOutdated(repo: string): Promise<Record<string, unknown> | null
 
     if (!stdout || stdout.trim() === '') return null;
     const parsed = JSON.parse(stdout) as unknown;
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
-    return parsed as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Run `npm audit --json` in repo. Returns parsed JSON or null.
- * Bounded: timeout, never installs.
- */
-async function npmAudit(repo: string): Promise<Record<string, unknown> | null> {
-  try {
-    const { stdout } = await execFileAsync(
-      'npm',
-      ['audit', '--json', '--no-fund', '--ignore-scripts'],
-      {
-        cwd: repo,
-        timeout: NPM_TIMEOUT_MS,
-        maxBuffer: 512 * 1024,
-      },
-    ).catch((err: unknown) => {
-      // npm audit exits non-zero when vulnerabilities are found but still emits JSON
-      const e = err as { stdout?: string };
-      if (e?.stdout) return { stdout: e.stdout };
-      throw err;
-    });
-
-    if (!stdout || stdout.trim() === '') return null;
-    const parsed = JSON.parse(stdout) as unknown;
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
-    return parsed as Record<string, unknown>;
+    return isPlainRecord(parsed) ? parsed : null;
   } catch {
     return null;
   }
@@ -806,13 +774,9 @@ async function npmAudit(repo: string): Promise<Record<string, unknown> | null> {
  */
 export function isActionableFix(fixAvailable: unknown): boolean {
   if (fixAvailable === true) return true;
-  if (fixAvailable === false || fixAvailable === null || fixAvailable === undefined) return false;
-  if (typeof fixAvailable === 'object' && !Array.isArray(fixAvailable)) {
-    const fa = fixAvailable as Record<string, unknown>;
+  if (isPlainRecord(fixAvailable)) {
     // isSemVerMajor:true means a breaking major bump is required — not actionable
-    if (fa['isSemVerMajor'] === true) return false;
-    // isSemVerMajor:false (or absent) means a non-breaking fix exists
-    return true;
+    return fixAvailable['isSemVerMajor'] !== true;
   }
   return false;
 }
@@ -827,10 +791,9 @@ function hasNpmLockfile(repo: string): boolean {
 function hasPackageTestScript(repo: string): boolean {
   try {
     const raw = readFileSync(join(repo, 'package.json'), 'utf8');
-    const pkg = JSON.parse(raw) as Record<string, unknown>;
-    const scripts = pkg['scripts'];
-    if (scripts === null || typeof scripts !== 'object' || Array.isArray(scripts)) return false;
-    const test = (scripts as Record<string, unknown>)['test'];
+    const pkg = JSON.parse(raw) as unknown;
+    if (!isPlainRecord(pkg) || !isPlainRecord(pkg['scripts'])) return false;
+    const test = pkg['scripts']['test'];
     return typeof test === 'string' && test.trim().length > 0;
   } catch {
     return false;
@@ -860,7 +823,7 @@ export async function scanDeps(repo: string, cfg?: Pick<AshlrConfig, 'foundry'>)
       cfg.foundry.scanDependencyBumps === true &&
       hasNpmLockfile(repo) &&
       hasPackageTestScript(repo);
-    const outdated = allowDependencyBumps ? await npmOutdated(repo) : null;
+    const outdated = allowDependencyBumps ? await npmJsonCommand(repo, 'outdated') : null;
     if (outdated) {
       for (const [pkg, info] of Object.entries(outdated)) {
         if (count >= MAX_OUTDATED_ITEMS) break;
@@ -936,7 +899,7 @@ export async function scanDeps(repo: string, cfg?: Pick<AshlrConfig, 'foundry'>)
     }
 
     // 2. Vulnerabilities from npm audit
-    const audit = await npmAudit(repo);
+    const audit = await npmJsonCommand(repo, 'audit');
     if (audit) {
       // npm audit --json v7+ shape: { vulnerabilities: { [name]: { severity, fixAvailable, ... } } }
       // Only count advisories that have an ACTIONABLE non-breaking fix available.
@@ -1973,6 +1936,22 @@ function unavailableObservation(
   };
 }
 
+function absentObservation(
+  descriptor: ScannerDescriptor,
+  repo: string,
+): ScannerObservation {
+  return {
+    schemaVersion: 1,
+    observedAt: nowIso(),
+    repo: resolve(repo),
+    scannerId: descriptor.id,
+    domain: descriptor.domain,
+    source: descriptor.source,
+    status: 'absent',
+    reason: 'source-confirmed-empty',
+  };
+}
+
 function presentObservations(
   descriptor: ScannerDescriptor,
   repo: string,
@@ -2153,16 +2132,7 @@ async function runMergeVerifyContractScanner(
       observations: attested as ScannerObservation[],
     };
   }
-  const observation = observationWithSourceBase({
-    schemaVersion: 1,
-    observedAt: nowIso(),
-    repo: resolve(repo),
-    scannerId: descriptor.id,
-    domain: descriptor.domain,
-    source: descriptor.source,
-    status: 'absent',
-    reason: 'source-confirmed-empty',
-  }, sourceBase);
+  const observation = observationWithSourceBase(absentObservation(descriptor, repo), sourceBase);
   if (!observation) {
     return { items, observations: [unavailableObservation(descriptor, repo, 'config-unavailable')] };
   }
@@ -2203,16 +2173,7 @@ export async function runScannerWithObservations(
       if (items.length > 0) return { items, observations: presentObservations(descriptor, repo, items) };
       return {
         items,
-        observations: [{
-          schemaVersion: 1,
-          observedAt: nowIso(),
-          repo: resolve(repo),
-          scannerId: descriptor.id,
-          domain: descriptor.domain,
-          source: descriptor.source,
-          status: 'absent',
-          reason: 'source-confirmed-empty',
-        }],
+        observations: [absentObservation(descriptor, repo)],
       };
     }
 

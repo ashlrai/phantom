@@ -29,6 +29,24 @@ describe('generator yield', () => {
     const report = generatorYield([row({ job: 'RQ-DRAIN-1', state: 'MERGED' }), row({ job: 'RQ-DRAIN-2', empty: true }), JSON.stringify({ job: 'OLD', ts: '2026-11-01T00:00:00Z' })].join('\n'), 24, now);
     expect(report.generators).toMatchObject([{ generator: 'drain', jobs: 2, merged: 1, tokensPerMergedPr: null }]);
   });
+  it('excludes dispatcher no-ops from execution measures while retaining generator decisions', () => {
+    const job = 'RQ-DRAIN-1';
+    const skipped = 'RQ-DRAIN-2';
+    const report = generatorYield([
+      row({ job, event: 'launch' }),
+      row({ job, event: 'finish', empty: false, tokens_total: 100, diff_lines: 8 }),
+      row({ job, event: 'publish', state: 'MERGED' }),
+      row({ job: skipped, event: 'outcome', state: 'DONE-NOOP', launched: false, reason: 'already_completed' }),
+      row({ job, event: 'outcome', state: 'DONE-NOOP', launched: false, src: 'other', empty: true }),
+    ].join('\n'), 24, now, [
+      row({ job, event: 'drafted', src: 'drain' }),
+      row({ job: skipped, event: 'drafted', src: 'drain' }),
+    ].join('\n'));
+    expect(report.generators).toMatchObject([
+      { generator: 'drain', jobs: 1, drafted: 2, launched: 1, prs: 1, merged: 1,
+        emptyRate: 0, medianDiffLines: 8, tokensPerMergedPr: 100 },
+    ]);
+  });
   it('uses the newest recorded measurements when older receipts are appended late', () => {
     const job = 'RQ-DRAIN-1';
     const report = generatorYield([
@@ -50,6 +68,33 @@ describe('generator yield', () => {
     expect(report(receipts)).toMatchObject([{ generator: 'fixup', jobs: 1, emptyRate: null }]);
     expect(report([...receipts, row({ job, event: 'finish', empty: false }), dispatch]))
       .toMatchObject([{ generator: 'fixup', jobs: 1, emptyRate: 0 }]);
+  });
+  it('clears earlier empty evidence on a launch reservation without counting a launch', () => {
+    const job = 'FIXUP-X';
+    const finish = row({ job, event: 'finish', empty: true });
+    const claim = row({ job, event: 'claim' });
+    const reservation = row({ job, event: 'claim', launch_dedupe: true });
+    const report = (...receipts: string[]) => generatorYield(receipts.join('\n'), 24, now).generators;
+
+    expect(report(finish, claim)).toMatchObject([{ emptyRate: 1, launched: 0 }]);
+    expect(report(finish, reservation, finish)).toMatchObject([{ emptyRate: null, launched: 0 }]);
+    expect(report(finish, reservation, row({ job, event: 'finish', empty: false }), reservation))
+      .toMatchObject([{ emptyRate: 0, launched: 0 }]);
+  });
+  it('keeps reserialized receipt replays from replacing newer evidence at the same timestamp', () => {
+    const job = 'RQ-DRAIN-1';
+    const finish = row({ job, event: 'finish', src: 'old', empty: true, tokens_total: 20, diff_lines: 0 });
+    const reordered = JSON.stringify(Object.fromEntries(Object.entries(JSON.parse(finish)).reverse()))
+      .replace(/^{/, '{ ');
+    const report = generatorYield([
+      finish,
+      row({ job, event: 'finish', src: 'drain', empty: false, tokens_total: 100, diff_lines: 8 }),
+      reordered,
+      row({ job, state: 'MERGED' }),
+    ].join('\n'), 24, now);
+    expect(report.generators).toMatchObject([
+      { generator: 'drain', jobs: 1, merged: 1, emptyRate: 0, medianDiffLines: 8, tokensPerMergedPr: 100 },
+    ]);
   });
   it('uses terminal timestamps to place reconciled receipts in the report window', () => {
     const report = generatorYield([
@@ -100,6 +145,19 @@ describe('generator yield', () => {
     ].join('\n'), 24, now);
     expect(report.generators).toEqual([
       { generator: 'filler', jobs: 1, prs: 1, merged: 1, drafted: 0, rejected: 0, launched: 0, rejections: {}, emptyRate: 1, medianDiffLines: null, tokensPerMergedPr: null },
+    ]);
+  });
+  it('counts canonical PR links across aliases and retains explicit merge evidence', () => {
+    const report = generatorYield([
+      row({ job: 'FIXUP-ISSUE', url: 'https://github.com/x/y/issues/1' }),
+      row({ job: 'FIXUP-RUN', html_url: 'https://github.com/x/y/actions/runs/2' }),
+      row({ job: 'FIXUP-PLACEHOLDER', pr: 'unknown' }),
+      row({ job: 'FIXUP-INVALID', prUrl: 'https://github.com/x/y/pull/0' }),
+      row({ job: 'FIXUP-PR', pr: 'unknown', html_url: 'https://github.com/x/y/pull/3' }),
+      row({ job: 'FIXUP-MERGED', state: 'MERGED' }),
+    ].join('\n'), 24, now);
+    expect(report.generators).toMatchObject([
+      { generator: 'fixup', jobs: 6, prs: 2, merged: 1 },
     ]);
   });
   it('counts launched batch members once and excludes worker telemetry from generator totals', () => {
@@ -167,6 +225,31 @@ describe('generator yield', () => {
       ]);
     }
   });
+  it('keeps unknown sources out of job attribution while counting their decisions', () => {
+    const explicit = 'RQ-DRAIN-EXPLICIT';
+    const drafted = 'RQ-DRAIN-DRAFTED';
+    const inferred = 'RQ-DRAIN-INFERRED';
+    const report = generatorYield([
+      row({ job: explicit, event: 'launch', src: 'bets' }),
+      row({ job: explicit, state: 'MERGED', src: ' UnKnOwN ' }),
+      row({ job: drafted, event: 'launch', src: 'unknown' }),
+      row({ job: drafted, state: 'MERGED' }),
+      row({ job: inferred, event: 'launch', src: 'UNKNOWN' }),
+    ].join('\n'), 24, now, [
+      row({ job: explicit, event: 'drafted', src: 'ideas' }),
+      row({ job: drafted, event: 'drafted', src: 'ideas' }),
+      row({ job: drafted, event: 'drafted', src: 'UNKNOWN' }),
+      row({ job: inferred, event: 'drafted' }),
+      row({ job: inferred, event: 'rejected', src: ' Unknown ', reason: 'duplicate' }),
+    ].join('\n'));
+
+    expect(report.generators).toMatchObject([
+      { generator: 'bets', jobs: 1, launched: 1, merged: 1, drafted: 0 },
+      { generator: 'drain', jobs: 1, launched: 1, merged: 0, drafted: 0 },
+      { generator: 'ideas', jobs: 1, launched: 1, merged: 1, drafted: 2 },
+      { generator: 'unknown', jobs: 0, launched: 0, drafted: 2, rejected: 1 },
+    ]);
+  });
   it('takes lifecycle and generation evidence only from their respective journals', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'generator-yield-'));
     try {
@@ -224,5 +307,15 @@ describe('generator yield', () => {
       expect(await cmdQueueYield([])).toBe(0);
       expect(log.mock.calls.flat().join('\n')).toContain('Generator\tDrafted\tRejected\tLaunched');
     } finally { vi.restoreAllMocks(); vi.unstubAllEnvs(); await rm(dir, { recursive: true, force: true }); }
+  });
+  it('prints usage for --help and -h instead of rejecting them', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(await cmdQueueYield(['--help'])).toBe(0);
+      expect(await cmdQueueYield(['-h'])).toBe(0);
+      expect(log.mock.calls.flat().join('\n')).toContain('Usage: phm queue yield [--since 24h] [--json]');
+      expect(err).not.toHaveBeenCalled();
+    } finally { vi.restoreAllMocks(); }
   });
 });

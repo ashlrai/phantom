@@ -230,6 +230,7 @@ export async function emptyTagBacklogItems(opts: EmptyTagItemsOptions): Promise<
     if (repoKey !== FLEET_REPO && repoKey !== 'phantom') return [];
     const home = opts.homeDir ?? homedir();
     const runsDir = opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(home, '.ashlr-runs');
+    const nowMs = (opts.now ?? new Date()).getTime();
     const [jobs, tags] = await Promise.all([
       opts.jobsText !== undefined
         ? Promise.resolve({ state: 'read' as const, text: opts.jobsText, truncated: false })
@@ -243,8 +244,8 @@ export async function emptyTagBacklogItems(opts: EmptyTagItemsOptions): Promise<
     // honestly untagged. Anything else means the job→tag join cannot be
     // trusted, so the source stays quiet rather than guessing tags.
     if (tags.state !== 'read' && tags.state !== 'missing') return [];
-    const tagMap = tags.state === 'read' ? foldEmptyTags(tags.text) : new Map<string, string>();
-    const finishes = currentAttemptFinishes(jobs.text, (opts.now ?? new Date()).getTime(), EMPTY_TAG_WINDOW_HOURS);
+    const tagMap = tags.state === 'read' ? foldEmptyTags(tags.text, nowMs) : new Map<string, string>();
+    const finishes = currentAttemptFinishes(jobs.text, nowMs, EMPTY_TAG_WINDOW_HOURS);
     const fold = foldEmptyTagWindow(finishes, tagMap);
     const limit = Math.max(1, Math.min(opts.limit ?? EMPTY_TAG_MAX_ITEMS, EMPTY_TAG_ITEM_HARD_MAX));
     const items: CloudBacklogItem[] = [];

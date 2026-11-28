@@ -7,10 +7,12 @@
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { canonicalJson } from '../authority/canonical-json.js';
 import type { SkillCard } from '../types.js';
 import type { MetricsJob } from './metrics-ingest.js';
 import { ledgerEventName, ledgerPhase } from './empty-cause.js';
 import { isNodePoolLedgerRow, ledgerEventTs } from './jobs-ledger-dialect.js';
+import { LEDGER_URL_KEYS } from '../metrics/loop.js';
 import { readSkillCardCorpus, recordSkillCard, sanitizeSkillCard } from './skill-records.js';
 import { hasRevertEvidence } from './slot-yield.js';
 import {
@@ -101,8 +103,8 @@ export function nudgeSkillsFromJobs(jobs: readonly SkillNudgeJob[], ts = new Dat
 // its latest terminal outcome (or its last row while unresolved).
 //
 // Field provenance, all real ledger evidence:
-//   - id/lane: job plus the last execution-side lane (enqueue/enqueued/queued rows are
-//     queue hints and never set the lane).
+//   - id/lane: job plus the last execution-side lane (queue hints and receipts
+//     explicitly marked launched: false never set the lane).
 //   - outcome: the latest terminal lifecycle phase on any row — the phase
 //     fields (phase|state|outcome|status|result|conclusion via the shared
 //     ledgerPhase accessor) are the producer convention (dispatchd
@@ -115,8 +117,8 @@ export function nudgeSkillsFromJobs(jobs: readonly SkillNudgeJob[], ts = new Dat
 //     CANCELLED->cancelled, REVERT/REVERTED->merged with reverted evidence.
 //     PUBLISHED/OPEN and task-level words (done/skipped/deferred) never
 //     resolve a job outcome.
-//   - reverted: sticky hasRevertEvidence, the same rule slot-yield and the
-//     router outcome fold apply — plus, when the caller supplies the
+//   - reverted: sticky per PR for named receipts and job-wide for
+//     unscoped receipts. When the caller supplies the
 //     standing revert keys (`revertedPrKeys`: outcome-ledger, cloud-task and
 //     `fleet reverts --record` detections), a merged job whose standing
 //     verdict row's pull URL is claimed by exactly that job and whose
@@ -130,15 +132,14 @@ export function nudgeSkillsFromJobs(jobs: readonly SkillNudgeJob[], ts = new Dat
 //     decision. Polling the admission gate does not count as execution.
 //   - failureClass: the last identifier-safe classification a finish row
 //     carries (failure_class, then failure_reason, then pool_error) or a
-//     launch_failed/launch_terminal reason. Prose reasons never qualify.
+//     launch_failed/launch_terminal reason, reset when the known lane changes.
+//     Prose reasons never qualify.
 // Anything unresolved stays absent: no outcome means draftSkillNudges skips
 // the row, exactly like an MetricsJob without a terminal outcome.
 
 const LEDGER_JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const LEDGER_LANE_KEYS = ['lane', 'pool', 'arm'] as const;
 const LEDGER_ACTION_KEYS = ['action'] as const;
-/** PR URL spellings the jobs-ledger producers emit — the set outcome-learning and the router outcome fold read. */
-const PR_URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr'] as const;
 /** A github.com pull URL in the canonical shape dispatchd and the fleet writers emit. */
 const GITHUB_PULL_URL = /^https:\/\/github\.com\/([^/?#\s]+)\/([^/?#\s]+)\/pull\/([1-9]\d*)\/?$/i;
 /** Batch session ids are infrastructure and never claim a PR — the rule the sibling outcome folds apply. */
@@ -172,6 +173,7 @@ interface NudgeJobAccum {
   /** Canonical PR key on the standing verdict row, when available. */
   verdictPrKey: string | null;
   reverted: boolean;
+  revertedPrKeys: Set<string>;
   recutReady: boolean;
   lastLine: number;
   outcomeLine: number | null;
@@ -185,11 +187,14 @@ function firstString(row: Record<string, unknown>, keys: readonly string[]): str
   return null;
 }
 
-/** `owner/repo#n` (lowercase repo) for a pull URL; null when the URL is not that shape. */
-function rowPrKey(row: Record<string, unknown>): string | null {
-  const url = firstString(row, PR_URL_KEYS);
-  const match = url === null ? null : GITHUB_PULL_URL.exec(url);
-  return match ? `${match[1]!.toLowerCase()}/${match[2]!.toLowerCase()}#${match[3]}` : null;
+function rowPrKeys(row: Record<string, unknown>): Set<string> {
+  const keys = new Set<string>();
+  for (const field of LEDGER_URL_KEYS) {
+    const url = row[field];
+    const match = typeof url === 'string' ? GITHUB_PULL_URL.exec(url.trim()) : null;
+    if (match !== null) keys.add(`${match[1]!.toLowerCase()}/${match[2]!.toLowerCase()}#${match[3]}`);
+  }
+  return keys;
 }
 
 /**
@@ -299,43 +304,67 @@ export function skillNudgeJobsFromLedger(
       .find(Number.isFinite);
     const futureRevert = revertAt !== undefined && revertAt > nowMs;
     const phase = ledgerPhase(row);
-    if (futureRevert && ((phase !== null && REVERT_PHASES.has(phase))
-      || event === 'revert' || event === 'reverted')) continue;
-    const dispatched = (event !== null && ATTEMPT_EVENTS.has(event))
-      || (event === 'claim' && row['launch_dedupe'] !== true);
+    const standaloneRevert = (phase !== null && REVERT_PHASES.has(phase))
+      || (outcome === 'merged' && phase !== 'MERGED' && (event === 'revert' || event === 'reverted'));
+    if (futureRevert && standaloneRevert) continue;
+    const executionEvidence = row['launched'] !== false;
+    const dispatched = executionEvidence && ((event !== null && ATTEMPT_EVENTS.has(event))
+      || (event === 'claim' && row['launch_dedupe'] !== true));
     // A replay must not move a verdict past later failures or capture
     // execution evidence recorded after the original verdict.
     const datedVerdict = outcome !== undefined && (rowAt !== null || terminalAt !== null);
-    const datedRecovery = rowAt !== null && (dispatched || event === 'recut_admission'
+    // A launch-dedupe claim is only a reservation, but its lane can still
+    // contextualize a subsequent launch failure that has no lane of its own.
+    const claimReservation = executionEvidence && event === 'claim' && row['launch_dedupe'] === true;
+    const datedRecovery = rowAt !== null && (dispatched || claimReservation || event === 'recut_admission'
       || event === 'launch_failed' || event === 'launch_terminal' || event === 'finish');
     if (datedVerdict || datedRecovery) {
-      const receipt = line.trim();
+      let receipt = line.trim();
+      try {
+        receipt = canonicalJson(row);
+      } catch {
+        // Preserve exact-text deduplication for rows that cannot be canonicalized.
+      }
       if (recoveryReceipts.has(receipt)) continue;
       recoveryReceipts.add(receipt);
     }
-    const prKey = claims === null ? null : rowPrKey(row);
-    if (claims !== null && prKey !== null) {
-      const set = claims.get(prKey) ?? new Set<string>();
-      set.add(id);
-      claims.set(prKey, set);
+    const keys = rowPrKeys(row);
+    const prKey = keys.size === 1 ? keys.values().next().value ?? null : null;
+    if (claims !== null) {
+      for (const key of keys) {
+        const set = claims.get(key) ?? new Set<string>();
+        set.add(id);
+        claims.set(key, set);
+      }
     }
     if (!LEDGER_ID_PATTERN.test(id)) continue;
     let acc = jobs.get(id);
     if (acc === undefined) {
       acc = {
         evidence: { lane: null, attempts: 0, retryReceipts: 0, recuts: 0, failureClass: null },
-        verdictEvidence: null, outcome: undefined, verdictPrKey: null, reverted: false, recutReady: false,
+        verdictEvidence: null, outcome: undefined, verdictPrKey: null, reverted: false,
+        revertedPrKeys: new Set(), recutReady: false,
         lastLine: lineNo, outcomeLine: null,
       };
       jobs.set(id, acc);
     }
     acc.lastLine = lineNo;
+    if (!futureRevert && hasRevertEvidence(row)) {
+      if (keys.size === 0) acc.reverted = true;
+      if (prKey !== null) acc.revertedPrKeys.add(prKey);
+    }
+    // Once a verdict identifies a PR, a named standalone revert only adds
+    // revert evidence. It does not take a new snapshot of execution evidence.
+    if (standaloneRevert && (keys.size > 1
+      || (prKey !== null && acc.verdictPrKey !== null))) continue;
     const evidence = acc.evidence;
-    if (event === null ? outcome !== undefined : !QUEUE_HINT_EVENTS.has(event)) {
+    if (executionEvidence && (event === null ? outcome !== undefined : !QUEUE_HINT_EVENTS.has(event))) {
       for (const key of LEDGER_LANE_KEYS) {
         const value = row[key];
         if (typeof value !== 'string' || !hasKnownLane(value.trim())) continue;
-        evidence.lane = value.trim();
+        const lane = value.trim();
+        if (evidence.lane !== null && evidence.lane !== lane) evidence.failureClass = null;
+        evidence.lane = lane;
         break;
       }
     }
@@ -344,15 +373,15 @@ export function skillNudgeJobsFromLedger(
       if (acc.recutReady) evidence.recuts += 1;
       acc.recutReady = false;
     }
-    if (event === 'launch_failed' && firstString(row, LEDGER_ACTION_KEYS)?.toLowerCase() === 'retry') {
+    if (executionEvidence && event === 'launch_failed'
+      && firstString(row, LEDGER_ACTION_KEYS)?.toLowerCase() === 'retry') {
       evidence.retryReceipts += 1;
     }
     if (event === 'recut_admission') {
       acc.recutReady = firstString(row, LEDGER_ACTION_KEYS)?.toLowerCase() === 'ready';
     }
-    const failureClass = failureClassOf(row, event);
+    const failureClass = executionEvidence ? failureClassOf(row, event) : null;
     if (failureClass !== null) evidence.failureClass = failureClass;
-    if (!futureRevert && hasRevertEvidence(row)) acc.reverted = true;
     if (outcome !== undefined) {
       acc.recutReady = false;
       acc.verdictEvidence = { ...evidence };
@@ -368,7 +397,9 @@ export function skillNudgeJobsFromLedger(
     .map(([id, acc]) => {
       const evidence = acc.verdictEvidence ?? acc.evidence;
       const retries = Math.max(0, evidence.attempts - 1) + evidence.retryReceipts;
-      const reverted = acc.reverted || standingReverted(id, acc, claims, revertedPrKeys);
+      const reverted = acc.reverted
+        || (acc.verdictPrKey !== null && acc.revertedPrKeys.has(acc.verdictPrKey))
+        || standingReverted(id, acc, claims, revertedPrKeys);
       return {
         id,
         lane: evidence.lane ?? 'unknown',

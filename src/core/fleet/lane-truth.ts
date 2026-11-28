@@ -6,7 +6,7 @@
  *
  *   held_with_capacity  lane held while every fresh meter window shows room
  *   reset_detected      a window dropped >= 20 points or its reset moved later
- *   idle_with_work      queued work with zero running and no hold
+ *   idle_with_work      positive target, queued work, zero running, no hold and quota remaining
  *   ok                  evidence agrees
  *   unknown             lane or meter evidence missing, invalid or stale
  *
@@ -54,7 +54,10 @@ const object = (v: unknown): Record<string, unknown> => v !== null && typeof v =
 const count = (v: unknown): number | null => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null;
 const instant = (v: unknown): string | null => typeof v === 'string' && Number.isFinite(Date.parse(v)) ? new Date(v).toISOString() : null;
 const fresh = (v: string, now: number): boolean => Number.isFinite(now) && Date.parse(v) <= now && now - Date.parse(v) <= LANE_TRUTH_MAX_AGE_MS;
-const valid = (s: MeterSample): boolean => typeof s.usedPercent === 'number' && Number.isFinite(s.usedPercent) && s.usedPercent >= 0 && s.usedPercent <= 100 && !!s.window && instant(s.sampledAt) !== null && instant(s.resetAt) !== null;
+const valid = (s: MeterSample): boolean =>
+  typeof s.usedPercent === 'number' && Number.isFinite(s.usedPercent) &&
+  s.usedPercent >= 0 && s.usedPercent <= 100 && !!s.window &&
+  s.resetAt !== null && Date.parse(s.sampledAt) < Date.parse(s.resetAt);
 
 export interface LaneTruthRow {
   lane: string;
@@ -67,19 +70,22 @@ export interface LaneTruthRow {
 
 interface LaneTruthAnalysis {
   row: LaneTruthRow;
-  /** Newest sample seen for the lane's provider, regardless of validity. */
+  /** Newest sample at or before report time, even if its quota fields are invalid. */
   meter: MeterSample | null;
 }
 
 function analyzeLaneTruth(lanes: readonly LaneState[], meters: readonly MeterSample[], now: number): LaneTruthAnalysis[] {
   return lanes.map(lane => {
+    const target = count(lane.target);
+    const running = count(lane.running);
+    const queued = count(lane.queued);
     const groups = new Map<string, MeterSample[]>();
     let latest: MeterSample | null = null;
     for (const sample of meters.filter(s => s.provider === lane.lane)) {
       const group = groups.get(sample.window) ?? [];
       groups.set(sample.window, group);
       const at = Date.parse(sample.sampledAt);
-      if (!Number.isFinite(at)) continue;
+      if (!Number.isFinite(at) || at > now) continue;
       group.push(sample);
       if (latest === null || at > Date.parse(latest.sampledAt)) latest = sample;
     }
@@ -89,20 +95,22 @@ function analyzeLaneTruth(lanes: readonly LaneState[], meters: readonly MeterSam
     if (known && typeof lane.held === 'boolean') {
       const reset = windows.some(samples => {
         const current = samples[0]!;
-        const previous = samples.find(s => Date.parse(s.sampledAt) < Date.parse(current.sampledAt));
-        return previous && valid(previous) && fresh(previous.sampledAt, now) &&
+        const previous = samples.find(s => Date.parse(s.sampledAt) < Date.parse(current.sampledAt) &&
+          valid(s) && fresh(s.sampledAt, now));
+        return previous &&
           (previous.usedPercent! - current.usedPercent! >= 20 || Date.parse(current.resetAt!) > Date.parse(previous.resetAt!));
       });
       // A contradictory hold is the actionable verdict even when a reset also occurred.
       if (lane.held && windows.every(samples => samples[0]!.usedPercent! < 95)) verdict = 'held_with_capacity';
       else if (reset) verdict = 'reset_detected';
-      else if (count(lane.running) !== null && count(lane.queued) !== null && count(lane.target) !== null) {
-        verdict = !lane.held && lane.running === 0 && lane.queued! > 0 ? 'idle_with_work' : 'ok';
+      else if (running !== null && queued !== null && target !== null) {
+        const quotaRemaining = windows.every(([current]) => current!.usedPercent! < 100);
+        verdict = !lane.held && target > 0 && running === 0 && queued > 0 && quotaRemaining ? 'idle_with_work' : 'ok';
       }
     }
     // Deliberately omit free-form hold reasons, transcripts and account metadata.
     return {
-      row: { lane: /^[a-z][a-z0-9-]{1,40}$/.test(lane.lane) ? lane.lane : 'unknown', target: count(lane.target), running: count(lane.running), queued: count(lane.queued), held: typeof lane.held === 'boolean' ? lane.held : null, verdict },
+      row: { lane: /^[a-z][a-z0-9-]{1,40}$/.test(lane.lane) ? lane.lane : 'unknown', target, running, queued, held: typeof lane.held === 'boolean' ? lane.held : null, verdict },
       meter: latest,
     };
   });
@@ -126,7 +134,7 @@ export interface LaneTruthWireLane extends LaneTruthRow {
 
 /**
  * The wire-ready report: same verdicts as readLaneTruth plus the newest
- * sample that informed each lane and a fixed reason clause. Both readers
+ * sample at or before report time and a fixed reason clause. Both readers
  * must succeed — a failure propagates so the caller can answer
  * 'unavailable' rather than serving half-evidence as truth.
  */
@@ -151,19 +159,32 @@ async function boundedRead(path: string, limit: number): Promise<{ text: string;
   } finally { await handle.close(); }
 }
 
-/** Fixed homes; intentionally ignores CODEX_HOME and never visits ~/.codex. */
+/** Fixed homes; intentionally ignores CODEX_HOME and never visits ~/.codex.
+ * The slots tree follows ASHLR_RUNS_DIR when `home` is the process home — the
+ * same runs-dir override every other fleet reader honors. A relocated home
+ * (tests, fixtures) keeps its own .ashlr-runs so the override cannot leak in. */
 export function defaultLaneTruthReaders(home = homedir(), now = Date.now()): LaneTruthReaders {
+  const runsDir = home === homedir()
+    ? process.env['ASHLR_RUNS_DIR'] ?? join(home, '.ashlr-runs')
+    : join(home, '.ashlr-runs');
   return {
     async lanes() {
       try {
-        for (const path of [join(home, '.ashlr-runs'), join(home, '.ashlr-runs/queue')]) {
+        for (const path of [runsDir, join(runsDir, 'queue')]) {
           if (!(await lstat(path)).isDirectory()) return [];
         }
-        const file = await boundedRead(join(home, '.ashlr-runs/queue/slots.json'), 64 * 1024);
+        const file = await boundedRead(join(runsDir, 'queue', 'slots.json'), 64 * 1024);
         const raw = object(JSON.parse(file.text));
+        const current = fresh(new Date(file.mtime).toISOString(), now);
         return Object.entries(object(raw.lanes ?? raw)).filter(([lane]) => lane !== 'hard_cap').map(([lane, value]) => {
           const row = object(value);
-          return { lane, target: count(row.target), running: count(row.running), queued: count(row.queued), held: fresh(new Date(file.mtime).toISOString(), now) && typeof row.held === 'boolean' ? row.held : null };
+          return {
+            lane,
+            target: count(row.target),
+            running: current ? count(row.running) : null,
+            queued: current ? count(row.queued) : null,
+            held: current && typeof row.held === 'boolean' ? row.held : null,
+          };
         });
       } catch { return []; }
     },
@@ -200,11 +221,12 @@ export function defaultLaneTruthReaders(home = homedir(), now = Date.now()): Lan
             for (const name of ['primary', 'secondary']) {
               const window = object(limits[name]);
               if (!Object.keys(window).length) continue;
-              const reset = typeof window.resets_at === 'number' && Number.isFinite(window.resets_at) ? instant(new Date(window.resets_at * 1000).toISOString()) : null;
-              samples.push({ provider: 'codex-personal', window: count(window.window_minutes) !== null && Number(window.window_minutes) > 0 ? `${name}:${window.window_minutes}` : '', usedPercent: typeof window.used_percent === 'number' ? window.used_percent : null, resetAt: reset, sampledAt: instant(row.timestamp) ?? '' });
+              const reset = typeof window.resets_at === 'number' ? new Date(window.resets_at * 1000) : null;
+              const resetAt = reset && Number.isFinite(reset.getTime()) ? reset.toISOString() : null;
+              samples.push({ provider: 'codex-personal', window: count(window.window_minutes) !== null && Number(window.window_minutes) > 0 ? `${name}:${window.window_minutes}` : '', usedPercent: typeof window.used_percent === 'number' ? window.used_percent : null, resetAt, sampledAt: instant(row.timestamp) ?? '' });
             }
           }
-          if (samples.length) return samples;
+          if (samples.some(sample => sample.sampledAt !== '' && Date.parse(sample.sampledAt) <= now)) return samples;
         }
       } catch { /* No raw file data or filesystem error reaches output. */ }
       return [];

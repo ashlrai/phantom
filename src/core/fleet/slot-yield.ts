@@ -191,14 +191,20 @@ const hasRevertName = (row: Record<string, unknown>, keys: readonly string[]): b
     const v = row[k];
     return typeof v === 'string' && REVERT_NAMES.has(v.trim().toLowerCase());
   });
+function revertTimestamp(row: Record<string, unknown>): number | null {
+  for (const k of ['revertedAt', 'reverted_at']) {
+    const v = row[k];
+    if (typeof v !== 'string') continue;
+    const at = Date.parse(v);
+    if (Number.isFinite(at)) return at;
+  }
+  return null;
+}
+const isRevertReceipt = (row: Record<string, unknown>): boolean =>
+  hasRevertName(row, REVERT_EVENT_KEYS) || hasRevertName(row, REVERT_STATE_KEYS);
 /** True when one ledger row carries positive revert evidence for its job. Explicit `reverted:false` is not evidence. */
 export function hasRevertEvidence(row: Record<string, unknown>): boolean {
-  if (row['reverted'] === true) return true;
-  for (const k of ['reverted_at', 'revertedAt']) {
-    const v = row[k];
-    if (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Date.parse(v))) return true;
-  }
-  return hasRevertName(row, REVERT_EVENT_KEYS) || hasRevertName(row, REVERT_STATE_KEYS);
+  return row['reverted'] === true || revertTimestamp(row) !== null || isRevertReceipt(row);
 }
 /** Terminal outcome states that mean the recorded merge did not hold. */
 const REVERT_OUTCOMES: ReadonlySet<string> = new Set(['REVERT', 'REVERTED']);
@@ -445,21 +451,27 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
       const phase = phaseOf(row);
       const event = ledgerEvent(row, phase);
       const at = eventTs(row, phase);
-      // Rows from before the window cannot belong to a run launched inside it.
-      if (at !== null && at < start) return;
+      if (at !== null && (at < start || at > now)) return;
+      if (phase === 'MERGED' || phase === 'CLOSED') {
+        const recordedAt = eventTs(row, '');
+        if (recordedAt !== null && recordedAt > now) return;
+      }
+      const revertAt = revertTimestamp(row);
+      const futureRevert = revertAt !== null && revertAt > now;
+      if (futureRevert && isRevertReceipt(row)) return;
       // Revert evidence is job-scoped and sticky, like the router outcome fold:
       // any row carrying it marks the job, whatever its event name.
-      if (hasRevertEvidence(row)) revertedJobs.add(job);
+      if (!futureRevert && hasRevertEvidence(row)) revertedJobs.add(job);
       const runs = byJob.get(job);
       if (event === 'launch') {
-        if (at === null || at > now) return;
+        if (at === null) return;
         const run: Run = { job, lane: word(firstString(row, LANE_KEYS)), tier: word(row.tier), repo: word(row.repo), model: typeof row.model === 'string' && row.model.trim() ? row.model.trim().slice(0, 80) : null, at, last: at, finished: false, empty: false, aborted: false, wall: null, tokens: null, prs: new Set(), merged: false, reverted: false, mergedAt: null, src: srcTag(row.src) ?? srcTag(row.producer) };
         if (runs) runs.push(run); else byJob.set(job, [run]);
         return;
       }
       if (event !== null && SKIP_EVENTS.has(event) && row['applied'] !== false) {
         // A skip takes no slot, so it counts with or without a launch; it needs a time inside the window.
-        if (at === null || at > now) return;
+        if (at === null) return;
         const skip = skips.get(job) ?? { repo: 'unknown', rows: 0 };
         if (skip.repo === 'unknown') skip.repo = word(row.repo);
         skip.rows++;
@@ -468,7 +480,7 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
       }
       if (!runs) return; // launched before the window, or never seen launching
       const latest = runs[runs.length - 1]!;
-      if (at !== null && at <= now && at > latest.last) latest.last = at;
+      if (at !== null && at > latest.last) latest.last = at;
       if (event === 'finish') {
         const run = runs.find(r => !r.finished);
         if (!run) return;

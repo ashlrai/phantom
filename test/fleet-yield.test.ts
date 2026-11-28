@@ -91,6 +91,33 @@ describe('fleetYield', () => {
 });
 
 describe('jobs-ledger dialect', () => {
+  it('bounds finish, publish and merge receipts by the inclusive report time', () => {
+    const job = 'RQ-FUTURE-YIELD';
+    const later = at(-1);
+    const lines = [
+      launch(job, 4),
+      finish(job, { ts: later, tokens_total: 20 }),
+      row({ event: 'publish', job, class: 'pr', url: 'https://example.invalid/pr/1', ts: later }),
+      row({ job, outcome: 'MERGED', ts: at(1), mergedAt: later }),
+    ];
+    expect(jobYield(lines, now, 24).families[0]).toMatchObject({ running: 1, prs: 0, merged: 0 });
+    expect(jobYield(lines, Date.parse(later), 24).families[0]).toMatchObject({ running: 0, prs: 1, merged: 1 });
+    expect(jobYield([launch(job, 4), row({ job, outcome: 'MERGED', ts: later, mergedAt: at(1) })], now, 24).merged).toBe(0);
+  });
+
+  it.each([
+    { event: 'revert', ts: at(-1) },
+    { event: 'outcome', state: 'REVERTED', revertedAt: at(-1) },
+    { outcome: 'MERGED', mergedAt: at(1), reverted_at: at(-1), reverted: true },
+  ])('credits a held merge until its revert is observable (%j)', (receipt) => {
+    const job = 'RQ-FUTURE-REVERT';
+    const lines = [launch(job, 4)];
+    if (!('outcome' in receipt)) lines.push(row({ job, outcome: 'MERGED', mergedAt: at(1) }));
+    lines.push(row({ job, ...receipt }));
+    expect(jobYield(lines, now, 24)).toMatchObject({ merged: 1, reverted: 0 });
+    expect(jobYield(lines, Date.parse(at(-1)), 24)).toMatchObject({ merged: 0, reverted: 1 });
+  });
+
   it.each(['outcome', 'publish'])('credits the launch that published the PR named by a %s receipt', (event) => {
     const job = 'RQ-PR-RETRY';
     const report = fleetYield([

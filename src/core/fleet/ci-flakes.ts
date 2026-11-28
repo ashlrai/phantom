@@ -60,12 +60,13 @@ export interface RecurringFlake {
 }
 
 const REPO_SHAPE = /^[\w.-]+\/[\w.-]+$/;
+const HEAD_SHA = /^[a-f0-9]{40}$/i;
 
 /**
  * Group attempt rows by (repo, test) and keep the groups whose distinct-head
  * count reaches `minHeads` inside `windowMs` of `nowMs`. Only `attempt`
  * outcome rows count — `ok`/`failed` rows are the same attempt's result —
- * and rows without a usable test id, repo or head are skipped. Sorted by
+ * and rows without a usable test id, repo or full head SHA are skipped. Sorted by
  * descending head count, then repo and test, so the strongest evidence wins
  * the per-run row cap.
  */
@@ -84,12 +85,13 @@ export function recurringFlakes(
     if (row.outcome !== 'attempt') continue;
     if (typeof row.test !== 'string' || row.test === '') continue;
     if (typeof row.repo !== 'string' || !REPO_SHAPE.test(row.repo)) continue;
-    if (typeof row.head !== 'string' || row.head === '') continue;
+    if (typeof row.head !== 'string' || !HEAD_SHA.test(row.head)) continue;
     const at = typeof row.at === 'string' ? Date.parse(row.at) : NaN;
     if (!Number.isFinite(at) || at < nowMs - windowMs || at > nowMs) continue;
-    const key = JSON.stringify([row.repo, row.test]);
-    const group = groups.get(key) ?? { repo: row.repo, test: row.test, heads: new Set<string>(), attempts: 0 };
-    group.heads.add(row.head);
+    const repo = row.repo.toLowerCase();
+    const key = JSON.stringify([repo, row.test]);
+    const group = groups.get(key) ?? { repo, test: row.test, heads: new Set<string>(), attempts: 0 };
+    group.heads.add(row.head.toLowerCase());
     group.attempts += 1;
     groups.set(key, group);
   }
@@ -99,9 +101,10 @@ export function recurringFlakes(
     if (row.verdict !== 'pass' && row.verdict !== 'fail' && row.verdict !== 'inconclusive') continue;
     if (typeof row.test !== 'string' || row.test === '') continue;
     if (typeof row.repo !== 'string' || !REPO_SHAPE.test(row.repo)) continue;
+    if (typeof row.head !== 'string' || !HEAD_SHA.test(row.head)) continue;
     const at = typeof row.at === 'string' ? Date.parse(row.at) : NaN;
     if (!Number.isFinite(at) || at < nowMs - windowMs || at > nowMs) continue;
-    const key = JSON.stringify([row.repo, row.test]);
+    const key = JSON.stringify([row.repo.toLowerCase(), row.test]);
     const tally = verdicts.get(key) ?? { pass: 0, fail: 0, inconclusive: 0 };
     tally[row.verdict] += 1;
     verdicts.set(key, tally);
@@ -121,7 +124,7 @@ export function recurringFlakes(
 
 /** Stable queue id for one recurring (repo, test) pair, mirroring RQ-CIBASE-. */
 export function flakeJobId(repo: string, test: string): string {
-  return `RQ-CIFLAKE-${createHash('sha256').update(`${repo}:${test}`).digest('hex').slice(0, 16).toUpperCase()}`;
+  return `RQ-CIFLAKE-${createHash('sha256').update(`${repo.toLowerCase()}:${test}`).digest('hex').slice(0, 16).toUpperCase()}`;
 }
 
 function flakeFixBrief(flake: RecurringFlake, jobId: string, generation: number): string {

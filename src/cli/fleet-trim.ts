@@ -135,7 +135,7 @@ export async function cmdFleetTrim(
   }
   try {
     const report = sanitizePublicJson(trimFleet(JSON.parse(
-      await reader(join(homedir(), '.ashlr-runs', 'queue', 'status.json')),
+      await reader(join(process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'queue', 'status.json')),
     ))) as FleetTrimReport;
     console.log(args.includes('--json') ? JSON.stringify(report) : formatFleetTrim(report));
     return 0;

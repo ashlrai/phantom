@@ -3,12 +3,12 @@ import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  betObservation, dayStamp, feedbackLoop, ideaToMerged, isMissing, jobLaneHours, jobTimelines, laneRows, loopMetricValue,
-  mergedToInstalled, mergeMorning, morningFields, nodeCapacityRow, parseLedgerTs, percentile, selectionHints, slotLanes,
-  throughput, topConstraint, type LoopReport,
+  betObservation, dayStamp, feedbackLoop, firstLedgerString, ideaToMerged, isMissing, isPlainRecord, jobLaneHours, jobTimelines,
+  laneRows, LEDGER_JOB_KEYS, loopMetricValue, mergedToInstalled, mergeMorning, morningFields, nodeCapacityRow, parseLedgerTs,
+  percentile, selectionHints, slotLanes, throughput, topConstraint, type LoopReport,
 } from '../src/core/metrics/loop.js';
 import { collectLoop, latestCost, parseMergedPrs, parseReleases, readTail, runsRoot, writeLoop, type LoopReaders } from '../src/core/metrics/loop-collect.js';
-import { loopStagesText } from '../src/core/metrics/loop-stages.js';
+import { buildLoopStages, loopStagesText } from '../src/core/metrics/loop-stages.js';
 import { cmdMetricsLoop } from '../src/cli/metrics-loop.js';
 import { cmdMetrics } from '../src/cli/metrics.js';
 
@@ -219,9 +219,13 @@ describe('collector readers', () => {
     const dir = mkdtempSync(join(tmpdir(), 'tail-'));
     writeFileSync(join(dir, 'f'), 'aaaa\nbbbb\ncccc\n');
     expect(await readTail(join(dir, 'f'), 7)).toEqual({ text: 'cccc\n', truncated: true });
+    expect(await readTail(join(dir, 'f'), 10)).toEqual({ text: 'bbbb\ncccc\n', truncated: true });
     expect(await readTail(join(dir, 'f'), 100)).toEqual({ text: 'aaaa\nbbbb\ncccc\n', truncated: false });
     expect(await readTail(join(dir, 'missing'), 10)).toBeNull();
     expect(await readTail(dir, 10)).toBeNull();
+    const record = '{"event":"claim"}';
+    writeFileSync(join(dir, 'fragment'), `damaged prefix ${record}`);
+    expect(await readTail(join(dir, 'fragment'), record.length)).toEqual({ text: '', truncated: true });
   });
 });
 
@@ -363,5 +367,16 @@ describe('phm metrics loop CLI', () => {
     const out: string[] = [];
     expect(await cmdMetrics(['loop', '--help'], { out: l => out.push(l), err: () => {} })).toBe(0);
     expect(out[0]).toContain('phm metrics loop');
+  });
+  it('shares plain-record and ledger-string helpers and handles unsorted releases without mutating input', () => {
+    expect(isPlainRecord({ a: 1 })).toBe(true);
+    expect(isPlainRecord(null)).toBe(false);
+    expect(isPlainRecord([])).toBe(false);
+    expect(firstLedgerString({ job: '  ', jobId: ' RQ-1 ' }, LEDGER_JOB_KEYS)).toBe('RQ-1');
+    const releases = [{ tag: 'v2', createdAt: T0 - 30 * 60_000 }, { tag: 'v0', createdAt: T0 - 600 * 60_000 }, { tag: 'v1', createdAt: T0 - 60 * 60_000 }];
+    const order = releases.map(r => r.tag);
+    const stages = buildLoopStages(LEDGER, releases, T0);
+    expect(releases.map(r => r.tag)).toEqual(order);
+    expect(stages.stages.find(s => s.stage === 'merged_to_released')?.p50_minutes).toBe(60);
   });
 });

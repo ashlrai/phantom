@@ -2,9 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-const deps = vi.hoisted(() => ({ read: vi.fn(), configure: vi.fn(), call: vi.fn(), capacity: vi.fn(), worker: vi.fn() }));
+const deps = vi.hoisted(() => ({ read: vi.fn(), configure: vi.fn(), call: vi.fn(), capacity: vi.fn(), worker: vi.fn(), lanes: vi.fn() }));
 vi.mock('../src/core/drive/nodes/pool-host.js', () => ({ readPoolConfig: deps.read, configurePool: deps.configure, callPool: deps.call }));
-vi.mock('../src/core/drive/nodes/worker.js', () => ({ probeNodeLanes: () => ['codex'], runNodeWorker: deps.worker }));
+vi.mock('../src/core/drive/nodes/worker.js', () => ({ probeNodeLanes: deps.lanes, runNodeWorker: deps.worker }));
 vi.mock('../src/core/drive/nodes/capacity.js', () => ({ readNodeCapacity: deps.capacity }));
 import { cmdNode } from '../src/cli/node.js';
 import { cmdNodePool } from '../src/cli/node-pool.js';
@@ -14,6 +14,7 @@ beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
   deps.read.mockReturnValue(config);
   deps.capacity.mockReturnValue({ slots: 2, held: null });
+  deps.lanes.mockReturnValue(['codex']);
   deps.call.mockImplementation((_config, verb) => ({ demoted: false, result: verb === 'join' ? { session: 3 } : { left: true } }));
 });
 describe('repeatable Mac enrollment', () => {
@@ -69,6 +70,74 @@ describe('repeatable Mac enrollment', () => {
     expect(await cmdNodePool('join', args)).toBe(0);
     expect(deps.call).toHaveBeenCalledWith(config, 'join', args);
     expect(deps.call.mock.calls.some(c => c[1] === 'leave')).toBe(false);
+  });
+  it('names the missing --node on an explicit pool join instead of the masked pool refusal', async () => {
+    // --caps/--slots route join past enrollment to the raw pool verb; the
+    // pool-side parser still requires --node but its refusal crosses SSH as
+    // 'held: inactive-runner'. The client names the flag before any dial.
+    expect(await cmdNodePool('join', ['--caps', 'codex', '--json'])).toBe(2);
+    expect(await cmdNodePool('join', ['--slots', '2', '--json'])).toBe(2);
+    const out = JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]) as { error: { code: string; message: string } };
+    expect(out.error.code).toBe('usage');
+    expect(out.error.message).toContain('--node');
+    expect(deps.call).not.toHaveBeenCalled();
+  });
+  it('refuses join that mixes enrollment and explicit flags before dialing', async () => {
+    // --primary/--backup enroll (probed lanes/capacity); --caps/--slots are the
+    // explicit router-client form. Mixing them used to flip to the explicit
+    // path and leak the enrollment flags into the pool call as a masked
+    // refusal — or "no node pool configuration" on a fresh Mac.
+    const lastError = () => (JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]) as { error: { code: string; message: string } }).error;
+    expect(await cmdNodePool('join', ['--primary', 'primary-mac', '--backup', 'backup-mac', '--caps', 'codex', '--json'])).toBe(2);
+    expect(lastError().code).toBe('usage');
+    expect(lastError().message).toContain('--primary/--backup');
+    expect(lastError().message).toContain('--caps/--slots');
+    deps.call.mockClear();
+    expect(await cmdNodePool('join', ['--backup', 'backup-mac', '--slots=2', '--owner', 'mason', '--json'])).toBe(2);
+    expect(lastError().message).toContain('cannot combine');
+    expect(deps.call).not.toHaveBeenCalled();
+    // The pure forms still pass the guard: enrollment-only and explicit-only.
+    deps.read.mockReturnValue(null);
+    expect(await cmdNodePool('join', ['--primary', 'primary-mac', '--backup', 'backup-mac', '--owner', 'mason', '--json'])).toBe(0);
+    expect(deps.call).toHaveBeenCalled();
+  });
+  it('routes a lone --backup join to the pool alias check instead of flag rejection', async () => {
+    // --backup has no standalone join meaning; the dispatcher must send it to
+    // the pool path so the operator hears "need both aliases", not "flag not
+    // supported by 'phm node join'".
+    deps.read.mockReturnValue(null);
+    expect(await cmdNode(['join', '--backup', 'backup-mac', '--owner', 'mason', '--json'])).toBe(2);
+    const out = JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]) as { error: { code: string; message: string } };
+    expect(out.error.code).toBe('usage');
+    expect(out.error.message).toContain('--primary and --backup');
+    expect(deps.call).not.toHaveBeenCalled();
+    deps.read.mockReturnValue(config);
+  });
+  it('accepts --flag=value spellings on the explicit join path', async () => {
+    expect(await cmdNodePool('join', ['--node=air', '--caps=codex', '--slots=2', '--json'])).toBe(0);
+    expect(deps.call).toHaveBeenCalledWith(config, 'join', ['--node=air', '--caps=codex', '--slots=2', '--json']);
+  });
+  it('refuses a foreign --owner, a bad --node, bad caps and a bad slot bound before dialing', async () => {
+    const lastError = () => (JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]) as { error: { message: string } }).error.message;
+    expect(await cmdNodePool('join', ['--node', 'air', '--owner', 'other', '--caps', 'codex', '--json'])).toBe(2);
+    expect(lastError()).toContain('--owner');
+    expect(await cmdNodePool('join', ['--node', 'bad node!', '--caps', 'codex', '--json'])).toBe(2);
+    expect(lastError()).toContain('--node');
+    expect(await cmdNodePool('join', ['--node', 'air', '--caps', 'Codex', '--json'])).toBe(2);
+    expect(lastError()).toContain('--caps');
+    expect(await cmdNodePool('join', ['--node', 'air', '--caps', 'codex', '--slots', '65', '--json'])).toBe(2);
+    expect(lastError()).toContain('--slots');
+    expect(await cmdNodePool('join', ['--node', 'air', '--caps', 'codex', '--slots', 'two', '--json'])).toBe(2);
+    expect(lastError()).toContain('--slots');
+    expect(deps.call).not.toHaveBeenCalled();
+  });
+  it('still dials an explicit join whose --owner matches the pool scope or is absent', async () => {
+    expect(await cmdNodePool('join', ['--node', 'air', '--caps', 'codex', '--json'])).toBe(0);
+    expect(deps.call).toHaveBeenCalledWith(config, 'join', ['--node', 'air', '--caps', 'codex', '--json']);
+    deps.call.mockClear();
+    // An empty --caps value is an empty caps list pool-side, not a refusal.
+    expect(await cmdNodePool('join', ['--node', 'air', '--owner', 'mason', '--caps', '', '--json'])).toBe(0);
+    expect(deps.call).toHaveBeenCalledWith(config, 'join', ['--node', 'air', '--owner', 'mason', '--caps', '', '--json']);
   });
   it('preserves a backup role and never resets its witness', async () => {
     deps.read.mockReturnValue({ ...config, role: 'backup' });
@@ -175,5 +244,36 @@ describe('repeatable Mac enrollment', () => {
     expect(await cmdNodePool('join', ['--primary', 'primary-mac', '--backup', 'backup-mac', '--owner', 'mason', '--json'])).toBe(1);
     const out = JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]);
     expect(out).toMatchObject({ registered: true, configured: false, error: { code: 'error' } });
+  });
+  it('names why a registered join is not ready when no sign-in lanes were detected', async () => {
+    deps.lanes.mockReturnValue([]);
+    expect(await cmdNodePool('join', ['--json'])).toBe(0);
+    const out = JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]);
+    expect(out).toMatchObject({ registered: true, ready: false, lanes: [] });
+    expect(out.note).toContain('no capabilities');
+    expect(out.note).toContain('phm node join --json');
+  });
+  it('names the capacity hold keeping a registered join from taking work', async () => {
+    deps.capacity.mockReturnValue({ slots: 0, held: 'memory-pressure' });
+    expect(await cmdNodePool('join', ['--json'])).toBe(0);
+    const out = JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]);
+    expect(out).toMatchObject({ registered: true, ready: false });
+    expect(out.note).toContain('memory pressure');
+    expect(out.note).toContain('phm node measure');
+  });
+  it('keeps a ready join quiet and still warns when the probe release fails', async () => {
+    expect(await cmdNodePool('join', ['--json'])).toBe(0);
+    const ready = JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]);
+    expect(ready).toMatchObject({ registered: true, ready: true });
+    expect(ready.note).toBeUndefined();
+    deps.call.mockImplementation((_config, verb) => {
+      if (verb === 'leave') throw new Error('offline');
+      return { demoted: false, result: verb === 'join' ? { session: 3 } : { nodes: [] } };
+    });
+    deps.lanes.mockReturnValue([]);
+    expect(await cmdNodePool('join', ['--json'])).toBe(0);
+    const both = JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]);
+    expect(both.note).toContain('node-already-live once');
+    expect(both.note).toContain('no capabilities');
   });
 });

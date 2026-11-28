@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { realHome } from '../real-home.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { isCommsTransport, type CommsTransport, type StandingApproval } from './policy.js';
-import { parseInboxDocument, type InboxMessage } from './triage.js';
+import { MAIL_CLASSES, parseInboxDocument, type InboxMessage, type TriageSummary } from './triage.js';
 
 export interface CommsDraft {
   id: string;
@@ -67,6 +67,12 @@ export interface CommsRunRecord {
   /** The pass's triage depth, verbatim from its report. */
   triage: { kept: number; archived: number; drafted: number; deleted: number };
   sends: CommsRunSend[];
+  /** The pass's per-message triage decisions — one `{id, class, summary}`
+   * per inbox message, verbatim from its report — so the journal says which
+   * mail was kept, archived or drafted, not only how many. Absent on records
+   * written before the field existed: those passes recorded counts only, so
+   * a reader reports the decisions as unknown rather than empty. */
+  summaries?: TriageSummary[];
 }
 
 /** The run journal read: `missing` is a verified-empty store (no pass ever
@@ -308,6 +314,14 @@ function isRunTriage(value: unknown): value is CommsRunRecord['triage'] {
     && typeof triage.drafted === 'number' && typeof triage.deleted === 'number';
 }
 
+function isTriageSummary(value: unknown): value is TriageSummary {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const summary = value as Record<string, unknown>;
+  return typeof summary.id === 'string' && summary.id.length > 0 && summary.id.length <= 128
+    && typeof summary.class === 'string' && (MAIL_CLASSES as readonly string[]).includes(summary.class)
+    && typeof summary.summary === 'string';
+}
+
 function isRunRecord(value: unknown): value is CommsRunRecord {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
@@ -316,7 +330,9 @@ function isRunRecord(value: unknown): value is CommsRunRecord {
     && (record.lane === null || typeof record.lane === 'string')
     && typeof record.laneReason === 'string'
     && isRunTriage(record.triage)
-    && Array.isArray(record.sends) && record.sends.every(isRunSend);
+    && Array.isArray(record.sends) && record.sends.every(isRunSend)
+    && (record.summaries === undefined
+      || (Array.isArray(record.summaries) && record.summaries.every(isTriageSummary)));
 }
 
 /** Append one completed pass to the run journal. The record is the pass's

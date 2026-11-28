@@ -8,23 +8,16 @@ import { join } from 'node:path';
 import { unreleasedSection } from '../fleet/changelog-fold.js';
 import { mapLimited } from '../verse/folder-io.js';
 import { opsRunner, type OpsRunner } from '../verse/ops-releases.js';
-import { AUTONOMY_REPOS } from './autonomy-audit.js';
+import { AUTONOMY_REPOS, releaseRepo } from './autonomy-audit.js';
+import { RELEASE_DAY_MS, isReleaseRecord, isValidReleaseDate, parseWholeNumber } from './cadence.js';
 import type { PublicationEvidenceRow, PublicationEvidenceV1, PublicationReleaseRef } from './publication-evidence-shape.js';
+export { releaseRepo } from './autonomy-audit.js';
 export type { PublicationEvidenceV1 } from './publication-evidence-shape.js';
 
 export interface ReadPublicationEvidenceOptions { repo?: string; root?: string; now?: number; run?: OpsRunner }
 
-/** Short enrolled repo name for `name` or `ashlrai/name`; null for anything else. */
-export function releaseRepo(name: string): string | null {
-  const short = name.replace(/^ashlrai\//, '');
-  return AUTONOMY_REPOS.some(repo => repo === short) ? short : null;
-}
-
-const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
-const date = (v: unknown): v is string => typeof v === 'string' && Number.isFinite(Date.parse(v));
 const tagName = (v: unknown): v is string => typeof v === 'string' && /^[\w][\w./+-]{0,127}$/.test(v);
 const branchName = (v: string): boolean => /^[\w][\w./+-]{0,127}$/.test(v) && !v.includes('..');
-const wholeNumber = (v: string | null): number | null => v !== null && /^\d+$/.test(v) && Number.isSafeInteger(Number(v)) ? Number(v) : null;
 
 const GIT_READS = new Set(['symbolic-ref', 'for-each-ref', 'rev-parse', 'rev-list', 'show']);
 /** Every argv this reader may run. Anything else (release create, tag, push, workflow, auth) is refused. */
@@ -56,20 +49,20 @@ export async function readReleases(opts: ReadPublicationEvidenceOptions = {}): P
     if (head) {
       const tag = await git('for-each-ref', `--merged=${head}`, '--sort=-creatordate', '--count=1', '--format=%(refname:strip=2)%09%(creatordate:iso-strict)', 'refs/tags');
       const [name, created] = tag?.split('\t') ?? [];
-      if (tagName(name) && date(created)) {
+      if (tagName(name) && isValidReleaseDate(created)) {
         const createdAt = Date.parse(created);
         row.localTag.name = name;
         // A future-dated tag has no honest age.
         if (createdAt <= now) {
-          row.localTag.ageDays = Math.floor((now - createdAt) / 86_400_000);
-          if (await git('rev-parse', '--is-shallow-repository') === 'false') row.localTag.commitsSince = wholeNumber(await git('rev-list', '--count', `refs/tags/${name}..${head}`));
+          row.localTag.ageDays = Math.floor((now - createdAt) / RELEASE_DAY_MS);
+          if (await git('rev-parse', '--is-shallow-repository') === 'false') row.localTag.commitsSince = parseWholeNumber(await git('rev-list', '--count', `refs/tags/${name}..${head}`));
         }
       }
     }
     const releases = await json(['release', 'list', '-R', `ashlrai/${repo}`, '-L', '100', '--json', 'tagName,publishedAt,isDraft,isPrerelease']);
     // A full page might hide an older stable release. Never turn a cap or bad payload into "none".
-    if (!Array.isArray(releases) || releases.length >= 100 || !releases.every(r => record(r) && tagName(r.tagName) && typeof r.isDraft === 'boolean'
-      && typeof r.isPrerelease === 'boolean' && (r.isDraft || (date(r.publishedAt) && Date.parse(r.publishedAt) <= now)))) return row;
+    if (!Array.isArray(releases) || releases.length >= 100 || !releases.every(r => isReleaseRecord(r) && tagName(r.tagName) && typeof r.isDraft === 'boolean'
+      && typeof r.isPrerelease === 'boolean' && (r.isDraft || (isValidReleaseDate(r.publishedAt) && Date.parse(r.publishedAt) <= now)))) return row;
     const detail = (r: Record<string, unknown>): PublicationReleaseRef => ({ tag: r.tagName as string, publishedAt: r.isDraft ? null : new Date(r.publishedAt as string).toISOString(), prerelease: r.isPrerelease as boolean });
     row.releasesKnown = true;
     row.drafts = releases.filter(r => r.isDraft).map(detail);
@@ -80,8 +73,8 @@ export async function readReleases(opts: ReadPublicationEvidenceOptions = {}): P
     if (!head) { row.reason = 'The default branch is unknown; local origin/HEAD is missing.'; return row; }
     const publishedAt = row.published.publishedAt!;
     const prs = await json(['pr', 'list', '-R', `ashlrai/${repo}`, '--state', 'merged', '--base', row.defaultBranch!, '--search', `merged:>${publishedAt}`, '-L', '1000', '--json', 'number,mergedAt']);
-    if (!Array.isArray(prs) || prs.length >= 1000 || !prs.every(p => record(p) && Number.isSafeInteger(p.number) && (p.number as number) > 0
-      && date(p.mergedAt) && Date.parse(p.mergedAt) > Date.parse(publishedAt) && Date.parse(p.mergedAt) <= now)
+    if (!Array.isArray(prs) || prs.length >= 1000 || !prs.every(p => isReleaseRecord(p) && Number.isSafeInteger(p.number) && (p.number as number) > 0
+      && isValidReleaseDate(p.mergedAt) && Date.parse(p.mergedAt) > Date.parse(publishedAt) && Date.parse(p.mergedAt) <= now)
       || new Set(prs.map(p => p.number)).size !== prs.length) { row.reason = 'Merged PRs could not be read completely.'; return row; }
     row.mergedAfterPublication = prs.length; row.lag = prs.length ? 'merged-after' : 'none-merged-after';
     row.reason = 'Counts PRs merged into the default branch after publication time; this is not proof of what the artifacts contain, and local refs may be stale.';

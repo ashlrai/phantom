@@ -17,7 +17,7 @@
 import type { TypeSafeChoiceQuestion } from '../classify/typesafe-client.js';
 import { decideEach } from './decide.js';
 import { RETRO_ROOT_CAUSES } from './registry.js';
-import type { DecideOptions } from './types.js';
+import type { DecisionCallOptions } from './types.js';
 
 export type RetroCauseCategory = (typeof RETRO_ROOT_CAUSES)[number];
 
@@ -100,7 +100,7 @@ const QUESTION: TypeSafeChoiceQuestion = {
   criteria: CRITERIA,
 };
 
-export type LabelRetroRootCausesOptions = Omit<DecideOptions<RetroCauseCategory>, 'fallback' | 'interpret' | 'escalateOnly'>;
+export type LabelRetroRootCausesOptions = DecisionCallOptions;
 
 /**
  * Categorize every rooted retro: generic codes via one batched Jev call per 10

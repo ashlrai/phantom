@@ -36,6 +36,15 @@ function cargoEvidence(): MaintainerRunEvidence {
   run.dependenciesRemoved = true;
   return run;
 }
+function nodeEvidence(): MaintainerRunEvidence {
+  const run = evidence();
+  const command = { id: 'pnpm-test', kind: 'test' as const, cmd: ['pnpm', 'run', 'test'], required: true };
+  run.expectedCommands = [command]; run.commands[0]!.command = command;
+  run.nodeDependencies = [{ v: 1, recipe: 'node-locked-v1', manager: 'pnpm', sourceTree: treeSha,
+    lockSha256: '1'.repeat(64), packageCount: 1, nodeModulesSha256: '2'.repeat(64) }];
+  run.dependenciesRemoved = true;
+  return run;
+}
 
 function fixture(targetRepo = repo) {
   const repo = targetRepo;
@@ -108,6 +117,37 @@ describe('host-owned maintainer PR verification', () => {
     ['unsupported recipe', (run: MaintainerRunEvidence) => { run.cargoDependencies!.recipe = 'untrusted' as never; }],
   ])('does not post Cargo success with %s', async (_label, change) => {
     const run = cargoEvidence(); change(run);
+    const f = fixture(); f.run.mockResolvedValueOnce(run);
+    expect((await verifyMaintainerPr(input, f.deps)).ok).toBe(false);
+    expect(f.writes()).toEqual([]);
+  });
+  it('binds the Node dependency tree into the published check identity', async () => {
+    const f = fixture();
+    const changed = nodeEvidence();
+    changed.nodeDependencies![0]!.nodeModulesSha256 = '3'.repeat(64);
+    f.run.mockResolvedValueOnce(nodeEvidence()).mockResolvedValueOnce(changed);
+    expect((await verifyMaintainerPr(input, f.deps)).ok).toBe(true);
+    expect((await verifyMaintainerPr(input, f.deps)).ok).toBe(true);
+    expect(f.writes()).toHaveLength(2);
+    expect((f.writes()[0]!.body as { external_id: string }).external_id)
+      .not.toBe((f.writes()[1]!.body as { external_id: string }).external_id);
+  });
+  it('publishes a version-two Node dependency receipt only after cleanup', async () => {
+    const f = fixture(); f.run.mockResolvedValueOnce(nodeEvidence());
+    expect((await verifyMaintainerPr(input, f.deps)).ok).toBe(true);
+    expect(f.writes()[0]!.body).toMatchObject({ external_id: expect.stringMatching(/^maintainer-v2:/) });
+  });
+  it.each([
+    ['missing attachment', (run: MaintainerRunEvidence) => { delete run.nodeDependencies; }],
+    ['unfinished cleanup', (run: MaintainerRunEvidence) => { run.dependenciesRemoved = false; }],
+    ['wrong source', (run: MaintainerRunEvidence) => { run.nodeDependencies![0]!.sourceTree = 'f'.repeat(40); }],
+    ['wrong lock digest', (run: MaintainerRunEvidence) => { run.nodeDependencies![0]!.lockSha256 = 'bad'; }],
+    ['wrong tree digest', (run: MaintainerRunEvidence) => { run.nodeDependencies![0]!.nodeModulesSha256 = 'bad'; }],
+    ['over-limit inventory', (run: MaintainerRunEvidence) => { run.nodeDependencies![0]!.packageCount = 20_001; }],
+    ['unsupported manager', (run: MaintainerRunEvidence) => { run.nodeDependencies![0]!.manager = 'yarn' as never; }],
+    ['unsupported recipe', (run: MaintainerRunEvidence) => { run.nodeDependencies![0]!.recipe = 'untrusted' as never; }],
+  ])('does not post Node success with %s', async (_label, change) => {
+    const run = nodeEvidence(); change(run);
     const f = fixture(); f.run.mockResolvedValueOnce(run);
     expect((await verifyMaintainerPr(input, f.deps)).ok).toBe(false);
     expect(f.writes()).toEqual([]);

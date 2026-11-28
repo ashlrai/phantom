@@ -30,6 +30,15 @@ async function scratch(): Promise<string> {
 const input = (over: Partial<StarvedInput> = {}): StarvedInput => ({ lane: 'claude', target: 8, running: 0, ready: 0, held: false, drained: false, ...over });
 
 describe('readStarved', () => {
+  it.each([
+    { held: true, target: null, free: 0 },
+    { held: false, target: 0, free: 0 },
+    { held: false, target: 4, free: null },
+  ])('reports only provable headroom when running is unknown (%j)', ({ held, target, free }) => {
+    expect(readStarved([input({ held, target, running: null })], {}, NOW, 0).lanes.claude)
+      .toMatchObject({ free_slots: free, starved: false });
+  });
+
   it('marks a lane with free slots and no ready rows, with the plain line', () => {
     const read = readStarved([input()], { claude: minutesAgo(42) }, NOW);
     expect(read.lanes.claude).toEqual({
@@ -67,12 +76,14 @@ describe('readStarved', () => {
       input({ lane: 'blind', ready: null }), input({ lane: 'notarget', target: null }),
     ], {}, NOW);
     expect(Object.values(read.lanes).some(row => row.starved)).toBe(false);
+    expect(read.lanes.dry).toMatchObject({ free_slots: 0, ready_rows: 0 });
     expect(read.lanes.blind!.ready_rows).toBeNull();
     expect(read.lanes.notarget!.free_slots).toBeNull();
   });
 
   it('counts rows waiting on a drained pool only while some lane is starved', () => {
-    const drained = input({ lane: 'dry', drained: true, ready: 4 });
+    const drained = input({ lane: 'dry', drained: true, ready: 4, target: null, running: null });
+    expect(readStarved([drained], {}, NOW).lanes.dry).toMatchObject({ free_slots: 0, ready_rows: 4 });
     expect(readStarved([input(), drained], {}, NOW).waiting_elsewhere).toBe(4);
     expect(readStarved([input({ ready: 1 }), drained], {}, NOW).waiting_elsewhere).toBe(0);
   });
@@ -85,6 +96,16 @@ describe('readStarved', () => {
     expect(read.lanes.claude).toMatchObject({ free_slots: 8, ready_rows: 0, starved: false, starved_since: null, line: null });
     expect(read.waiting_elsewhere).toBe(0);
     expect(read.open_rows).toBe(2);
+  });
+
+  it.each(['codex-local', 'omlx'])('requires hinted supply for %s to clear starvation', lane => {
+    const since = { [lane]: minutesAgo(42) };
+    const read = readStarved([input({ lane }), input()], since, NOW, 2);
+    expect(read.open_rows).toBe(2);
+    expect(read.lanes.claude).toMatchObject({ starved: false });
+    expect(read.lanes[lane]).toMatchObject({ starved: true, starved_since: since[lane] });
+    expect(readStarved([input({ lane, ready: 1 })], since, NOW, 2).lanes[lane])
+      .toMatchObject({ starved: false, starved_since: null });
   });
 
   it('still calls a lane starved when the open-row count is zero or unknown', () => {
@@ -102,6 +123,30 @@ describe('readStarved', () => {
 });
 
 describe('lanes read: starved object', () => {
+  it.each([
+    { age: 0, paused: true, admission: {}, free: 0 },
+    { age: 0, paused: false, admission: { admit: false }, free: 0 },
+    { age: 0, paused: false, admission: { cap: 3, running: 3 }, free: 0 },
+    { age: 0, paused: false, admission: { cap: 4, running: 3 }, free: null },
+    { age: 60_001, paused: true, admission: { admit: false }, free: null },
+    { age: 0, paused: false, admission: { admit: false, ts: minutesAgo(1) }, free: null },
+  ])('uses a confirmed fleet stop with missing lane counts (%j)', async ({ age, paused, admission, free }) => {
+    const root = await scratch();
+    const queueDir = join(root, 'queue');
+    await mkdir(queueDir);
+    await writeFile(join(queueDir, 'ready.tsv'), '');
+    await writeFile(join(queueDir, 'status.json'), JSON.stringify({
+      last_tick: new Date(NOW - age).toISOString(),
+      lanes: { claude: {} },
+      paused, admission,
+    }));
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir, budgetsDir: join(root, 'budgets'), usageLogPaths: [], now: () => new Date(NOW), starvedStateDir: root,
+    });
+    expect(snapshot.lanes.find(lane => lane.lane === 'claude')).toMatchObject({ slotTarget: null, liveJobs: null });
+    expect(snapshot.starved.lanes.claude).toMatchObject({ free_slots: free, ready_rows: 0, starved: false });
+  });
+
   it.each([
     { configuredHeld: false, dispatcherHeld: true, tickAgeMs: 0, held: true },
     { configuredHeld: true, dispatcherHeld: false, tickAgeMs: 0, held: true },
@@ -370,7 +415,7 @@ describe('phm fleet starved', () => {
     expect(await cmdFleetStarved([], async () => status, async () => read)).toBe(1);
     expect(String(log.mock.calls[1]![0]).split('\n').slice(0, 2)).toEqual([
       'claude: 8 free slots, 0 ready rows for 42 min; next step: add work for claude',
-      '3 READY rows are waiting on a held or drained pool and could run on a starved lane instead.',
+      '3 READY rows are waiting on a held or drained pool.',
     ]);
   });
 
@@ -390,12 +435,30 @@ describe('phm fleet starved', () => {
     expect(JSON.parse(String(log.mock.calls[0]![0])).starved_lanes).toEqual([]);
     expect(await cmdFleetStarved(['--json'], async () => status, async () => { throw new Error('nope'); })).toBe(0);
     expect(JSON.parse(String(log.mock.calls[1]![0])).starved_lanes).toBeNull();
-    expect(explainFleetStarved(JSON.parse(status)).waiting_elsewhere).toBe(0);
+    expect(explainFleetStarved(JSON.parse(status)).waiting_elsewhere).toBeNull();
+    expect(JSON.parse(String(log.mock.calls[1]![0])).waiting_elsewhere).toBeNull();
   });
 });
 
 describe('starved notice', () => {
   const read = readStarved([input()], {}, NOW);
+
+  it.each([
+    { ready: 1, total: 3, suffix: ' 3 READY rows are waiting on a held or drained pool.' },
+    { ready: null, total: null, suffix: '' },
+  ])('reports held and drained supply only when its total is known (%j)', ({ ready, total, suffix }) => {
+    const since = { claude: minutesAgo(42) };
+    const snapshot = readStarved([
+      input(),
+      input({ lane: 'devin', ready, held: true }),
+      input({ lane: 'codex', ready: 2, drained: true }),
+    ], since, NOW, 0);
+    expect(snapshot.waiting_elsewhere).toBe(total);
+    expect(planStarvedNotices(snapshot, { since, noticed: {} }, NOW).posts).toEqual([{
+      lane: 'claude',
+      text: `claude: 8 free slots, 0 ready rows for 42 min; next step: add work for claude.${suffix}`,
+    }]);
+  });
 
   it('waits 30 minutes, posts once, then holds off for 6 hours', () => {
     let plan = planStarvedNotices(read, { since: {}, noticed: {} }, NOW);

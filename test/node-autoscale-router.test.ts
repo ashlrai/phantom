@@ -44,6 +44,24 @@ const COSTS: HarnessModelCost[] = [
 ];
 
 describe('autoscale router scoring', () => {
+  it('withholds both swap rates across a counter rollback and resumes on the next sample', () => {
+    const before = computeNodeCapacity(mbp());
+    const after = computeNodeCapacity(mbp({
+      measuredAtMs: T0 + 60_000,
+      swap: { usedBytes: 0, totalBytes: 8 * GIB, swapoutsTotal: 0 },
+    }), before);
+    expect(after.swap).toMatchObject({
+      used_bytes: 0, swapouts_total: 0,
+      swapouts_per_min: null, growth_bytes_per_min: null, growing: null,
+    });
+
+    const next = computeNodeCapacity(mbp({
+      measuredAtMs: T0 + 120_000,
+      swap: { usedBytes: MIB, totalBytes: 8 * GIB, swapoutsTotal: 1 },
+    }), after);
+    expect(next.swap).toMatchObject({ swapouts_per_min: 1, growth_bytes_per_min: MIB, growing: false });
+  });
+
   it('expires learned costs for local placements, peer borrowing and runnable totals while the snapshot is fresh', () => {
     const learnedAt = T0 - CAPACITY_POLICY.learnedFootprintTtlMs;
     const prior = computeNodeCapacity(mbp({ measuredAtMs: learnedAt }));
@@ -83,6 +101,21 @@ describe('autoscale router scoring', () => {
       nodes: [{ doc }, peer], costs: [COSTS[0]!], outcomes: {}, jobs: [{ id: 'j' }], nowMs,
     })[0]).toMatchObject({ nodeId: null, rejected: { 'footprint-unmeasured': 2 } });
     expect(fleetRunnable([doc, peer.doc], nowMs).codex).toBeNull();
+  });
+
+  it('waits for a learned footprint observation even when its snapshot is within clock skew', () => {
+    const observedAt = T0 + 1_000;
+    const prior = computeNodeCapacity(mbp({ measuredAtMs: observedAt }));
+    const doc = computeNodeCapacity(mbp({ measuredAtMs: observedAt + 1, sessions: [] }), prior);
+    const peer = node(mbp8());
+    const input = { nodes: [{ doc }, peer], costs: [COSTS[0]!], outcomes: {}, jobs: [{ id: 'j' }] };
+
+    expect(planAutoscaleRoutes({ ...input, nowMs: T0 })[0]).toMatchObject({
+      nodeId: null, rejected: { 'footprint-unmeasured': 2 },
+    });
+    expect(fleetRunnable([doc, peer.doc], T0).codex).toBeNull();
+    expect(planAutoscaleRoutes({ ...input, nowMs: observedAt })[0]?.nodeId).not.toBeNull();
+    expect(fleetRunnable([doc, peer.doc], observedAt).codex).toBe(doc.agents_runnable_now.codex);
   });
 
   it.each([
@@ -152,6 +185,30 @@ describe('autoscale router scoring', () => {
     expect(mergeRate({ attempts: 8, merged: 6 })).toBe(0.7);
     expect(mergeRate({ attempts: 2, merged: 9 })).toBe(0.75);   // merged clamps to attempts
     expect(mergeRate({ attempts: -1, merged: 1 } as never)).toBe(0.5);
+  });
+
+  it.each([
+    undefined,
+    { attempts: 0, merged: 0 },
+    { attempts: 1, merged: 2 },
+    { attempts: 1, merged: -1 },
+  ])('uses the ranking prior but reports unknown rates for unusable outcomes %j', (outcomes) => {
+    const [placement] = planAutoscaleRoutes({
+      nodes: [node(mbp())], costs: COSTS.slice(0, 2),
+      outcomes: { claude: { attempts: 1, merged: 0 }, ...(outcomes ? { codex: outcomes } : {}) },
+      nowMs: T0, jobs: [{ id: 'cold-lane', tokenWeight: 0 }],
+    });
+    expect(placement).toMatchObject({
+      provider: 'codex', score: 1, mergeRate: null, mergesPerMTok: null, mergesPerHour: null,
+    });
+  });
+
+  it('reports smoothed rates when a lane has recorded attempts and zero merges', () => {
+    const [placement] = planAutoscaleRoutes({
+      nodes: [node(mbp())], costs: [COSTS[0]!], outcomes: { codex: { attempts: 2, merged: 0 } },
+      nowMs: T0, jobs: [{ id: 'observed-lane' }],
+    });
+    expect(placement).toMatchObject({ mergeRate: 0.25, mergesPerMTok: 0.125, mergesPerHour: 0.5 });
   });
 
   it('picks the best outcome per token and per minute, and honours the weight', () => {
@@ -349,10 +406,40 @@ describe('autoscale router scoring', () => {
     });
   });
 
+  it('excludes reported slots on a node with zero measured memory headroom', () => {
+    const saturated = computeNodeCapacity(mbp({
+      mem: { ...mbp().mem, freePercent: CAPACITY_POLICY.memReserveFreePct },
+    }));
+    expect(saturated.mem_free.headroom_bytes).toBe(0);
+    saturated.agents_runnable_now.codex = 2;
+    const peer = computeNodeCapacity(mbp({ node: 'peer' }));
+    expect(fleetRunnable([saturated], T0)).toMatchObject({ codex: 0, devin: null });
+    expect(fleetRunnable([saturated, peer], T0).codex).toBe(peer.agents_runnable_now.codex);
+    expect(planAutoscaleRoutes({
+      nodes: [{ doc: saturated }], costs: [COSTS[0]!], outcomes: {}, nowMs: T0, jobs: [{ id: 'j' }],
+    })[0]).toMatchObject({ nodeId: null, rejected: { memory: 1 } });
+  });
+
   it('is deterministic regardless of input order', () => {
     const a = planAutoscaleRoutes({ nodes: [node(mbp()), node(mbp8())], costs: COSTS, outcomes: {}, nowMs: T0, jobs: [{ id: '1' }, { id: '2' }, { id: '3' }] });
     const b = planAutoscaleRoutes({ nodes: [node(mbp8()), node(mbp())], costs: [...COSTS].reverse(), outcomes: {}, nowMs: T0, jobs: [{ id: '1' }, { id: '2' }, { id: '3' }] });
     expect(a).toEqual(b);
+  });
+
+  it('spreads equally ranked placements across nodes for the selected provider and model', () => {
+    const first = node(mbp({ node: 'a' }));
+    const second = node(mbp({ node: 'b' }));
+    const cost = COSTS[0]!;
+    const input = {
+      costs: [{ ...cost, model: 'later-model' }, cost],
+      outcomes: {}, nowMs: T0,
+      jobs: ['1', '2', '3', '4'].map(id => ({ id })),
+    };
+    const plan = planAutoscaleRoutes({ ...input, nodes: [second, first] });
+    expect(plan.map(p => [p.nodeId, p.model])).toEqual([
+      ['a', cost.model], ['b', cost.model], ['a', cost.model], ['b', cost.model],
+    ]);
+    expect(planAutoscaleRoutes({ ...input, nodes: [first, second] })).toEqual(plan);
   });
 
   it('names job-filter and empty-input rejections instead of an empty map', () => {
@@ -388,6 +475,17 @@ describe('autoscale router scoring', () => {
     expect(fleet.devin).toBeNull();
     expect(fleetRunnable(docs, T0 + 10 * 60_000).codex).toBeNull();
     expect(fleetFootprints(docs).claude!.mem_bytes_max).toBe(900 * MIB);
+  });
+
+  it('ignores runnable counts without a footprint on the reporting node', () => {
+    const { doc } = node(mbp());
+    expect(doc.agents_runnable_now.codex).toBeGreaterThan(0);
+    delete doc.per_harness_footprint.codex;
+    const peer = node(mbp({ node: 'peer' })).doc;
+
+    expect(fleetRunnable([doc], T0).codex).toBeNull();
+    expect(fleetRunnable([doc, peer], T0).codex).toBe(peer.agents_runnable_now.codex);
+    expect(fleetRunnable([{ ...doc, swap: { ...doc.swap, growing: true } }], T0).codex).toBe(0);
   });
 
   it('budgets duplicate snapshots once and honors a newer pressure hold in either input order', () => {

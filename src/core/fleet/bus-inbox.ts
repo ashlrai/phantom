@@ -190,7 +190,12 @@ export function appendBusInbox(input: unknown, options: BusInboxOptions = {}): B
     if (!options.root) { ensurePrivateDirectory(ashlrHome()); privatePath(ashlrHome(), 'directory', ashlrHome()); }
     ensurePrivateDirectory(root); privatePath(root, 'directory', root);
     ensurePrivateDirectory(directory); privatePath(directory, 'directory', root);
-    const acquired = acquireLocalStoreLockWithOutcome(join(directory, 'writer.lock'), 0, { anchorPath: root, exactPrivateStorage: true });
+    const lockPath = join(directory, 'writer.lock');
+    const lockOptions = { anchorPath: root, exactPrivateStorage: true };
+    let acquired = acquireLocalStoreLockWithOutcome(lockPath, 0, lockOptions);
+    if (acquired.state === 'unavailable' && missing(lockPath)) {
+      acquired = acquireLocalStoreLockWithOutcome(lockPath, 0, lockOptions);
+    }
     if (acquired.state !== 'acquired') return { status: acquired.state === 'contended' ? 'retryable' : 'unavailable' };
     try {
       const snapshot = loadSnapshot(root);
@@ -212,7 +217,7 @@ export function appendBusInbox(input: unknown, options: BusInboxOptions = {}): B
   } catch { return { status: 'unavailable' }; }
 }
 /** nextCursor advances over expired records, including an entirely expired page.
- * Scan is capped at 1 MiB / 1024 retained records; output at 100 envelopes.
+ * Scan is capped at 1 MiB / BUS_INBOX_MAX_MESSAGES retained records; output at 100 envelopes.
  * TTL is measured from the original receipt using the supplied clock.
  * Both times are nonnegative safe integers, so their nonnegative difference is
  * safe; avoid adding TTL to receivedAt, which could exceed MAX_SAFE_INTEGER.

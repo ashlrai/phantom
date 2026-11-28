@@ -23,6 +23,29 @@ describe('phm fleet lane-supply', () => {
     expect(report.lanes.find(l => l.lane === 'codex')).toMatchObject({ queued: 1, usedPct: 100 });
   });
 
+  it('requires readable lane-open supply even when dispatcher queue totals are available', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'lane-supply-'));
+    const queue = join(dir, 'queue');
+    const tick = '2026-11-20T12:00:00Z';
+    await mkdir(queue);
+    await writeFile(join(queue, 'status.json'), JSON.stringify({
+      last_tick: tick,
+      lanes: { claude: { running: 1, target: 4, queued: 0 } },
+    }));
+    await writeFile(join(queue, 'usage-readings.log'), JSON.stringify({
+      pool: 'claude', pctUsed: 32, resetAt: '2026-11-22T12:00:00Z', observedAt: tick,
+    }) + '\n');
+    const read = () => readLaneSupply({ runsDir: dir, now: () => Date.parse(tick) });
+    const missing = await read();
+    expect(missing.lanes.find(l => l.lane === 'claude')).toMatchObject({
+      freeSlots: 3, queued: 0, leftPct: 68, verdict: 'unknown',
+    });
+    expect(missing.alarm).toBeNull();
+
+    await writeFile(join(queue, 'ready.tsv'), '');
+    expect((await read()).idle).toEqual(['claude']);
+  });
+
   it('prints JSON and exits 1 while a lane is idle with usage left', async () => {
     const out = capture();
     const report = { schema: 'fleet.lane-supply.v1', generatedAt: 'x', lanes: [], idle: ['claude'], alarm: 'claude idle: 6 free slots, 68% left',

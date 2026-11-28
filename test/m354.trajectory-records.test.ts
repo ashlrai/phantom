@@ -234,6 +234,23 @@ function outcomeRecord(overrides: Partial<OutcomeRecord> = {}): OutcomeRecord {
   };
 }
 
+function skillSampleOutcomes(trajectoryIds: string[], createdAt: string): OutcomeRecord[] {
+  return trajectoryIds.map((trajectoryId) => {
+    const base = outcomeRecord();
+    return outcomeRecord({
+      proposal: {
+        ...base.proposal,
+        id: `prop-${trajectoryId}`,
+        runId: trajectoryId,
+        trajectoryId,
+        workItemId: trajectoryId,
+        createdAt,
+      },
+      decisions: [],
+    });
+  });
+}
+
 function skillUse(overrides: Partial<SkillUseEvent> = {}): SkillUseEvent {
   return {
     schemaVersion: 1,
@@ -1760,7 +1777,7 @@ describe('Trajectory records', () => {
         listOutcomeRecords: () => [],
         readAgentActions: () => [],
         readSkillUseEvents: () => [
-          skillUse({ eventId: 'skill-use:a', proposalId: undefined, runId: 'run-a', trajectoryId: 'traj-a' }),
+          skillUse({ eventId: 'skill-use:a', proposalId: 'unrecorded-proposal', runId: 'run-a', trajectoryId: 'traj-a' }),
           skillUse({
             eventId: 'skill-use:b',
             skillId: 'skill.b',
@@ -1798,6 +1815,13 @@ describe('Trajectory records', () => {
             runId: 'run-b',
             trajectoryId: 'traj-a',
           }),
+          skillUse({
+            eventId: 'skill-use:unmapped-conflict',
+            skillId: 'skill.unmapped-conflict',
+            proposalId: undefined,
+            runId: 'run-unmapped',
+            trajectoryId: 'traj-a',
+          }),
         ],
       }),
     });
@@ -1809,7 +1833,7 @@ describe('Trajectory records', () => {
     expect(copied).toMatchObject({
       joined: 3,
       unjoined: 1,
-      conflicting: 1,
+      conflicting: 2,
       modeCounts: { shadow: 1, active: 1, disabled: 1 },
       stageCounts: { selected: 1, injected: 1, applied: 0, outcome: 1 },
       sampleState: 'observed',
@@ -1892,7 +1916,9 @@ describe('Trajectory records', () => {
     expect(summary.skillObservation).not.toHaveProperty('conflicting');
   });
 
-  it('attributes shadow skill selections to per-skill trajectory outcomes', () => {
+  it.each([null, 'a', 'b', 'missing'])('attributes only undisputed skill revisions (additional evidence: %s)', (additionalEvidence) => {
+    const conflictingTrajectory = additionalEvidence === 'missing' ? null : additionalEvidence;
+    const extraTrajectory = additionalEvidence === 'missing' ? 'b' : conflictingTrajectory;
     const outcomeFor = (
       id: string,
       action: 'merged' | 'rejected',
@@ -1979,6 +2005,16 @@ describe('Trajectory records', () => {
           skillUse({ eventId: 'use-c-alpha-sel', skillId: 'skill.alpha', skillRevision: 1, ts: TS2, trajectoryId: 'traj-c', runId: 'run-c', proposalId: 'prop-c' }),
           skillUse({ eventId: 'use-c-alpha-outcome', skillId: 'skill.alpha', skillRevision: 1, ts: TS3, selectedAt: TS2, stage: 'outcome', outcome: 'merged', trajectoryId: 'traj-c', runId: 'run-c', proposalId: 'prop-c' }),
           skillUse({ eventId: 'use-d-beta2', skillId: 'skill.beta', skillRevision: 2, contentHash: 'b'.repeat(64), ts: TS3, trajectoryId: 'traj-d', runId: 'run-d', proposalId: 'prop-d' }),
+          ...(extraTrajectory ? [skillUse({
+            eventId: 'use-alpha-extra',
+            skillId: 'skill.alpha',
+            skillRevision: 1,
+            contentHash: additionalEvidence === 'missing' ? undefined : 'c'.repeat(64),
+            stage: 'outcome',
+            trajectoryId: `traj-${extraTrajectory}`,
+            runId: `run-${extraTrajectory}`,
+            proposalId: `prop-${extraTrajectory}`,
+          })] : []),
         ],
       }),
     });
@@ -1987,24 +2023,27 @@ describe('Trajectory records', () => {
     const summary = summarizeTrajectoryLearning(records);
     expect(summary.skillObservation.sampleState).toBe('observed');
     expect(summary.skillOutcomes).toEqual({
-      skills: 2,
-      selections: 5,
+      skills: conflictingTrajectory ? 1 : 2,
+      selections: conflictingTrajectory ? 2 : 5,
       perSkill: [
-        {
+        ...(conflictingTrajectory ? [] : [{
           skillId: 'skill.alpha',
           skillRevision: 1,
+          ...(additionalEvidence === 'missing' ? {} : { skillContentHash: 'a'.repeat(64) }),
           selections: 3,
           outcomes: { merged: 2, rejected: 1 },
-        },
+        }]),
         {
           skillId: 'skill.beta',
           skillRevision: 1,
+          skillContentHash: 'a'.repeat(64),
           selections: 1,
           outcomes: { merged: 1 },
         },
         {
           skillId: 'skill.beta',
           skillRevision: 2,
+          skillContentHash: 'b'.repeat(64),
           selections: 1,
           outcomes: { merged: 1 },
           realized: { reverted: 1 },
@@ -2441,6 +2480,7 @@ describe('Trajectory records', () => {
     const summary = summarizeTrajectoryLearning(records, 24);
     expect(summary.trajectories).toBe(3);
     expect(summary.population).toEqual({ observed: 3, learningEligible: 0, incomplete: 3, degraded: 0 });
+    expect(summary.skillOutcomes).toBeUndefined();
     expect(summary.terminalOutcomes).toMatchObject({ pending: 0, unknown: 0 });
     expect(summary.coverage).toMatchObject({
       dispatch: { count: 0, rate: 0 },
@@ -2485,7 +2525,7 @@ describe('Trajectory records', () => {
           runId: trajectoryId,
           trajectoryId,
         })),
-        listOutcomeRecords: () => [],
+        listOutcomeRecords: () => skillSampleOutcomes(trajectoryIds, at(start)),
         readAgentActions: () => [],
         readSkillUseEvents: () => [at(start), at(TEST_NOW_MS), ts].map((receiptTime, index) => skillUse({
           eventId: `use-${index}`,
@@ -2531,6 +2571,38 @@ describe('Trajectory records', () => {
     expect(readRecords(TEST_NOW_MS)[0]).toMatchObject({ terminalOutcome: 'merged', coverage: { proposal: true } });
   });
 
+  it('withholds proposal decisions until their recorded time', () => {
+    const outcome = outcomeRecord();
+    const readRecords = (decisionMs: number) => listTrajectoryRecords({
+      asOfMs: TEST_NOW_MS,
+      deps: deps({
+        listOutcomeRecords: () => [{
+          ...outcome,
+          decisions: outcome.decisions.map((decision) => ({
+            ...decision,
+            action: 'rejected',
+            ts: new Date(decisionMs).toISOString(),
+          })),
+        }],
+        readAgentActions: () => [],
+        loadProposal: () => null,
+      }),
+    });
+
+    const [future] = readRecords(TEST_NOW_MS + 1);
+    expect(future).toMatchObject({
+      latestAt: TS2,
+      terminalOutcome: 'pending',
+      coverage: { decision: false },
+    });
+    expect(future?.timeline.some((event) => event.kind === 'decision')).toBe(false);
+    expect(readRecords(TEST_NOW_MS)[0]).toMatchObject({
+      latestAt: new Date(TEST_NOW_MS).toISOString(),
+      terminalOutcome: 'rejected',
+      coverage: { decision: true },
+    });
+  });
+
   it('excludes future dispatches from the skill outcome sample', () => {
     const at = (ms: number) => new Date(ms).toISOString();
     const trajectoryIds = ['traj-a', 'traj-b', 'traj-c'];
@@ -2540,14 +2612,12 @@ describe('Trajectory records', () => {
         readDispatchProductionEvents: () => trajectoryIds.map((trajectoryId, index) => dispatch({
           ts: at(index === 2 ? thirdDispatchMs : TEST_NOW_MS - 1),
           itemId: trajectoryId,
-          outcome: 'engine-failed',
-          proposalCreated: false,
           proposalId: undefined,
           runEventSummary: undefined,
           runId: trajectoryId,
           trajectoryId,
         })),
-        listOutcomeRecords: () => [],
+        listOutcomeRecords: () => skillSampleOutcomes(trajectoryIds, at(TEST_NOW_MS - 1)),
         readAgentActions: () => [],
         readSkillUseEvents: () => trajectoryIds.map((trajectoryId) => skillUse({
           eventId: `use-${trajectoryId}`,
@@ -2560,7 +2630,7 @@ describe('Trajectory records', () => {
     });
 
     const records = readRecords(TEST_NOW_MS + 1);
-    expect(records.map((record) => record.trajectoryId).sort()).toEqual(['traj-a', 'traj-b']);
+    expect(records.filter((record) => record.coverage.dispatch).map((record) => record.trajectoryId).sort()).toEqual(['traj-a', 'traj-b']);
     expect(summarizeTrajectoryLearning(records, 24).skillOutcomes).toBeUndefined();
     const atCutoff = summarizeTrajectoryLearning(readRecords(TEST_NOW_MS), 24);
     expect(atCutoff.coverage.skillUse).toEqual({ count: 3, rate: 1 });
@@ -2594,7 +2664,7 @@ describe('Trajectory records', () => {
             runId: trajectoryId,
             trajectoryId,
           })),
-          listOutcomeRecords: () => [],
+          listOutcomeRecords: () => skillSampleOutcomes(trajectoryIds, new Date(start).toISOString()),
           readAgentActions: () => [],
         }),
       }),
@@ -2604,20 +2674,25 @@ describe('Trajectory records', () => {
   });
 
   it('suppresses every exact skill metric when the observation source is degraded', () => {
+    const trajectoryIds = ['traj-a', 'traj-b', 'traj-c'];
     const records = listTrajectoryRecords({
       windowHours: 1000,
       deps: deps({
-        readDispatchProductionEvents: () => [
-          dispatch({ proposalId: undefined, runId: 'run-a', trajectoryId: 'traj-a' }),
-          dispatch({ ts: TS1, itemId: 'item-b', proposalId: undefined, runId: 'run-b', trajectoryId: 'traj-b' }),
-          dispatch({ ts: TS2, itemId: 'item-c', proposalId: undefined, runId: 'run-c', trajectoryId: 'traj-c' }),
-        ],
-        listOutcomeRecords: () => [],
+        readDispatchProductionEvents: () => trajectoryIds.map((trajectoryId) => dispatch({
+          itemId: trajectoryId,
+          proposalId: undefined,
+          runId: trajectoryId,
+          trajectoryId,
+        })),
+        listOutcomeRecords: () => skillSampleOutcomes(trajectoryIds, TS1),
         readAgentActions: () => [],
         readSkillUseEvents: () => [
-          skillUse({ eventId: 'use-a', runId: 'run-a', trajectoryId: 'traj-a' }),
-          skillUse({ eventId: 'use-b', runId: 'run-b', trajectoryId: 'traj-b' }),
-          skillUse({ eventId: 'use-c', runId: 'run-c', trajectoryId: 'traj-c' }),
+          ...trajectoryIds.map((trajectoryId) => skillUse({
+            eventId: `use-${trajectoryId}`,
+            proposalId: undefined,
+            runId: trajectoryId,
+            trajectoryId,
+          })),
         ],
       }),
     });

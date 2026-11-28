@@ -62,6 +62,23 @@ describe('ready supply', () => {
     ]);
   });
 
+  it('counts each READY job once across lanes and open rows', async () => {
+    const dir = await fixture();
+    await writeFile(join(dir, 'queue', 'ready.tsv'), [
+      'RQ-PHX-HINTED\tPARKED-BYHAND.devin',
+      'RQ-PHX-HINTED\tphantom\tcodex\twork\t/q/hinted.md',
+      'RQ-PHX-HINTED\tphantom\t\twork\t/q/hinted.md',
+      'RQ-PHX-OPEN\tphantom\t\twork\t/q/open.md',
+      'RQ-PHX-OPEN\tphantom\tdevin\twork\t/q/open.md',
+    ].join('\n'));
+    const result = await readReadySupply({ runsDir: dir, now });
+    expect(result.unhinted).toEqual({ total: 1, phantom: 1, filler: 0 });
+    expect(result.lanes).toEqual([
+      { lane: 'codex', phxReady: 1, phxParked: 0, fillerReady: 0, fillerParked: 0, oldestPhxId: 'RQ-PHX-HINTED' },
+      { lane: 'devin', phxReady: 0, phxParked: 1, fillerReady: 0, fillerParked: 0, oldestPhxId: null },
+    ]);
+  });
+
   it('attributes spec-less rows through their router-queue envelope', async () => {
     const dir = await fixture();
     await writeFile(join(dir, 'queue', 'ready.tsv'), [

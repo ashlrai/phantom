@@ -13,15 +13,19 @@ import {
   SEMVER_RE,
   SHA256_PREFIXED_DIGEST_RE as DIGEST_RE,
   canonicalJsonBytes,
+  compareText,
   decodeStrictUtf8JsonBytes,
   deepFreeze as immutable,
+  digestUnsignedRecordV1,
   exactKeys,
   isCanonicalIsoTimestamp as canonicalIso,
   isEnumValue as enumValue,
   isSafeIntegerInRange as integer,
   isUnsupportedStackSourceVersionV1 as unsupportedSourceVersion,
   isValidStackSourceV1 as validSource,
+  pickRecordKeys,
   sha256Prefixed as sha,
+  strictExactRecord,
   strictPlainRecord as record,
   timingSafeUtf8Equal as sameText,
   type StackSourceMetadataV1,
@@ -191,13 +195,9 @@ function canonicalBytes(value: unknown): Buffer | null {
   return canonicalJsonBytes(value, CANONICAL_BOUNDS);
 }
 
-function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
 function validTopology(value: unknown): value is StackObservationManifestV1['topology'] {
-  const topology = record(value);
-  if (!topology || !exactKeys(topology, TOPOLOGY_KEYS) ||
+  const topology = strictExactRecord(value, TOPOLOGY_KEYS);
+  if (!topology ||
     !integer(topology['componentCount'], 1, MAX_COMPONENTS) ||
     !integer(topology['connectionCount'], 0, MAX_RESOURCES) ||
     !Array.isArray(topology['components']) || topology['components'].length < 1 ||
@@ -207,8 +207,8 @@ function validTopology(value: unknown): value is StackObservationManifestV1['top
   let componentCount = 0;
   const componentCounts = new Map<string, number>();
   for (const value of topology['components']) {
-    const component = record(value);
-    if (!component || !exactKeys(component, COMPONENT_KEYS) ||
+    const component = strictExactRecord(value, COMPONENT_KEYS);
+    if (!component ||
       !enumValue(component['kind'], COMPONENT_KINDS) || !integer(component['count'], 1, MAX_COMPONENTS) ||
       compareText(priorKind, component['kind']) >= 0) return false;
     priorKind = component['kind'];
@@ -219,8 +219,8 @@ function validTopology(value: unknown): value is StackObservationManifestV1['top
   let priorConnection = '';
   let connectionCount = 0;
   for (const value of topology['connections']) {
-    const connection = record(value);
-    if (!connection || !exactKeys(connection, CONNECTION_KEYS) ||
+    const connection = strictExactRecord(value, CONNECTION_KEYS);
+    if (!connection ||
       !enumValue(connection['from'], COMPONENT_KINDS) || !enumValue(connection['to'], COMPONENT_KINDS) ||
       connection['from'] === connection['to'] || !integer(connection['count'], 1, MAX_RESOURCES) ||
       !componentCounts.has(connection['from']) || !componentCounts.has(connection['to'])) return false;
@@ -234,15 +234,15 @@ function validTopology(value: unknown): value is StackObservationManifestV1['top
 }
 
 function validResources(value: unknown): value is StackObservationManifestV1['resources'] {
-  const resources = record(value);
-  if (!resources || !exactKeys(resources, RESOURCES_KEYS) ||
+  const resources = strictExactRecord(value, RESOURCES_KEYS);
+  if (!resources ||
     !integer(resources['resourceCount'], 0, MAX_RESOURCES) || !Array.isArray(resources['classes']) ||
     resources['classes'].length > MAX_RESOURCE_CLASSES) return false;
   let prior = '';
   let resourceCount = 0;
   for (const value of resources['classes']) {
-    const resource = record(value);
-    if (!resource || !exactKeys(resource, RESOURCE_CLASS_KEYS) ||
+    const resource = strictExactRecord(value, RESOURCE_CLASS_KEYS);
+    if (!resource ||
       !enumValue(resource['kind'], RESOURCE_KINDS) || typeof resource['classDigest'] !== 'string' ||
       !DIGEST_RE.test(resource['classDigest']) || !enumValue(resource['state'], RESOURCE_STATES) ||
       !integer(resource['count'], 1, MAX_RESOURCES)) return false;
@@ -257,8 +257,8 @@ function validResources(value: unknown): value is StackObservationManifestV1['re
 
 function validPhantom(value: unknown): value is StackObservationManifestV1['phantom'] {
   if (value === null) return true;
-  const phantom = record(value);
-  if (!phantom || !exactKeys(phantom, PHANTOM_KEYS) || typeof phantom['installed'] !== 'boolean' ||
+  const phantom = strictExactRecord(value, PHANTOM_KEYS);
+  if (!phantom || typeof phantom['installed'] !== 'boolean' ||
     (phantom['version'] !== null && (typeof phantom['version'] !== 'string' ||
       phantom['version'].length > 80 || !SEMVER_RE.test(phantom['version']))) ||
     !enumValue(phantom['vaultStatus'], ['locked', 'unlocked', 'unavailable', 'unknown']) ||
@@ -270,14 +270,14 @@ function validPhantom(value: unknown): value is StackObservationManifestV1['phan
 }
 
 function unsignedManifest(value: unknown): Omit<StackObservationManifestV1, 'manifestDigest'> | null {
-  const manifest = record(value);
-  if (!manifest || !exactKeys(manifest, MANIFEST_KEYS) || manifest['schemaVersion'] !== 1 ||
+  const manifest = strictExactRecord(value, MANIFEST_KEYS);
+  if (!manifest || manifest['schemaVersion'] !== 1 ||
     manifest['protocol'] !== STACK_OBSERVATION_MANIFEST_PROTOCOL || !validSource(manifest['source']) ||
     !canonicalIso(manifest['generatedAt']) || !canonicalIso(manifest['expiresAt']) ||
     !validTopology(manifest['topology']) || !validResources(manifest['resources']) ||
     !validPhantom(manifest['phantom']) || typeof manifest['manifestDigest'] !== 'string' ||
     !DIGEST_RE.test(manifest['manifestDigest'])) return null;
-  return Object.fromEntries(UNSIGNED_MANIFEST_KEYS.map((key) => [key, manifest[key]])) as
+  return pickRecordKeys(manifest, UNSIGNED_MANIFEST_KEYS) as
     Omit<StackObservationManifestV1, 'manifestDigest'>;
 }
 
@@ -288,15 +288,13 @@ export function canonicalStackObservationManifestBytesV1(value: unknown): Buffer
 
 /** Domain-separated consistency digest over every manifest field except itself. */
 export function stackObservationManifestDigestV1(value: unknown): string | null {
-  const manifest = record(value);
-  if (!manifest) return null;
-  const unsigned = exactKeys(manifest, UNSIGNED_MANIFEST_KEYS)
-    ? manifest
-    : exactKeys(manifest, MANIFEST_KEYS)
-      ? Object.fromEntries(UNSIGNED_MANIFEST_KEYS.map((key) => [key, manifest[key]]))
-      : null;
-  const bytes = unsigned ? canonicalBytes(unsigned) : null;
-  return bytes ? sha('ashlr:stack-observation-manifest:v1', bytes) : null;
+  return digestUnsignedRecordV1(
+    value,
+    MANIFEST_KEYS,
+    UNSIGNED_MANIFEST_KEYS,
+    CANONICAL_BOUNDS,
+    'ashlr:stack-observation-manifest:v1',
+  );
 }
 
 function fail(issue: ExternalStackObservationIssueV1): ExternalStackObservationResultV1 {

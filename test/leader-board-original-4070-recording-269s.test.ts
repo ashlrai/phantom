@@ -92,6 +92,26 @@ it('counts lane-open work by tier without attributing it to a lane', async () =>
   expect(board?.lanes.find((lane) => lane.lane === 'codex')?.ready).toBe(1);
 });
 
+it('uses router queue envelopes when counting five-column rows by tier', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), [
+    'RQ-ENV-HINTED\tphantom\tbad lane\tfrontier\tprompts/hinted.md',
+    'RQ-ENV-OPEN\tphantom\tbad lane\twork\tprompts/open.md',
+    'RQ-ENV-INVALID\tphantom\tcodex\tfast\tprompts/invalid.md',
+    'RQ-ENV-INLINE\tphantom\tcodex\tmid\tprompts/inline.md\t{"preferred_lane":"codex"}',
+  ].join('\n'));
+  await writeFile(join(queueDir, 'router-queue.md'), [
+    '- READY RQ-ENV-HINTED (P1, pool=codex): use codex',
+    '- READY RQ-ENV-OPEN (P1): open supply',
+    '- READY RQ-ENV-INVALID (P1, exclusive=maybe): invalid requirements',
+    '- READY RQ-ENV-INLINE (P1, exclusive=maybe): superseded by inline requirements',
+  ].join('\n'));
+
+  expect((await recordLeaderBoard({ runsDir: root, nowMs: NOW_MS })).wrote).toBe(true);
+  const { board } = await readFleetBoard({ runsDir: root });
+  expect(board?.queueDepthByTier).toEqual({ frontier: 1, work: 1, mid: 1 });
+  expect(board?.lanes.find(lane => lane.lane === 'codex')?.ready).toBe(2);
+});
+
 it('reports honest failures for hostile paths and the reader stays truthful', async () => {
   expect(await recordLeaderBoard({ runsDir: 'relative/path', nowMs: NOW_MS })).toMatchObject({ wrote: false });
   expect(await recordLeaderBoard({ runsDir: '/dev/null/impossible', nowMs: NOW_MS })).toMatchObject({ wrote: false });

@@ -23,7 +23,8 @@
  *     vocabulary: reverted:true, reverted_at/revertedAt, revert event/state
  *     names) at or after the latest effective merge resolves the job as merged:false —
  *     the v1 schema has no revert dimension and consumers score held merges.
- *     A revert that names a PR can only discount that PR's merge.
+ *     A revert that names a PR can only discount that PR's merge. An
+ *     unusable repository label cannot make a revert job-wide.
  *     A later merge is a fresh held merge. For a known merge, its merge time
  *     bounds dispatch and CI evidence even when a revert changes the verdict.
  *     Reverts only git history or the
@@ -34,7 +35,8 @@
  *     claim never resolves, and absent keys change nothing.
  *   - dispatchedAt IS THE LAST DISPATCH BEFORE THE OUTCOME. claim,
  *     batch_claim and launch rows are dispatch evidence; the latest at or
- *     before the outcome produced it. Without an eligible dispatch row
+ *     before the outcome produced it. Claims marked launch_dedupe are
+ *     pre-spawn reservations and supply no dispatch evidence. Without an eligible dispatch row
  *     in the window, or with an undated dispatch that could supersede it,
  *     the dispatch time is unknown: skip.
  *   - ciWallMs IS THE LEDGER'S CI BOUNDARIES. jobs.jsonl's optional
@@ -64,12 +66,15 @@ import {
   ROUTER_OUTCOME_LEDGER_RELATIVE, ROUTER_SPEND_LEDGER_RELATIVE,
   type LedgerReadState, type LedgerTailRead,
 } from '../router/outcomes.js';
-import { parseLedgerTs } from './loop.js';
 import {
-  latestRewardSignals, rewardSignalPath, writeRewardSignals, type RewardSignalInput,
+  firstLedgerString, isPlainRecord, LEDGER_EVENT_KEYS, LEDGER_JOB_KEYS,
+  LEDGER_LANE_KEYS, LEDGER_URL_KEYS, parseLedgerTs,
+} from './loop.js';
+import {
+  latestRewardSignals, REWARD_JOB_ID_PATTERN, REWARD_POOL_PATTERN, REWARD_REPO_PATTERN,
+  rewardSignalPath, writeRewardSignals, type RewardSignalInput,
 } from './reward-signal.js';
 
-const JOB_ID_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const STATE_KEYS = ['phase', 'state', 'outcome', 'status', 'result', 'conclusion'] as const;
 // Terminal timestamps belong to the matching verdict. Generic receipt timestamps
 // can date any row and independently bound when a verdict becomes observable.
@@ -77,14 +82,7 @@ const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'recordedAt', 'updatedAt'] as 
 const MERGED_AT_KEYS = ['mergedAt', 'merged_at'] as const;
 const CLOSED_AT_KEYS = ['closedAt', 'closed_at'] as const;
 const REVERTED_AT_KEYS = ['revertedAt', 'reverted_at'] as const;
-const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
-const URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr', 'html_url'] as const;
-const EVENT_KEYS = ['event', 'type', 'kind'] as const;
 
-/** Same id alphabet the reward writer accepts (JOB_ID in reward-signal.ts). */
-const JOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-const REPO_PATTERN = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
-const POOL_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,63}$/;
 /** Batch session wrappers carry aggregate telemetry. Members have their own job ids. */
 const BATCH_SESSION_PREFIX = 'RQ-BATCH-';
 /** A github.com pull URL in the canonical shape dispatchd and the fleet writers emit. */
@@ -95,21 +93,13 @@ const DISPATCH_EVENTS: ReadonlySet<string> = new Set(['claim', 'batch_claim', 'l
 const MERGE_STATES: ReadonlySet<string> = new Set(['MERGED']);
 const CLOSED_STATES: ReadonlySet<string> = new Set(['CLOSED']);
 
-function firstString(row: Record<string, unknown>, keys: readonly string[]): string | null {
-  for (const key of keys) {
-    const value = row[key];
-    if (typeof value === 'string' && value.trim()) return value.trim();
-  }
-  return null;
-}
-
 /** The first observed lane in the dispatch receipt's alias order. */
 function dispatchLane(row: Record<string, unknown>): string | null {
-  for (const key of LANE_KEYS) {
+  for (const key of LEDGER_LANE_KEYS) {
     const value = row[key];
     if (typeof value !== 'string') continue;
     const lane = value.trim();
-    if (lane.toLowerCase() !== 'unknown' && POOL_PATTERN.test(lane)) return lane;
+    if (lane.toLowerCase() !== 'unknown' && REWARD_POOL_PATTERN.test(lane)) return lane;
   }
   return null;
 }
@@ -129,7 +119,7 @@ function outcomeStateOf(row: Record<string, unknown>): string {
     if (MERGE_STATES.has(state) || CLOSED_STATES.has(state)) return state;
     if (state !== '' && state !== 'UNKNOWN') observedPhase = true;
   }
-  return observedPhase ? '' : firstString(row, EVENT_KEYS)?.toUpperCase() ?? '';
+  return observedPhase ? '' : firstLedgerString(row, LEDGER_EVENT_KEYS)?.toUpperCase() ?? '';
 }
 
 /** The first parseable ISO or epoch-millisecond stamp among the given aliases. */
@@ -146,11 +136,11 @@ function timestampOf(row: Record<string, unknown>, keys: readonly string[]): num
 /** A unique PR repository takes precedence over the receipt's repo label. */
 function repoOf(row: Record<string, unknown>, prKeys: readonly string[]): string | null | undefined {
   const repos = new Set(prKeys.map((key) => key.slice(0, key.lastIndexOf('#')))
-    .filter((repo) => REPO_PATTERN.test(repo)));
+    .filter((repo) => REWARD_REPO_PATTERN.test(repo)));
   if (repos.size > 1) return null;
   if (repos.size === 1) return [...repos][0];
-  const repo = firstString(row, ['repo']);
-  return repo !== null && REPO_PATTERN.test(repo) ? repo.toLowerCase() : undefined;
+  const repo = firstLedgerString(row, ['repo']);
+  return repo !== null && REWARD_REPO_PATTERN.test(repo) ? repo.toLowerCase() : undefined;
 }
 
 /** `owner/repo#n` (lowercase repo) for a pull URL; null when the URL is not that shape. */
@@ -181,12 +171,12 @@ function standingReverted(
 interface DispatchMark {
   ms: number;
   lane: string | null;
+  prKeys: string[];
   /** null means conflicting evidence, undefined means no repository was observed. */
   repo: string | null | undefined;
 }
 
 interface ResolutionMark {
-  atMs: number;
   resolvedMs: number;
   /** null means conflicting evidence, undefined means no repository was observed. */
   repo: string | null | undefined;
@@ -195,7 +185,7 @@ interface ResolutionMark {
 
 function receiptPrKeys(row: Record<string, unknown>): string[] {
   const keys = new Set<string>();
-  for (const field of URL_KEYS) {
+  for (const field of LEDGER_URL_KEYS) {
     const value = row[field];
     const key = typeof value === 'string' ? pullRequestKey(value.trim()) : null;
     if (key !== null) keys.add(key);
@@ -206,10 +196,8 @@ function receiptPrKeys(row: Record<string, unknown>): string[] {
 function latestResolution(current: ResolutionMark | null, next: ResolutionMark): ResolutionMark {
   if (current === null || next.resolvedMs > current.resolvedMs) return next;
   if (next.resolvedMs < current.resolvedMs) return current;
-  if (next.atMs > current.atMs) return next;
-  if (next.atMs < current.atMs) return current;
-
-  // Tied receipts cannot establish which PR supplied the verdict.
+  // Receipt time controls visibility, not identity. A delayed replay of the
+  // same resolution cannot erase earlier PR claims or settle a conflict.
   const repo = current.repo === undefined ? next.repo
     : next.repo === undefined || current.repo === next.repo ? current.repo : null;
   return { ...current, repo, prKeys: [...new Set([...current.prKeys, ...next.prKeys])] };
@@ -224,12 +212,15 @@ interface RewardJobAccum {
   dispatches: DispatchMark[];
   dispatchUndated: boolean;
   batchClaims: Set<number>;
+  launchReservations: Set<number | null>;
   /** Latest merge-resolution row: row time, the GitHub mergedAt it reported, and its PR keys. */
   merge: ResolutionMark | null;
   /** Latest closed-unmerged resolution time, falling back to the row stamp. */
   close: ResolutionMark | null;
-  /** Latest effective revert per PR, with null for receipts lacking PR identity. */
+  /** Latest effective revert per PR or repository, with null for job-wide receipts. */
   reverts: Map<string | null, number>;
+  /** Resolution evidence when the job has only a revert verdict. */
+  latestRevert: ResolutionMark | null;
   /** True when the standing revert set proves the held merge's PR was reverted. */
   standingReverted: boolean;
   /** ci_start/ci_complete boundary stamps, deduped like job-latency's boundary lists. */
@@ -241,8 +232,8 @@ interface RewardJobAccum {
 function newAccum(): RewardJobAccum {
   return {
     dispatches: [],
-    dispatchUndated: false, batchClaims: new Set(),
-    merge: null, close: null, reverts: new Map(), standingReverted: false,
+    dispatchUndated: false, batchClaims: new Set(), launchReservations: new Set(),
+    merge: null, close: null, reverts: new Map(), latestRevert: null, standingReverted: false,
     ciBoundaryUndated: false, ciStarts: new Map(), ciCompletions: new Map(),
   };
 }
@@ -262,10 +253,11 @@ function noteCiBoundary(
 /**
  * CI wall time requires one unambiguous pair inside the rewarded execution's
  * dispatch-to-outcome window. Reused job ids can carry CI from earlier runs.
+ * A null repository indicates disputed evidence. Undefined means no label was observed.
  */
 function ciWallEvidence(
   acc: RewardJobAccum, dispatchMs: number, outcomeMs: number, outcomePrKeys: readonly string[],
-  outcomeRepo: string | null,
+  outcomeRepo: string | null | undefined,
 ): { ciWallMs?: number } {
   if (acc.ciBoundaryUndated) return {};
   const inWindow = (at: number): boolean => at >= dispatchMs && at <= outcomeMs;
@@ -278,11 +270,14 @@ function ciWallEvidence(
   for (const claim of acc.batchClaims) {
     if (claim >= start && claim <= complete) return {};
   }
+  for (const reservation of acc.launchReservations) {
+    if (reservation === null || (reservation > start && reservation <= complete)) return {};
+  }
   const startMark = acc.ciStarts.get(start)!;
   const completeMark = acc.ciCompletions.get(complete)!;
   const keys = new Set([...outcomePrKeys, ...startMark.prKeys, ...completeMark.prKeys]);
   const repos = new Set([...startMark.repos, ...completeMark.repos]);
-  if (outcomeRepo !== null) repos.add(outcomeRepo);
+  if (outcomeRepo !== undefined) repos.add(outcomeRepo);
   if (keys.size > 1 || repos.size > 1 || repos.has(null)) return {};
   return { ciWallMs: complete - start };
 }
@@ -316,11 +311,11 @@ export function foldJobsLedgerRewards(
     let row: Record<string, unknown>;
     try {
       const parsed: unknown = JSON.parse(line);
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
-      row = parsed as Record<string, unknown>;
+      if (!isPlainRecord(parsed)) continue;
+      row = parsed;
     } catch { continue; }
     if (row['launched'] === false) continue;
-    const id = firstString(row, JOB_ID_KEYS);
+    const id = firstLedgerString(row, LEDGER_JOB_KEYS);
     if (id === null || id.startsWith(BATCH_SESSION_PREFIX) || isNodePoolLedgerRow(row)) continue;
     const state = outcomeStateOf(row);
     const isMerge = row['merged'] === true || MERGE_STATES.has(state);
@@ -333,6 +328,15 @@ export function foldJobsLedgerRewards(
     if (receiptAt !== null && receiptAt > nowMs) continue;
     // A future verdict cannot establish PR ownership or supply other evidence yet.
     if (resolvedAt !== null && resolvedAt > nowMs) continue;
+    const name = firstLedgerString(row, LEDGER_EVENT_KEYS)?.toLowerCase();
+    const reservation = name === 'claim' && row['launch_dedupe'] === true;
+    const dispatch = name !== undefined && DISPATCH_EVENTS.has(name) && !reservation;
+    const ciBoundary = name === 'ci_start' || name === 'ci_complete';
+    // A standalone future revert cannot contest a PR claim yet. Mixed
+    // receipts can still supply independent resolution or execution evidence.
+    const publish = name === 'publish' || name === 'published';
+    if (explicitRevertMs !== null && explicitRevertMs > nowMs
+        && !isMerge && !isClose && !dispatch && !ciBoundary && !publish) continue;
     const prKeys = receiptPrKeys(row);
     if (claims !== null) {
       for (const key of prKeys) {
@@ -341,41 +345,47 @@ export function foldJobsLedgerRewards(
         claims.set(key, set);
       }
     }
-    if (!JOB_ID_PATTERN.test(id)) continue;
-    const name = firstString(row, EVENT_KEYS)?.toLowerCase();
-    const dispatch = name !== undefined && DISPATCH_EVENTS.has(name);
-    const ciBoundary = name === 'ci_start' || name === 'ci_complete';
-    if (receiptAt === null && !dispatch && !ciBoundary) continue;
+    if (!REWARD_JOB_ID_PATTERN.test(id)) continue;
+    if (receiptAt === null && !dispatch && !reservation && !ciBoundary) continue;
     let acc = jobs.get(id);
     if (!acc) {
       acc = newAccum();
       jobs.set(id, acc);
     }
-    if (at === null) {
+    if (reservation) {
+      acc.launchReservations.add(at);
+    } else if (at === null) {
       if (dispatch) acc.dispatchUndated = true;
       if (ciBoundary) acc.ciBoundaryUndated = true;
     } else if (dispatch) {
-      acc.dispatches.push({ ms: at, lane: dispatchLane(row), repo: repoOf(row, prKeys) });
+      acc.dispatches.push({ ms: at, lane: dispatchLane(row), repo: repoOf(row, prKeys), prKeys });
       if (name === 'batch_claim') acc.batchClaims.add(at);
     } else if (ciBoundary) {
       noteCiBoundary(acc, name === 'ci_start' ? 'start' : 'complete', at, prKeys, repoOf(row, prKeys));
     }
     const revertedAtMs = explicitRevertMs ?? (hasRevertEvidence(row) ? at : null);
     if (revertedAtMs !== null && revertedAtMs <= nowMs) {
-      // Only a receipt without a PR reference can apply job-wide.
-      const key = prKeys.length === 1 ? prKeys[0]! : null;
-      if (key !== null || firstString(row, URL_KEYS) === null) {
+      const repo = repoOf(row, prKeys);
+      const pr = prKeys.length === 1 ? prKeys[0]! : null;
+      const repoLabel = row['repo'];
+      const repoOmitted = repoLabel == null || (typeof repoLabel === 'string' && repoLabel.trim() === '');
+      if (pr !== null || (firstLedgerString(row, LEDGER_URL_KEYS) === null
+          && (typeof repo === 'string' || repoOmitted))) {
+        const key = pr ?? repo ?? null;
         acc.reverts.set(key, Math.max(acc.reverts.get(key) ?? 0, revertedAtMs));
+        acc.latestRevert = latestResolution(acc.latestRevert, {
+          resolvedMs: revertedAtMs, repo, prKeys,
+        });
       }
     }
     if (at === null) continue;
     if (isMerge) {
       acc.merge = latestResolution(acc.merge, {
-        atMs: at, resolvedMs: resolvedAt ?? at, repo: repoOf(row, prKeys), prKeys,
+        resolvedMs: resolvedAt ?? at, repo: repoOf(row, prKeys), prKeys,
       });
     } else if (isClose) {
       acc.close = latestResolution(acc.close, {
-        atMs: at, resolvedMs: resolvedAt ?? at, repo: repoOf(row, prKeys), prKeys,
+        resolvedMs: resolvedAt ?? at, repo: repoOf(row, prKeys), prKeys,
       });
     }
   }
@@ -393,27 +403,39 @@ export function foldJobsLedgerRewards(
 }
 
 /** Latest dispatch at or before the outcome, regardless of ledger row order. */
-function dispatchBefore(acc: RewardJobAccum, boundMs: number) {
+function dispatchBefore(acc: RewardJobAccum, resolution: ResolutionMark) {
   if (acc.dispatchUndated) return null;
   let latestMs: number | null = null;
   const lanes = new Set<string>();
   const repos = new Set<string | null>();
+  const prKeys = new Set<string>();
   for (const dispatch of acc.dispatches) {
-    if (dispatch.ms > boundMs || (latestMs !== null && dispatch.ms < latestMs)) continue;
+    if (dispatch.ms > resolution.resolvedMs || (latestMs !== null && dispatch.ms < latestMs)) continue;
     if (dispatch.ms !== latestMs) {
       latestMs = dispatch.ms;
       lanes.clear();
       repos.clear();
+      prKeys.clear();
     }
     if (dispatch.lane !== null) lanes.add(dispatch.lane);
     if (dispatch.repo !== undefined) repos.add(dispatch.repo);
+    for (const key of dispatch.prKeys) prKeys.add(key);
+  }
+  const executionPrKeys = [...new Set([...prKeys, ...resolution.prKeys])];
+  if (prKeys.size > 0 && executionPrKeys.length > 1) return null;
+  // A repository-only verdict still cannot resolve a dispatch tied to a PR
+  // in another repository.
+  if (resolution.prKeys.length === 0 && typeof resolution.repo === 'string') {
+    const repoPrefix = `${resolution.repo}#`;
+    if ([...prKeys].some((key) => !key.startsWith(repoPrefix))) return null;
   }
   // The dispatcher stamps receipts to the second. Conflicting lanes at the
   // same timestamp cannot prove which pool earned the reward.
   return latestMs === null ? null : {
     ms: latestMs,
     lane: lanes.size === 1 ? [...lanes][0]! : null,
-    repo: repos.size === 1 ? [...repos][0] ?? null : null,
+    repo: repos.size > 1 ? null : repos.values().next().value,
+    prKeys: executionPrKeys,
   };
 }
 
@@ -431,33 +453,35 @@ function rewardInput(
   if (acc.merge !== null) {
     const merge = acc.merge;
     const key = merge.prKeys.length === 1 ? merge.prKeys[0]! : null;
-    const revertedAt = Math.max(acc.reverts.get(null) ?? -Infinity, acc.reverts.get(key) ?? -Infinity);
-    const heldMerge = !acc.standingReverted && merge.resolvedMs > revertedAt;
-    const dispatch = dispatchBefore(acc, merge.resolvedMs);
+    const dispatch = dispatchBefore(acc, merge);
     if (dispatch === null) return null;
     const repo = merge.repo === undefined ? dispatch.repo : merge.repo;
+    const revertedAt = Math.max(
+      acc.reverts.get(null) ?? -Infinity,
+      acc.reverts.get(key) ?? -Infinity,
+      typeof repo === 'string' ? acc.reverts.get(repo) ?? -Infinity : -Infinity,
+    );
+    const heldMerge = !acc.standingReverted && merge.resolvedMs > revertedAt;
     return {
-      jobId: id, pool: dispatch.lane, repo,
+      jobId: id, pool: dispatch.lane, repo: repo ?? null,
       merged: heldMerge, dispatchedAt: iso(dispatch.ms), mergedAt: heldMerge ? iso(merge.resolvedMs) : null,
       costUsd: cost,
-      ...ciWallEvidence(acc, dispatch.ms, merge.resolvedMs, merge.prKeys, repo),
+      ...ciWallEvidence(acc, dispatch.ms, merge.resolvedMs, dispatch.prKeys, repo),
     };
   }
   // A revert can resolve a job on its own, but it cannot extend the
   // execution window of an explicitly closed PR.
-  let resolutionMs = acc.close?.resolvedMs ?? 0;
-  if (acc.close === null) {
-    for (const revertedAt of acc.reverts.values()) resolutionMs = Math.max(resolutionMs, revertedAt);
-  }
-  if (resolutionMs > 0) {
-    const dispatch = dispatchBefore(acc, resolutionMs);
+  const resolution = acc.close ?? acc.latestRevert;
+  if (resolution !== null && resolution.resolvedMs > 0) {
+    const resolutionMs = resolution.resolvedMs;
+    const dispatch = dispatchBefore(acc, resolution);
     if (dispatch === null) return null;
-    const repo = acc.close?.repo === undefined ? dispatch.repo : acc.close.repo;
+    const repo = resolution.repo === undefined ? dispatch.repo : resolution.repo;
     return {
-      jobId: id, pool: dispatch.lane, repo,
+      jobId: id, pool: dispatch.lane, repo: repo ?? null,
       merged: false, dispatchedAt: iso(dispatch.ms), mergedAt: null,
       costUsd: cost,
-      ...ciWallEvidence(acc, dispatch.ms, resolutionMs, acc.close?.prKeys ?? [], repo),
+      ...ciWallEvidence(acc, dispatch.ms, resolutionMs, dispatch.prKeys, repo),
     };
   }
   return null;
@@ -553,7 +577,7 @@ export async function syncRewardSignalsFromJobsLedger(
     }
 
     const spend = await tailOrInjected(opts.spendText, join(runsDir, ROUTER_SPEND_LEDGER_RELATIVE));
-    const spendState: RewardFeedResult['spendState'] = spend.state === 'read' ? 'read' : spend.state;
+    const spendState: RewardFeedResult['spendState'] = spend.state;
     // Reward rows are first-write-wins and carry no coverage flag for USD.
     const costs = spend.state === 'read' && !spend.truncated ? foldSpendCosts(spend.text, nowMs) : undefined;
 

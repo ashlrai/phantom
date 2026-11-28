@@ -525,7 +525,7 @@ export function parseReadyTsv(text: string, routerQueue?: string | null, uniqueR
       dropped++;
       continue;
     }
-    if (row.status !== 'READY' || keepReady(row.id)) rows.push(row);
+    if (row.status !== 'READY' || PARKED_MARKER.test(row.pool) || keepReady(row.id)) rows.push(row);
   }
   return { rows, dropped, invalid, unhinted, unhintedRows };
 }
@@ -693,7 +693,7 @@ export interface UsageJournalRow {
  * ({observedAt, status, reason}) parse but contribute nothing. One malformed
  * line degrades the source's state, not its other rows.
  */
-export function parseUsageJournals(texts: readonly string[]): { latest: Map<string, UsageJournalRow>; dropped: number } {
+export function parseUsageJournals(texts: readonly string[], asOfMs = Infinity): { latest: Map<string, UsageJournalRow>; dropped: number } {
   const latest = new Map<string, UsageJournalRow>();
   let dropped = 0;
   const freshness = (row: UsageJournalRow): number => Date.parse(row.observedAt);
@@ -707,6 +707,7 @@ export function parseUsageJournals(texts: readonly string[]): { latest: Map<stri
       if (!row || typeof row.pool !== 'string' || !LANE_ID.test(row.pool)) { dropped++; continue; }
       const observed = row.writtenAt ?? row.fetchedAt ?? row.observedAt;
       if (typeof observed !== 'string' || !validTimestamp(observed)) { dropped++; continue; }
+      if (Date.parse(observed) > asOfMs) continue;
       const pctUsed = typeof row.pctUsed === 'number' && Number.isFinite(row.pctUsed) && row.pctUsed >= 0 && row.pctUsed <= 100
         ? row.pctUsed : null;
       const resetAt = typeof row.resetAt === 'string' && validTimestamp(row.resetAt) ? row.resetAt : null;
@@ -942,7 +943,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') usageFailed = true;
     }
   }
-  const usage = parseUsageJournals(usageTexts);
+  const usage = parseUsageJournals(usageTexts, now.getTime());
   sources.usage = {
     state: usageFiles.length === 0 ? (usageFailed ? 'degraded' : 'missing') : usage.dropped > 0 || usageFailed ? 'degraded' : 'healthy',
     files: usageFiles,
@@ -997,10 +998,15 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   for (const pool of Object.keys(budgets.pools)) lanes.add(pool);
 
   // Merge outcome rows carry no lane; the same job's launch/publish/finish
-  // rows do. Last write wins in ledger order — the lane that ran the job.
+  // rows do. Use the last lane in ledger order, excluding future evidence.
   const ledgerJobPool = new Map<string, string>();
   for (const event of ledgerEvents) {
-    if (event.job !== null && event.pool !== null) ledgerJobPool.set(event.job, event.pool);
+    if (event.job === null || event.pool === null) continue;
+    const observedAt = eventTimestamp(event.at);
+    const mergedAt = eventTimestamp(event.mergedAt);
+    if ((observedAt !== null && observedAt > now.getTime()) ||
+        (mergedAt !== null && mergedAt > now.getTime())) continue;
+    ledgerJobPool.set(event.job, event.pool);
   }
 
   const mergeCounts = new Map<string, number>();
@@ -1142,7 +1148,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   });
 
   // Starved = free slots and no ready rows. A held lane is waiting, not starved; a drained one cannot run what it is given.
-  // Lane-open rows are open supply the market may place on any lane, so they keep a free lane from reading as starved.
+  // Lane-open rows suppress starvation for executors that accept open work.
   let stateText: string | null = null;
   try { stateText = await readBounded(join(options.starvedStateDir ?? join(homedir(), '.ashlr', 'vision', 'leader'), STARVED_STATE_FILE), 16 * 1024); } catch { /* no record yet */ }
   const freshAdmission = tick <= now.getTime() && now.getTime() - tick <= 60_000;
@@ -1152,8 +1158,11 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     : null;
   const starved = readStarved(views.map(view => {
     const { slotTarget, liveJobs } = view;
-    const target = headroom !== null && slotTarget !== null && liveJobs !== null
-      ? Math.min(slotTarget, liveJobs + headroom) : slotTarget;
+    let target = slotTarget;
+    if (headroom === 0) target = 0;
+    else if (headroom !== null && slotTarget !== null && liveJobs !== null) {
+      target = Math.min(slotTarget, liveJobs + headroom);
+    }
     return {
       lane: view.lane,
       target,

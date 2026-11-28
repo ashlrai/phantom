@@ -8,7 +8,8 @@
  * subcommands.
  */
 import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const deps = vi.hoisted(() => ({
@@ -23,6 +24,7 @@ vi.mock('../src/core/drive/nodes/capacity.js', () => ({ readNodeCapacity: deps.c
 vi.mock('../src/core/drive/nodes/ready-bridge-run.js', () => ({ runConfiguredNodeBridge: deps.bridge }));
 
 import { cmdNode } from '../src/cli/node.js';
+import { cmdNodeFleet } from '../src/cli/node-fleet.js';
 import { cmdNodePool } from '../src/cli/node-pool.js';
 import { cmdNodeSelfUpdate } from '../src/cli/node-self-update.js';
 import { cmdNodeCapacity, cmdNodeRoute } from '../src/cli/node-capacity.js';
@@ -45,7 +47,7 @@ beforeEach(() => {
   deps.capacity.mockReturnValue({ slots: 2, held: null });
   deps.call.mockImplementation((_config, verb) => ({ demoted: false, result: verb === 'status' ? { nodes: [], jobs: [] } : {} }));
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 describe('phm node pool verbs', () => {
   it('names local usage refusals instead of masking them as pool failures', async () => {
@@ -169,5 +171,63 @@ describe('phm node dispatcher and bridge', () => {
     const lines = capture();
     expect(await cmdNodeBridge(['--json'])).toBe(1);
     expect(lastJson(lines).error.message).toBe('Invalid drive nodes state');
+  });
+});
+
+describe('node store path honesty under a relocated ASHLR_HOME', () => {
+  // docs/add-a-computer.md tells a first-time node to point ASHLR_HOME at a
+  // scratch directory; diagnostics must name that real path, not ~/.ashlr.
+  function relocatedHome(): string {
+    const dir = join(tmpdir(), `phantom-node-paths-${process.pid}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
+  it('fleet store failures name the real $ASHLR_HOME/nodes in the fix', async () => {
+    const home = relocatedHome();
+    try {
+      // A regular file where the store dir belongs makes privateDirectory refuse.
+      writeFileSync(join(home, 'nodes'), 'not a directory');
+      vi.stubEnv('ASHLR_HOME', home);
+      const lines = capture();
+      expect(await cmdNodeFleet('status', ['--owner', 'scope', '--json'])).toBe(1);
+      const out = lastJson(lines);
+      expect(out.error.fix).toContain(join(home, 'nodes'));
+      expect(out.error.fix).not.toContain('~/.ashlr/nodes');
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it('fleet store failures describe private storage, not universe jargon', async () => {
+    const home = relocatedHome();
+    try {
+      // A regular file where the store dir belongs makes privateDirectory refuse.
+      writeFileSync(join(home, 'nodes'), 'not a directory');
+      vi.stubEnv('ASHLR_HOME', home);
+      const lines = capture();
+      expect(await cmdNodeFleet('status', ['--owner', 'scope', '--json'])).toBe(1);
+      const out = lastJson(lines);
+      expect(out.error.message).toContain('Private storage');
+      expect(out.error.message).not.toContain('Universe storage');
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it('bridge help and error fix name the real $ASHLR_HOME/node-bridge.json', async () => {
+    const home = relocatedHome();
+    try {
+      vi.stubEnv('ASHLR_HOME', home);
+      const lines = capture();
+      expect(await cmdNodeBridge(['--help'])).toBe(0);
+      expect(lines.at(-1)).toContain(join(home, 'node-bridge.json'));
+      deps.bridge.mockImplementation(() => { throw new Error('boom'); });
+      lines.length = 0;
+      expect(await cmdNodeBridge(['--json'])).toBe(1);
+      expect(lastJson(lines).error.fix).toContain(join(home, 'node-bridge.json'));
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it('a default install keeps the ~ contracted spelling', async () => {
+    const lines = capture();
+    expect(await cmdNodeBridge(['--help'])).toBe(0);
+    expect(lines.at(-1)).toContain('~/.ashlr/node-bridge.json');
   });
 });

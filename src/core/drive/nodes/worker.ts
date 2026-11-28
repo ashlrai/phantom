@@ -2,7 +2,7 @@ import { validNodeTask } from './task.js';
 import { spawn, spawnSync } from 'node:child_process';
 import { lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { checkDriveExecutable } from '../script-bridge.js';
 import type { JobClaim } from './index.js';
 import { probeLocalModelCaps, type LocalLaneProbeDeps } from './local-model-caps.js';
@@ -58,10 +58,16 @@ export function classifyRunnerReply(code: number | null, fenced: boolean, stdout
   return reply && validId(reply['resultRef']) ? { kind: 'ok', resultRef: reply['resultRef'] as string } : { kind: 'stopped' };
 }
 
-/** Missing sentinels mean open; unreadable/unsafe control paths hold admission. */
+/** Missing sentinels mean open; unreadable/unsafe control paths hold admission.
+ * The runs root honors the fleet-wide ASHLR_RUNS_DIR override (absolute paths
+ * only) — the same resolution the pause reader, fleet switches and the node
+ * bridge's readiness check apply — so a relocated fleet's PAUSE/KILL still
+ * reaches this gate instead of only the default home's copies. */
 export function nodeStopped(): boolean {
+  const override = process.env['ASHLR_RUNS_DIR'];
+  const root = override !== undefined && isAbsolute(override) ? override : join(homedir(), '.ashlr-runs');
   for (const name of ['PAUSE', 'KILL']) {
-    try { lstatSync(join(homedir(), '.ashlr-runs', name)); return true; }
+    try { lstatSync(join(root, name)); return true; }
     catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') return true; }
   }
   return false;
@@ -98,6 +104,12 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
     } catch { return []; }
   };
   let active = 0;
+  const activeClaims = new Map<string, string>();
+  const syncReplica = () => {
+    void import('../../fleet/fleet-replica.js')
+      .then(({ syncFleetReplica }) => syncFleetReplica({ claims: [...activeClaims.values()] }))
+      .catch(() => undefined);
+  };
   // Router slots include this session's active claims, not just the host's free slots.
   // A lease this attempt already owns is counted in both terms, so it is subtracted once.
   const routerSlots = (observed: NodeCapacity, owned = 0) => observed.held ? 0 : Math.min(capacity.slots, active + observed.slots - owned);
@@ -155,6 +167,8 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
       const child = spawn(runner, ['run'], { shell: false, detached: true,
         env: { PATH: process.env['PATH'], HOME: homedir() }, stdio: ['pipe', 'pipe', 'ignore'] });
       active++;
+      const lane = job.requires.find(cap => lanes.includes(cap));
+      if (lane) activeClaims.set(claim.jobId, lane);
       let fenced = false;
       const output: Buffer[] = [];
       let bytes = 0;
@@ -197,6 +211,7 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
       catch { stop(); } // Retain the host slot until close even if writing stdin fails synchronously.
     });
     active--;
+    activeClaims.delete(claim.jobId);
     if (reply.kind === 'stopped') return { completed: false, held: 'runner-stopped' };
     if (reply.kind === 'error') {
       // An error result returns the job to pending; the second consecutive failure hands it to another node.
@@ -209,6 +224,9 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
     const completed = callPool(config, 'complete', [...lease, '--result', reply.resultRef]);
     return { jobId: claim.jobId, completed: completed.result['completed'] === true };
   };
+  syncReplica();
+  const replicaTimer = setInterval(syncReplica, 30_000);
+  replicaTimer.unref();
   try {
     // A short light batch may finish between restock ticks. Fill its isolated slice
     // after joining too, so recurring workers do not depend on that race.
@@ -228,6 +246,7 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
     const attempts = settled.map(result => result.status === 'fulfilled' ? result.value : { held: 'attempt-unavailable' });
     return attempts.length === 1 ? attempts[0]! : { slots: capacity.slots, attempts };
   } finally {
+    clearInterval(replicaTimer);
     try { callPool(config, 'leave', identity); } catch { /* expiry fences uncertain sessions */ }
   }
 }

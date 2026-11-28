@@ -89,6 +89,7 @@ describe('fleet_work_feed argument parsing', () => {
     expect(parseFleetWorkFeedArgs({ tier: 'frontier' })?.filters).toMatchObject({ tier: 'frontier' });
     expect(parseFleetWorkFeedArgs({ to: 'leaders' })?.filters.toMatch).toBeTypeOf('function');
     expect(parseFleetWorkFeedArgs({ owner: 'agent:planner' })?.filters.ownerMatch).toBeTypeOf('function');
+    expect(parseFleetWorkFeedArgs({ excludeOwner: 'agent:planner' })?.filters.excludeOwnerMatch).toBeTypeOf('function');
     expect(parseFleetWorkFeedArgs({ since: '1800000000000' })?.filters).toMatchObject({ since: 1800000000000 });
     expect(parseFleetWorkFeedArgs({ before: '1800000000000' })?.filters).toMatchObject({ before: 1800000000000 });
     expect(parseFleetWorkFeedArgs({ contains: 'parser' })?.filters).toMatchObject({ contains: 'parser' });
@@ -103,7 +104,7 @@ describe('fleet_work_feed argument parsing', () => {
       { extra: 1 }, { root: '/tmp/fake' }, { path: '/tmp/x' }, { cwd: '/tmp' }, { runsDir: '/tmp' },
       { status: 'bogus' }, { status: 5 }, { job: 'has space' }, { job: '' },
       { repo: 'no-slash' }, { repo: 'a/b/c' }, { provider: 'bogus' }, { tier: 'bogus' },
-      { to: 'has space' }, { owner: 5 }, { since: 'not-a-time' }, { since: '' },
+      { to: 'has space' }, { owner: 5 }, { excludeOwner: 'has space' }, { excludeOwner: 5 }, { since: 'not-a-time' }, { since: '' },
       { before: 'not-a-time' }, { before: '' }, { before: 5 },
       { contains: '' }, { contains: '   ' }, { contains: 'x'.repeat(513) }, { contains: 42 },
       { channel: 'Has Space' }, { channel: '' }, { channel: 5 }, { channel: 'x'.repeat(33) },

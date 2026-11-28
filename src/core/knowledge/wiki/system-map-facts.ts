@@ -5,7 +5,8 @@ import { checkedCitation } from './citations.js';
 import { extractImportReferences } from './facts.js';
 import { isWikiReadable } from './scan.js';
 
-export const sourcePattern = /\.[cm]?[jt]sx?$/i;
+export const WIKI_STEERING_PATH = '.ashlr/wiki.json';
+const sourcePattern = /\.[cm]?[jt]sx?$/i;
 const namePattern = '[A-Za-z_$][\\w$]*';
 const declaration = new RegExp(`^(?:export +)?(?:default +)?(?:declare +)?(?:abstract +)?(?:async +)?(?:function\\*?|class|const|let|interface|type|enum) +(${namePattern})`);
 const routePattern = /\b(?:app|router|server|fastify|hono)\.(get|post|put|patch|delete|all|use)\(\s*['"](\/[\w/:{}.-]*)['"]/gi;
@@ -28,6 +29,10 @@ export function safeMapPath(file: string): boolean {
     scrubSecrets(file) === file && isWikiReadable(file);
 }
 
+export function isMapSourcePath(file: string): boolean {
+  return sourcePattern.test(file) && safeMapPath(file);
+}
+
 function safeLabel(label: string): boolean {
   return label.length <= 180 && !/[a-f0-9]{32,}/i.test(label) && scrubSecrets(label) === label;
 }
@@ -45,9 +50,10 @@ export function extractMapFacts(source: string, file: string): Facts {
     if (marks.length >= LIMIT) limited = true;
     else marks.push([kind, name, row]);
   };
-  const cli = file === 'src/cli/index.ts' || file === 'src/cli/wiki.ts';
-  const mcp = /^src\/(?:mcp\/|core\/mcp-native)/.test(file);
-  const verse = /^src\/core\/(?:verse|web)\//.test(file);
+  const fileKind = mapFactsKey(file);
+  const cli = fileKind === 'src/cli/index.ts' || fileKind === 'src/cli/wiki.ts';
+  const mcp = fileKind === 'mcp';
+  const verse = fileKind === 'verse';
   for (let i = 0; i < lines; i++) {
     const row = rows[i]!;
     add('symbol', declaration.exec(row)?.[1], i + 1);

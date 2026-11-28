@@ -59,6 +59,12 @@ named nested type. Relative source links refer to the source checkout.
 | POST | `/api/fleet/pause` | none | [inline {ok, action, service, activation, fleet, mutation?}](../src/core/web/api.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{}' 'http://127.0.0.1:7777/api/fleet/pause'` |
 | POST | `/api/fleet/resume` | none | [inline {ok, action, service, activation, fleet, mutation?}](../src/core/web/api.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{}' 'http://127.0.0.1:7777/api/fleet/resume'` |
 
+The Pulse strip and `phm fleet pulse --lanes --json` share
+`GET /api/verse/fleet/runs/pulse/lanes`. Each fleet-wide running or capacity
+total requires that measurement for every reported lane. An empty lane list
+or a missing measurement yields `null` for that total. Per-lane measurements
+and independent ledger metrics remain available.
+
 ## Fleet control
 
 | Method | Path | Query | Response type / source | Handler | Curl example |
@@ -116,6 +122,10 @@ receipt proves coordination, not job execution.
 
 ## Leader
 
+The Leader board and Fleet lane console share merge attribution. When a merge
+receipt lacks a lane and attribution falls back to the job's ledger history,
+events with an observation or merge timestamp after report time are excluded.
+
 | Method | Path | Query | Response type / source | Handler | Curl example |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/api/verse/leader` | none | [LeaderStateV1](../src/core/vision/leader-types.ts) | [source](../src/core/verse/leader-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/leader'` |
@@ -137,6 +147,13 @@ observed from the window start up to, but excluding, that reset. Pace and
 runway need at least two distinct observation times from that window. When
 multiple readings share an observation time, the first reading supplies the
 chart point and the evidence for reset detection and runway.
+The history row limit keeps the newest observations across pools by their
+observation timestamps, including when a pool reports a reading late.
+Reset detection and current window selection skip readings outside their own
+named quota window. If every reading falls outside its window, the latest
+reported reset is shown with an empty chart and unknown pace. A
+rollover compares the new reading with the last eligible reading even if a
+sample naming the expired window arrived in between.
 
 The Leader resource ledger keeps the Claude dispatcher quota when its recorded
 capture time is later than the usable native weekly reading, no later than
@@ -151,6 +168,11 @@ When both readings have no elapsed reset, the ledger compares their capture
 times and keeps the dispatcher reading on a tie. Expired session readings do
 not replace dispatcher data. The ledger preserves the dispatcher hold and
 records both quota readings when it selects the session reading.
+
+The resource ledger reports recovered quota or a corresponding hold conflict
+only when the earlier dispatcher exhaustion reading predates its own reset.
+A dispatcher reading captured at or after that reset stays visible as source
+evidence, and a fresh provider reading can still establish current headroom.
 
 Computed route constants: `VERSE_FLEET_CONTROL_QUEUE_PATH` defines
 `/api/verse/fleet/control/queue`; `VERSE_FLEET_CONTROL_RUNS_PREFIX` defines the
@@ -377,6 +399,17 @@ warns above four times the CPU count. Swap and free disk are in GB. Missing or
 invalid measurements are `null` in JSON and shown as “unknown” in the card.
 Worktrees are the dispatcher's active worker worktrees, not all Git worktrees.
 
+The Fleet Operations deck and `phm fleet vitals` show the launch guard's reason
+from the selected runs directory's `queue/admission-ctl.json`. Missing, invalid,
+future or more than five-minute-old observations leave the reason and countdown
+unknown. A blocked guard supplies a reason and leaves the countdown unknown.
+An open or settling guard reports the seconds remaining in its pacing window.
+Queue counts come independently from `queue/status.json`. Lane running,
+target and queued counts require a readable dispatcher `last_tick` at or before
+report time and at most 60 seconds old. Without a fresh tick, lane names
+remain visible and counts are null. The queue total requires a valid lane
+map and a usable queued count for every lane.
+
 ### Fleet map
 
 The Fleet screen shows the Leader, ready profile lanes, observed lanes and active jobs.
@@ -405,6 +438,26 @@ and the Fleet world's Org tab draw that tree top down: the leader, its
 planners, each lane, each job under it.
 JSON is the default; `phm org --text` prints it for people.
 The map endpoint above carries the tree in its `tree` field.
+
+With a [fleet replica configured](https://github.com/ashlrai/phantom/blob/master/docs/NODE-ROUTER.md#one-fleet-across-enrolled-macs),
+the worker reads the leader's tree, live totals, queue and resource ledger.
+`source` identifies the observation: `machine`, `via` (`local` or
+`leader-replica`), `asOf`, `ageSeconds`, `stale` and `reason`. Lanes name
+their `machine`; a peer-reported lane also has its own `source` with the
+leader's receipt time. Loop presence alone does not establish a job count.
+The replicated org map carries the leader's 60-minute message window and
+reports that window in `messageWindowMinutes`, even if a different window
+was requested on the worker.
+
+`phm fleet lane-slots --json` and the live API use the same replica. A
+worker's `capReason` names the leader's grant sequence and machine when a
+grant is in force there; no grant is imported. After two minutes without a
+fresh observation, the worker exposes null slot and busy counts (not zero),
+and reports when the leader was last reached. Queue and resource requests
+return 503 with the observation source and reason when data is unavailable.
+If the worker clock moves behind the receipt time, the cached observation
+has unknown age and counts until a usable snapshot arrives. A refresh attempt
+dated ahead of the worker clock does not delay the next refresh.
 
 The tree carries `version: 1`; it changes only when a field is removed or
 changes meaning. Every node has `provider`, `model`, `state` (`running`,
@@ -488,8 +541,15 @@ free slots". `--json` is `phantom.nodes-pool.v1`, and
 `GET /api/verse/fleet/control/nodes-pool` serves the same report to the
 Machines card on the desktop and phone Home. Unknown facts say `unknown` and stay
 out of the total (`total.slotsUnknown` counts online Macs whose slots were not
-measured). The offload setting is per Mac; only this Mac's is known, so other
+measured; `total.jobsUnknown` counts online Macs whose running-job count was not
+measured, so `total.jobsRunning` is a lower bound). The offload setting is per Mac; only this Mac's is known, so other
 Macs show `unknown`.
+
+For remote disk readings, the pool and `phm nodes doctor` use the newest host
+sample from a matching live session. The sample must be less than five minutes
+old and dated at or before report time. A pool mirror must also be at most two
+minutes old and dated at or before report time. If the newest usable sample
+has no disk measurement, the reports show `unknown`.
 
 `phm map --lane <lane> --repo <repo> --state <running|waiting|done|failed|unknown>`
 narrows it to the agents (jobs) that match every filter given, with their lane,
@@ -519,7 +579,11 @@ so those filters find none until one reports; the `gaps` list says so.
 Every node and edge has the same keys in the same order, sorted by level and
 id, so the same facts always print the same JSON. A job runs on a computer when
 that computer's pool claim names it, or when a worker process for it was seen
-on this computer. Messages to or from something not on the map, such as a
+on this computer. The claim bridge runs a ready row on a node under a
+`ready:<job>:<attempt>` id; the map shows that work as `job:<job>` — the ready
+row's own id — with lane and repo unknown unless another source reported them,
+even when the local live-jobs reader cannot see the remote run. Messages to or
+from something not on the map, such as a
 channel, are counted in `unmappedMessages` and never assigned to a node by
 guessing. The server builds the graph at most once every 5 seconds, and the
 pane polls no faster than that while it is visible. Selecting a node opens the
@@ -638,7 +702,7 @@ compute scene draws its message lines at the same thickness.
 
 #### Agent conversations
 
-`phm agents conversations [--agent <name>] [--with <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <envelope-id>] [--channel <name>] [--priority <P0|P1|P2|P3>] [--from <name>] [--exclude-from <name>] [--to <name>] [--thread <label>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--kind <ask|reply|handoff|status|blocker>] [--limit <1..1024>] [--json]`
+`phm agents conversations [--agent <name>] [--with <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <envelope-id>] [--channel <name>] [--topic <topic>] [--priority <P0|P1|P2|P3>] [--from <name>] [--exclude-from <name>] [--to <name>] [--thread <label>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--kind <ask|reply|handoff|status|blocker>] [--limit <1..1024>] [--json]`
 groups the same bus read into threads by reply chain and by the declared
 conversation label a body carries, longest-waiting first and then newest
 first. `--agent` matches a participant's routing label and, through
@@ -707,7 +771,16 @@ member message is addressed to `group:<name>:*` — the room's whole traffic
 under every topic, the same raw `to`-prefix rule `phm messages --channel`,
 `agents bus inbox --channel` and `channel read --channel` match — so "which
 threads touch channel X" is one filtered read, the value taking the strict
-channel-name grammar. `--priority <P0|P1|P2|P3>` keeps only the threads
+channel-name grammar. `--topic <topic>` keeps only the threads where at
+least one member message is addressed to a well-formed
+`group:<room>:<topic>` label carrying that exact topic component — the
+same `groupAddressTopicOf` match `phm messages --topic`, `agents bus
+inbox --topic`, `channel read --topic`, `agents bus wakes --topic`,
+`agents bus work feed --topic` and `comms bus next --topic` apply,
+composing with `--channel` into one room AND one topic while an agent
+address, a bare `group:<room>` or a malformed topic never matches — so
+"which threads touch channel X topic Y" is one filtered read, the value
+taking the same strict channel-name grammar. `--priority <P0|P1|P2|P3>` keeps only the threads
 where at least one member message carries that exact band — the same match
 every other bus read's `--priority` applies — so "which threads have urgent
 traffic" is one filtered read, a member message with no recorded band never
@@ -781,13 +854,13 @@ conversation; only the synthesized per-pair fallback stays reply-chain
 rooted. `group.presence` heartbeats are expiring observations with their own
 read (`phm comms bus group presence`), never messages: they form no thread
 and cannot answer a waiting one. `--json` prints `agents.conversations.v1` (`version` 1), and
-`GET /api/verse/fleet/control/agent-conversations[?agent=claude&with=grok&waiting=1&blocked=1&state=waiting&job=RQ-1&waitingOn=claude&since=1h&before=2h&contains=text&inReplyTo=env-1&id=env-2&channel=dev&priority=P0&from=claude&excludeFrom=bot&to=peer-a&thread=release-1&bodyKind=work.post&result=failed&kind=blocker&limit=50]`
+`GET /api/verse/fleet/control/agent-conversations[?agent=claude&with=grok&waiting=1&blocked=1&state=waiting&job=RQ-1&waitingOn=claude&since=1h&before=2h&contains=text&inReplyTo=env-1&id=env-2&channel=dev&topic=deploy&priority=P0&from=claude&excludeFrom=bot&to=peer-a&thread=release-1&bodyKind=work.post&result=failed&kind=blocker&limit=50]`
 serves the same read with a current read session. The isolated fleet MCP
 server's `fleet_agent_conversations` tool serves the same projection with
 the same filters as arguments (`agent`, `with` — the other agent in a
 two-way exchange, which needs `agent` — `waiting`/`blocked` booleans,
 `state`, `job`, `waitingOn`, `since`, `before`, `contains`, `inReplyTo`,
-`id`, `channel`, `priority`, `from`, `excludeFrom`, `to`, `thread`,
+`id`, `channel`, `topic`, `priority`, `from`, `excludeFrom`, `to`, `thread`,
 `bodyKind`, `result`, `kind`, `limit`), so an
 MCP-connected agent reads the fleet-wide thread view — who waits on whom,
 what is blocked, what moved lately — without shelling out to `phm`.
@@ -801,9 +874,10 @@ what is blocked, what moved lately — without shelling out to `phm`.
   the thread names none), `links[]` (the pairs that talked) and `messages[]`
   (`id`, `at`, `from`, `to`, `kind`, `subject`, plus `priority` — the envelope
   band — `inReplyTo` — the body's own reply citation — `thread` — the declared
-  conversation bucket — `bodyKind` — the body's kind discriminator — and
-  `result` — the member's `work.result` outcome — when the message carries
-  them).
+  conversation bucket — `bodyKind` — the body's kind discriminator — `result`
+  — the member's `work.result` outcome — and `topic` — the topic component
+  parsed off a well-formed `group:<room>:<topic>` `to` label — when the
+  message carries them).
 - `matched`: every thread the filters kept before `--limit`/`limit` cut the
   page; `null` when the bus could not be read, the same unknown-stays-unknown
   rule `conversations` follows.

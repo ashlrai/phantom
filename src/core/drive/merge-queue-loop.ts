@@ -40,6 +40,7 @@
  * host adapter is scripts/merge-queue-loop.mjs.
  */
 
+import { asDriveRecord, isDriveRecord, isNonNegativeSafeInt } from './pool-routing.js';
 import {
   FLEET_AUTHOR,
   REFIX_CYCLE_CAP,
@@ -49,7 +50,12 @@ import {
   REFIX_WINDOW_MS,
   drainKey,
   drainRow,
-  securityPinnedPath,
+  isPrSecurityPinned,
+  normalizeTimestampMap,
+  prRetryBudgetAllows,
+  prShortTag,
+  pruneAbsentPrefixKeys,
+  pruneExpiredEntries,
 } from './refix-loop.js';
 
 export const MERGEQ_REPOS = REFIX_REPOS;
@@ -231,11 +237,13 @@ export interface MergeQueueSummary {
 }
 
 const SHA = /^[0-9a-f]{40}$/i;
-const shortName = (repo: string): string => repo.split('/').pop() ?? repo;
 /** GraphQL reports a bot as `name`, REST as `name[bot]` (see prs/merge-identity.ts). */
 const bareLogin = (login: string): string => login.replace(/\[bot\]$/i, '').toLowerCase();
 /** Merge states GitHub reports for a mergeable head the queue may accept. */
 const QUEUEABLE = new Set(['CLEAN', 'BEHIND', 'HAS_HOOKS']);
+const MERGE_QUEUE_ACTIONS = new Set<MergeQueueAction>([
+  'enqueue', 'rebase', 'conflict', 'queued', 'wait', 'red', 'blocked', 'pinned', 'no-queue', 'skip', 'owned',
+]);
 
 /**
  * Pure decision for one PR. `fleet` and `held` are resolved by the caller so
@@ -260,7 +268,7 @@ export function classifyMergeQueuePr(
   if (green && repo.mergeQueue) {
     // Auto-merge can remain armed without queue membership. Only inMergeQueue
     // above proves admission; retry through the same head-pinned, bounded path.
-    return pr.filesTruncated || pr.files.some(securityPinnedPath) ? 'pinned' : 'enqueue';
+    return isPrSecurityPinned(pr) ? 'pinned' : 'enqueue';
   }
   if (pr.mergeState === 'BEHIND') {
     // A queue repo never needs an up-to-date branch, and updating a head whose
@@ -377,28 +385,26 @@ export function planMergeQueueEvents(input: MergeQueueEventPlanInput): MergeQueu
 }
 
 export function normalizeMergeQueueState(value: unknown): MergeQueueState {
-  const state: MergeQueueState = { v: 1, attempts: {}, drained: {} };
-  const row = (value ?? {}) as Record<string, unknown>;
-  for (const [key, entry] of Object.entries((row['attempts'] ?? {}) as Record<string, unknown>)) {
-    const e = (entry ?? {}) as Record<string, unknown>;
-    if (typeof e['pr'] === 'string' && Number.isSafeInteger(e['at'])
+  const row = asDriveRecord(value);
+  const state: MergeQueueState = { v: 1, attempts: {}, drained: normalizeTimestampMap(row['drained']) };
+  for (const [key, entry] of Object.entries(asDriveRecord(row['attempts']))) {
+    const e = asDriveRecord(entry);
+    if (typeof e['pr'] === 'string' && typeof e['at'] === 'number' && Number.isSafeInteger(e['at'])
       && (e['action'] === 'enqueue' || e['action'] === 'rebase' || e['action'] === 'resolve')) {
-      state.attempts[key] = { pr: e['pr'], action: e['action'], at: e['at'] as number };
+      state.attempts[key] = { pr: e['pr'], action: e['action'], at: e['at'] };
     }
   }
-  for (const [key, at] of Object.entries((row['drained'] ?? {}) as Record<string, unknown>)) {
-    if (Number.isSafeInteger(at)) state.drained[key] = at as number;
-  }
-  const actions = new Set<MergeQueueAction>(['enqueue', 'rebase', 'conflict', 'queued', 'wait', 'red', 'blocked', 'pinned', 'no-queue', 'skip', 'owned']);
-  for (const [key, raw] of Object.entries((row['latency'] ?? {}) as Record<string, MergeQueueLatency>)) {
-    if (raw && typeof raw.headSha === 'string' && SHA.test(raw.headSha) && actions.has(raw.state)
-      && Number.isSafeInteger(raw.since) && raw.since >= 0 && Number.isSafeInteger(raw.observedAt) && raw.observedAt >= raw.since
-      && raw.stateMs && typeof raw.stateMs === 'object' && !Array.isArray(raw.stateMs)
-      && Object.entries(raw.stateMs).every(([s, ms]) => actions.has(s as MergeQueueAction) && Number.isSafeInteger(ms) && ms >= 0)
+  for (const [key, entry] of Object.entries(asDriveRecord(row['latency']))) {
+    if (!isDriveRecord(entry)) continue;
+    const raw = entry as unknown as MergeQueueLatency;
+    if (typeof raw.headSha === 'string' && SHA.test(raw.headSha) && MERGE_QUEUE_ACTIONS.has(raw.state)
+      && isNonNegativeSafeInt(raw.since) && isNonNegativeSafeInt(raw.observedAt) && raw.observedAt >= raw.since
+      && isDriveRecord(raw.stateMs)
+      && Object.entries(raw.stateMs).every(([s, ms]) => MERGE_QUEUE_ACTIONS.has(s as MergeQueueAction) && isNonNegativeSafeInt(ms))
       && (raw.blockers === undefined || (Array.isArray(raw.blockers)
         && new Set(raw.blockers).size === raw.blockers.length && raw.blockers.every(b => BLOCKERS.includes(b))))
-      && (raw.blockerMs === undefined || (raw.blockerMs && typeof raw.blockerMs === 'object' && !Array.isArray(raw.blockerMs)
-        && Object.entries(raw.blockerMs).every(([b, ms]) => BLOCKERS.includes(b as MergeQueueBlocker) && Number.isSafeInteger(ms) && ms >= 0)))
+      && (raw.blockerMs === undefined || (isDriveRecord(raw.blockerMs)
+        && Object.entries(raw.blockerMs).every(([b, ms]) => BLOCKERS.includes(b as MergeQueueBlocker) && isNonNegativeSafeInt(ms))))
       && (raw.checks === undefined || CHECKS_SEEN.has(raw.checks))
       && (raw.blockedReason === undefined || raw.blockedReason === null || EVENT_REASONS.has(raw.blockedReason))
       && (raw.conflictRecorded === undefined || typeof raw.conflictRecorded === 'boolean')) {
@@ -410,8 +416,9 @@ export function normalizeMergeQueueState(value: unknown): MergeQueueState {
         ...(raw.conflictRecorded !== undefined ? { conflictRecorded: raw.conflictRecorded } : {}) };
     }
   }
-  for (const [key, raw] of Object.entries((row['signals'] ?? {}) as Record<string, MergeQueuePrSignals>)) {
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+  for (const [key, entry] of Object.entries(asDriveRecord(row['signals']))) {
+    if (!isDriveRecord(entry)) continue;
+    const raw = entry as unknown as MergeQueuePrSignals;
     // Sanitize rather than reject: dropping the row would lose the dedupe
     // memory that keeps once-per-PR events unique for the ledger consumers.
     const autoMerge = typeof raw.autoMerge === 'boolean' ? raw.autoMerge : undefined;
@@ -453,19 +460,15 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
     throw error;
   }
   const state = normalizeMergeQueueState(io.loadState());
-  for (const [key, entry] of Object.entries(state.attempts)) {
-    if (now - entry.at >= windowMs) delete state.attempts[key];
-  }
-  for (const [key, at] of Object.entries(state.drained)) {
-    if (now - at >= windowMs) delete state.drained[key];
-  }
+  pruneExpiredEntries(state.attempts, (entry) => entry.at, now, windowMs);
+  pruneExpiredEntries(state.drained, (at) => at, now, windowMs);
   const summary: MergeQueueSummary = {
     v: 1, dryRun, enqueued: 0, rebased: 0, resolved: 0, drained: 0, failed: 0, capped: false, repoErrors: 0, repos: [],
   };
   const spent = { enqueue: 0, rebase: 0, resolve: 0, conflict: 0 };
   const budgetAllows = (action: 'enqueue' | 'rebase' | 'resolve', tag: string): boolean => {
     const prior = Object.values(state.attempts).filter((e) => e.pr === tag && e.action === action);
-    return prior.length < prWindowCap && !prior.some((e) => now - e.at < retryMs);
+    return prRetryBudgetAllows(prior, now, prWindowCap, retryMs);
   };
   const pendingEvents: MergeQueueEvent[] = [];
 
@@ -479,7 +482,7 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
       try {
         snapshot = io.readSnapshot(repo);
       } catch {
-        for (const key of Object.keys(state.latency ?? {})) if (key.startsWith(`${repo}#`)) delete state.latency![key];
+        pruneAbsentPrefixKeys(state.latency, `${repo}#`, new Set());
         summary.repoErrors++;
         io.log(`MERGEQ_GH_ERROR read ${repo}`);
         continue;
@@ -487,12 +490,9 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
       result.ok = true;
       result.mergeQueue = snapshot.mergeQueue;
       const observedAt = io.now();
-      for (const key of Object.keys(state.latency ?? {})) {
-        if (key.startsWith(`${repo}#`) && !snapshot.prs.some(pr => key === `${repo}#${pr.number}`)) delete state.latency![key];
-      }
-      for (const key of Object.keys(state.signals ?? {})) {
-        if (key.startsWith(`${repo}#`) && !snapshot.prs.some(pr => key === `${repo}#${pr.number}`)) delete state.signals![key];
-      }
+      const present = new Set(snapshot.prs.map((pr) => `${repo}#${pr.number}`));
+      pruneAbsentPrefixKeys(state.latency, `${repo}#`, present);
+      pruneAbsentPrefixKeys(state.signals, `${repo}#`, present);
       const seen = new Set<number>();
       const planned = snapshot.prs.slice().sort((a, b) => a.number - b.number)
         .filter((pr) => {
@@ -500,14 +500,14 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
           seen.add(pr.number);
           return true;
         }).map((pr) => ({ pr, action: classifyMergeQueuePr(pr, snapshot, {
-          fleet: authors.has(bareLogin(pr.author)), held: hold.has(`${shortName(repo)}#${pr.number}`),
+          fleet: authors.has(bareLogin(pr.author)), held: hold.has(prShortTag(repo, pr.number)),
         }) }));
       // Admit ready heads before slow branch updates or conflict resolution.
       // Stable sorting preserves PR-number order within each group and its caps.
       planned.sort((a, b) => Number(b.action === 'enqueue') - Number(a.action === 'enqueue'));
       for (const candidate of planned) {
         let { pr, action } = candidate;
-        const tag = `${shortName(repo)}#${pr.number}`;
+        const tag = prShortTag(repo, pr.number);
         const key = `${repo}#${pr.number}`, previous = state.latency?.[key];
         const latency: MergeQueueLatency = previous?.headSha === pr.headSha && observedAt >= previous.observedAt
           ? { ...previous, stateMs: { ...previous.stateMs }, blockerMs: { ...previous.blockerMs } }
@@ -611,7 +611,7 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
             io.appendQueueLine(drainRow(repo, {
               number: pr.number, headSha: pr.headSha, mergeState: pr.mergeState,
               inMergeQueue: pr.inMergeQueue, author: pr.author, files: pr.files, filesTruncated: pr.filesTruncated,
-            }, key, 'merge conflict (DIRTY)', pr.filesTruncated || pr.files.some(securityPinnedPath)));
+            }, key, 'merge conflict (DIRTY)', isPrSecurityPinned(pr)));
             queueIds.add(key);
             state.drained[key] = now;
             result.drained.push(pr.number);

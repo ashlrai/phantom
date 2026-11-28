@@ -69,4 +69,24 @@ describe('readStuckQueue', () => {
       expect(report.jobs).toEqual([{ id: 'RQ-OLD', age_s: 540 }]);
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
+
+  it('honors ASHLR_RUNS_DIR when no root is passed', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'queue-stuck-env-'));
+    const previous = process.env.ASHLR_RUNS_DIR;
+    try {
+      await mkdir(join(dir, 'queue'));
+      await writeFile(join(dir, 'queue', 'router-queue.md'),
+        '- READY RQ-ENV (enq=1, pool=x): stamped\n- READY RQ-ENV2 (pool=x): unstamped\n');
+      await writeFile(join(dir, 'dispatch-events.log'), '');
+      process.env.ASHLR_RUNS_DIR = dir;
+      const report = await readStuckQueue();
+      expect(report.eventsAvailable).toBe(true);
+      expect(report.jobs.map(job => job.id)).toEqual(['RQ-ENV', 'RQ-ENV2']);
+      expect(typeof report.jobs[0]!.age_s).toBe('number');
+      expect(report.jobs[1]).toEqual({ id: 'RQ-ENV2', age: 'unknown' });
+    } finally {
+      if (previous === undefined) delete process.env.ASHLR_RUNS_DIR; else process.env.ASHLR_RUNS_DIR = previous;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

@@ -70,6 +70,23 @@ export interface BusFollowRequest {
    * matches is skipped while checkpoints still advance past it exactly like
    * every other filter. Filtering is not authentication. */
   excludeFrom?: string;
+  /** Optional peer filter: keeps only the two-way exchange the `--to` agent
+   * and one peer name — the same pairwise rule `agents bus inbox --with`,
+   * `agents bus follow --with`, `phm messages --with` and `agents
+   * conversations --with` apply. An envelope emits only when its `to` label
+   * is addressed to the `--to` ref's identity — the strict identity-label
+   * match that excludes the member-channel posts `--to` alone streams — and
+   * its `from` label matches every registered spelling of the `--with` peer,
+   * so "stream only our private pending thread with the reviewer" is one
+   * filtered follow instead of the room traffic `--to` also carries.
+   * `--with` requires `--to`: without an addressed agent there is no
+   * exchange for the pairwise rule to bind, so the combination is an invalid
+   * request, never a widened stream. An unresolvable ref on either side and
+   * an unreadable registry keep exact-label matching, so unknown identity
+   * state never widens the stream; filtering is not authentication.
+   * Checkpoints still advance past filtered rows exactly like every other
+   * filter. */
+  with?: string;
   /** Optional priority filter: exact `BUS_PRIORITIES` match on
    * `envelope.priority`, the same field `agents bus inbox --priority` and
    * `channel read --priority` narrow on. */
@@ -164,6 +181,10 @@ export function validBusFollowRequest(request: BusFollowRequest): boolean {
     (request.job === undefined || label(request.job)) &&
     (request.from === undefined || label(request.from)) &&
     (request.excludeFrom === undefined || label(request.excludeFrom)) &&
+    (request.with === undefined || label(request.with)) &&
+    // --with binds the --to agent's stream to one peer's exchange; with no
+    // --to there is no addressed agent for the pairwise rule to name.
+    (request.with === undefined || request.to !== undefined) &&
     (request.priority === undefined || BUS_PRIORITIES.includes(request.priority)) &&
     (request.thread === undefined || label(request.thread)) &&
     (request.since === undefined || (Number.isSafeInteger(request.since) && request.since >= 0)) &&
@@ -250,6 +271,14 @@ export async function followBusStream(request: BusFollowRequest, deps: BusFollow
   const channelPrefix = request.channel === undefined ? undefined : `group:${request.channel}:`;
   const fromMatch = request.from === undefined ? undefined : agentRefAddressMatcher(request.from, registry);
   const excludeFromMatch = request.excludeFrom === undefined ? undefined : agentRefAddressMatcher(request.excludeFrom, registry);
+  // validBusFollowRequest refuses --with without --to, so request.to is set
+  // whenever exchangeMatch is built. The pairwise rule binds both ends
+  // through the same agentRefAddressMatcher identity-label matching --from
+  // and --exclude-from use: `to` must be a label of the --to agent's identity
+  // — never a member-channel post --to alone streams — and `from` must match
+  // the --with peer's registered labels.
+  const exchangeMatch = request.with === undefined ? undefined
+    : { to: agentRefAddressMatcher(request.to!, registry), from: agentRefAddressMatcher(request.with, registry) };
   // The request passed validBusFollowRequest, so the needle is normalized text or absent.
   const containsNeedle = busReadContains(request.contains) ?? undefined;
   const emit = async (record: BusFollowRecord): Promise<boolean> => {
@@ -275,6 +304,8 @@ export async function followBusStream(request: BusFollowRequest, deps: BusFollow
         if (request.job !== undefined && !busBodyJobMatch(row.envelope.body, request.job)) continue;
         if (fromMatch !== undefined && !fromMatch(row.envelope.from)) continue;
         if (excludeFromMatch !== undefined && excludeFromMatch(row.envelope.from)) continue;
+        if (exchangeMatch !== undefined &&
+            !(exchangeMatch.to(row.envelope.to) && exchangeMatch.from(row.envelope.from))) continue;
         if (request.priority !== undefined && row.envelope.priority !== request.priority) continue;
         if (request.kind !== undefined && protocolOf(row.envelope.body)?.kind !== request.kind) continue;
         if (request.topic !== undefined && !topicMatches(request.topic, protocolOf(row.envelope.body)?.topic ?? '')) continue;

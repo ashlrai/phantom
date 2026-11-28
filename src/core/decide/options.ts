@@ -18,11 +18,12 @@
  * question, context or reason text).
  */
 import { scrubSecrets } from '../util/scrub.js';
+import { isPlainRecord } from './ledger.js';
 
 export const DECIDE_VERSION = 1 as const;
 export const DECIDE_UNKNOWN = 'unknown' as const;
-export const DECIDE_MAX_OPTIONS = 50;
-export const DECIDE_MAX_CONTEXT_CHARS = 200_000;
+const DECIDE_MAX_OPTIONS = 50;
+const DECIDE_MAX_CONTEXT_CHARS = 200_000;
 const DEFAULT_TIMEOUT_MS = 60_000;
 
 export interface DecideInput<O extends readonly string[] = readonly string[]> {
@@ -92,13 +93,13 @@ function checkInput(input: DecideInput): { question: string; options: string[]; 
 }
 
 /** The reply as a checked answer, or null when it is not the JSON object asked for or names no listed option. */
-export function parseDecideReply(text: string, options: readonly string[]): { choice: string; confidence: number; reason: string } | null {
+function parseDecideReply(text: string, options: readonly string[]): { choice: string; confidence: number; reason: string } | null {
   const start = text.indexOf('{'), end = text.lastIndexOf('}');
   if (start < 0 || end <= start) return null;
   let raw: unknown;
   try { raw = JSON.parse(text.slice(start, end + 1)); } catch { return null; }
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const { choice, confidence, reason } = raw as Record<string, unknown>;
+  if (!isPlainRecord(raw)) return null;
+  const { choice, confidence, reason } = raw;
   if (typeof choice !== 'string' || typeof confidence !== 'number' || !(confidence >= 0 && confidence <= 1)) return null;
   const picked = choice.trim();
   if (picked !== DECIDE_UNKNOWN && !options.includes(picked)) return null;

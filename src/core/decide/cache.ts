@@ -15,8 +15,8 @@
 import { createHash } from 'node:crypto';
 import type { TypeSafeOk } from '../classify/typesafe-client.js';
 
-const MAX_ENTRIES = 1_000;
-const TTL_MS = 6 * 60 * 60 * 1000;
+export const DECISION_CACHE_MAX_ENTRIES = 1_000;
+export const DECISION_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
 interface Entry {
   readonly at: number;
@@ -24,6 +24,22 @@ interface Entry {
 }
 
 const entries = new Map<string, Entry>();
+
+/** Refresh insertion order on a Map-backed LRU cache. */
+export function touchLruEntry<K, V>(map: Map<K, V>, key: K, value: V): void {
+  map.delete(key);
+  map.set(key, value);
+}
+
+/** Insert or refresh a Map-backed LRU entry and evict the oldest entries past `maxEntries`. */
+export function setLruEntry<K, V>(map: Map<K, V>, key: K, value: V, maxEntries: number): void {
+  touchLruEntry(map, key, value);
+  while (map.size > maxEntries) {
+    const oldest = map.keys().next().value;
+    if (oldest === undefined) break;
+    map.delete(oldest);
+  }
+}
 
 export function cacheKey(parts: readonly string[]): string {
   const h = createHash('sha256');
@@ -38,24 +54,16 @@ export function cacheKey(parts: readonly string[]): string {
 export function cacheGet(key: string, now: number = Date.now()): TypeSafeOk | undefined {
   const hit = entries.get(key);
   if (!hit) return undefined;
-  if (now - hit.at > TTL_MS) {
+  if (now - hit.at > DECISION_CACHE_TTL_MS) {
     entries.delete(key);
     return undefined;
   }
-  // Refresh recency (Map preserves insertion order → cheap LRU).
-  entries.delete(key);
-  entries.set(key, hit);
+  touchLruEntry(entries, key, hit);
   return hit.result;
 }
 
 export function cacheSet(key: string, result: TypeSafeOk, now: number = Date.now()): void {
-  entries.delete(key);
-  entries.set(key, { at: now, result });
-  while (entries.size > MAX_ENTRIES) {
-    const oldest = entries.keys().next().value;
-    if (oldest === undefined) break;
-    entries.delete(oldest);
-  }
+  setLruEntry(entries, key, { at: now, result }, DECISION_CACHE_MAX_ENTRIES);
 }
 
 export function clearDecisionCache(): void {

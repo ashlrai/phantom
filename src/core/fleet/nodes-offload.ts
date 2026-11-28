@@ -140,7 +140,15 @@ export function planOffload(input: OffloadInputs): { moves: OffloadMove[]; stays
   if (!queue) return { moves, stays, reasons: ['queue unreadable; ready jobs unknown'] };
   const jobs: QueueOrderJob[] = queue.jobs.slice(0, PLAN_JOB_LIMIT);
   if (queue.jobs.length > PLAN_JOB_LIMIT) reasons.push(`only the first ${PLAN_JOB_LIMIT} of ${queue.jobs.length} ready jobs were looked at`);
-  const running = new Set(view.nodes.flatMap(n => (n.jobsRunning === UNKNOWN ? [] : n.jobsRunning)));
+  // jobsRunning holds node job ids, which are not ready-row ids: the claim
+  // bridge runs a ready row as `ready:<job>:<attempt>` (routerJobId in
+  // drive/nodes/ready-bridge.ts). A re-queued row whose job already executes
+  // on a node must match on the embedded ready id; a manually enqueued job
+  // keeps its own id. Ready job ids never contain ':'.
+  const running = new Set(view.nodes.flatMap(n => (n.jobsRunning === UNKNOWN ? [] : n.jobsRunning.flatMap(id => {
+    const embedded = /^ready:(.+):\d+$/.exec(id)?.[1];
+    return embedded === undefined ? [id] : [id, embedded];
+  }))));
   const pool = host.state === 'busy' ? candidates(view, doctor, reasons) : [];
   for (const job of jobs) {
     const stay = (why: string) => stays.push({ job: job.id, lane: job.lane, why });
@@ -226,7 +234,11 @@ export async function readNodesOffload(deps: NodesOffloadDeps, opts: { dryRun: b
   const live = enabled && !opts.dryRun;
   const written = live ? (deps.record ?? recordOffloadMoves)(plan.moves, view.self, now) : 0;
   const n = plan.moves.length;
+  // An unreadable queue means "unknown", never "nothing is queued": the plan
+  // early-returns before candidates() runs, so neither half of that sentence
+  // was actually checked.
   const summary = host.state !== 'busy' ? `${host.why} No job moves.`
+    : queue === null ? `${host.why} The ready queue could not be read, so whether jobs are waiting is unknown.`
     : n === 0 ? `${host.why} No computer is ready, so ${plan.stays.length ? 'jobs keep waiting here' : 'nothing is queued'}.`
       : !enabled ? `Offload is off. ${count(n, 'job would', 'jobs would')} move if you run \`phm nodes offload on\`.`
         : live ? `${count(written, 'job', 'jobs')} chosen for another computer.` : `${count(n, 'job would', 'jobs would')} move (dry run, nothing recorded).`;

@@ -153,19 +153,20 @@ function prune(rows: UsageReading[], nowMs: number): UsageReading[] {
 /**
  * Append new readings. A reading is skipped when it is not newer than its
  * pool's last row, or when value and reset time are both unchanged.
+ * The retention cap keeps the newest observations across pools.
  */
 export function appendUsageReadings(rows: readonly UsageReading[], readings: readonly UsageReading[], nowMs: number): { rows: UsageReading[]; changed: boolean } {
-  const next = prune([...rows], nowMs);
-  let changed = next.length !== rows.length;
+  const previous = prune([...rows], nowMs);
+  const next = [...previous];
   for (const reading of readings) {
     if (!validRow(reading) || !inHistoryWindow(reading, nowMs)) continue;
     const last = lastFor(next, reading.pool);
     if (last && (ms(reading.observed_at) <= ms(last.observed_at)
       || (last.used_pct === reading.used_pct && last.reset_at === reading.reset_at))) continue;
     next.push(row(reading));
-    changed = true;
   }
-  return { rows: next.slice(-USAGE_HISTORY_MAX_ROWS), changed };
+  const retained = next.length === previous.length ? previous : prune(next, nowMs);
+  return { rows: retained, changed: retained.length !== rows.length || retained.some((reading, i) => reading !== previous[i]) };
 }
 
 /** The ledger's current per-pool readings. A pool without a measured share or a reading time is skipped. */
@@ -179,15 +180,20 @@ export function ledgerUsageReadings(ledger: ResourceLedgerV1): UsageReading[] {
   });
 }
 
-/** True when `cur` begins a new window after `prev`. */
+/** Compare readings that have already been checked against their own windows. */
 function startsWindow(prev: UsageReading, cur: UsageReading): boolean {
   const prevReset = ms(prev.reset_at), curReset = ms(cur.reset_at);
   if (!Number.isFinite(prevReset) || !Number.isFinite(curReset)) return false;
   const observedAt = ms(cur.observed_at);
-  if (observedAt >= curReset) return false;
   // A drop with the same or a later reset time, or the old reset passed and a later one is reported.
   return (cur.used_pct < prev.used_pct && curReset >= prevReset)
     || (prevReset <= observedAt && curReset > prevReset);
+}
+
+function withinQuotaWindow(reading: UsageReading, windowMs: number): boolean {
+  const reset = ms(reading.reset_at);
+  const observed = ms(reading.observed_at);
+  return !Number.isFinite(reset) || (observed >= reset - windowMs && observed < reset);
 }
 
 const pts = (n: number): string => `${Math.round(n * 100) / 100}`;
@@ -263,21 +269,24 @@ export function poolUsageSeries(pool: string, rows: readonly UsageReading[], now
   const mine = distinctObservations(rows.filter(r => r.pool === pool), r => r.observed_at, nowMs);
   const resets: UsageResetEvent[] = [];
   let start = 0;
-  for (let i = 1; i < mine.length; i++) {
-    if (!startsWindow(mine[i - 1]!, mine[i]!)) continue;
-    start = i;
-    if (mine[i]!.used_pct < mine[i - 1]!.used_pct) {
-      resets.push({ at: mine[i]!.observed_at, from_pct: mine[i - 1]!.used_pct, to_pct: mine[i]!.used_pct });
+  let previous: UsageReading | undefined;
+  for (const [i, reading] of mine.entries()) {
+    if (!withinQuotaWindow(reading, windowMs)) continue;
+    if (previous && startsWindow(previous, reading)) {
+      start = i;
+      if (reading.used_pct < previous.used_pct) {
+        resets.push({ at: reading.observed_at, from_pct: previous.used_pct, to_pct: reading.used_pct });
+      }
     }
+    previous = reading;
   }
-  const resetAt = mine.at(-1)?.reset_at ?? null;
+  // Use the last eligible reading for window selection too. With no eligible
+  // points, retain the reported reset for the empty-window explanation.
+  const resetAt = (previous ?? mine.at(-1))?.reset_at ?? null;
   const resetMs = ms(resetAt);
   const startMs = resetMs - windowMs;
   const known = Number.isFinite(resetMs);
-  const window = mine.slice(start).filter(r => {
-    const observedAt = ms(r.observed_at);
-    return !known || (ms(r.reset_at) === resetMs && observedAt >= startMs && observedAt < resetMs);
-  });
+  const window = mine.slice(start).filter(r => !known || (ms(r.reset_at) === resetMs && withinQuotaWindow(r, windowMs)));
   const latest = window.at(-1) ?? null;
   const points = window.map(r => ({ at: r.observed_at, used_pct: r.used_pct }));
   const idealAt = (t: number): number => round1(Math.min(100, Math.max(0, (t - startMs) / windowMs * 100)));
@@ -337,13 +346,13 @@ export function recordLedgerUsage(runsDir: string, ledger: ResourceLedgerV1, now
 
 /** Stored readings for the burn rate (`phm pools`): read-only, empty when the file is absent or damaged. */
 export async function readUsageSamples(opts: { runsDir?: string; nowMs?: number } = {}): Promise<UsageReading[]> {
-  const runsDir = opts.runsDir ?? join(homedir(), '.ashlr-runs');
+  const runsDir = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   return parseUsageHistory(await readHistoryFile(usageHistoryPath(runsDir)), opts.nowMs ?? Date.now());
 }
 
 /** Take a fresh ledger reading (recording it), then project every pool's current window. */
 export async function readUsageHistory(opts: { runsDir?: string; now?: () => number; pool?: string } = {}): Promise<UsageHistoryV1> {
-  const runsDir = opts.runsDir ?? join(homedir(), '.ashlr-runs');
+  const runsDir = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   const nowMs = (opts.now ?? Date.now)();
   const result: UsageHistoryV1 = { schema: USAGE_HISTORY_SCHEMA, v: 1, generated_at: new Date(nowMs).toISOString(), source_state: 'missing', pools: [] };
   try {

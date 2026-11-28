@@ -13,9 +13,9 @@ let base: string, root: string, snapshot: string, prompt: string, events: string
 const post = (id: string) => expect(appendBusInbox({ id, from: 'leader', to: 'worker', priority: 'P1', ttl: 120_000,
   body: { kind: 'work', text: 'private request' } } satisfies BusEnvelope, { root }).status).toBe('posted');
 const lines = () => existsSync(events) ? readFileSync(events, 'utf8').trim().split('\n').filter(Boolean) : [];
-const args = (max = 2, concurrency = 2, mode = 'barrier') => ['--to', 'worker', '--owner', 'pool', '--lease-ms', '60000',
+const args = (max = 2, concurrency = 2, mode = 'barrier', extra: string[] = []) => ['--to', 'worker', '--owner', 'pool', '--lease-ms', '60000',
   '--wait-ms', '500', '--max-jobs', String(max), '--concurrency', String(concurrency), '--snapshot', snapshot,
-  '--prompt', prompt, '--root', root, '--', process.execPath, script, mode, events];
+  '--prompt', prompt, '--root', root, ...extra, '--', process.execPath, script, mode, events];
 async function run(argv: string[]) {
   let out = '', err = '';
   const sink = (write: (text: string) => void) => new Writable({ write(chunk, _encoding, done) { write(String(chunk)); done(); } });
@@ -104,6 +104,19 @@ it('reports a failure only after the successful sibling has settled', async () =
   expect(receipts().map(r => (r.body as { inReplyTo: string }).inReplyTo).sort()).toEqual(['first', 'second']);
 });
 
+it('claims only the filtered work inside every consumer poll', async () => {
+  post('first'); post('second'); post('third');
+  // --id reaches each consumer's claim scan: the decoys never enter it.
+  const filtered = await run(args(1, 1, 'sequential', ['--id', 'second']));
+  expect(filtered).toMatchObject({ code: 0, result: { status: 'max-jobs', completed: 1 } });
+  expect(claims().map(c => c.id)).toEqual(['second']);
+  expect(lines()).toEqual(['start:second', 'end:second']);
+  // The skipped work stays claimable: an unfiltered run takes the next one.
+  const rest = await run(args(1, 1, 'sequential'));
+  expect(rest).toMatchObject({ code: 0, result: { status: 'max-jobs', completed: 1 } });
+  expect(claims().map(c => c.id).sort()).toEqual(['first', 'second']);
+});
+
 it('validates every flag before starting consumers and exposes the command entry', async () => {
   post('first');
   expect(resolveFleetSubcommand('bus-work-pool')).toEqual({ module: './fleet-bus-work-pool.js', exportName: 'cmdFleetBusWorkPool' });
@@ -115,6 +128,10 @@ it('validates every flag before starting consumers and exposes the command entry
   bad.push(swap('--max-jobs', '0'), swap('--wait-ms', '0'), swap('--lease-ms', '0'), swap('--snapshot', 'relative'),
     swap('--root', 'relative'), swap('--owner', 'bad owner'), [...good.slice(0, good.indexOf('--')), '--owner', 'again', '--', process.execPath],
     good.slice(0, good.indexOf('--')), [...good.slice(0, good.indexOf('--')), '--']);
+  const insert = (key: string, value: string) => { const i = good.indexOf('--'); return [...good.slice(0, i), key, value, ...good.slice(i)]; };
+  bad.push(insert('--priority', 'P9'), insert('--since', 'bogus'), insert('--before', 'bogus'), insert('--contains', '   '),
+    insert('--topic', 'Bad Name'), insert('--topic', 'deploy:extra'), insert('--id', 'has space'),
+    insert('--channel', 'Bad Name'), insert('--from', 'bad sender'), insert('--exclude-from', 'bad sender'));
   for (const argv of bad) expect((await run(argv)).code).toBe(2);
   expect(lines()).toEqual([]);
   expect(existsSync(join(root, 'bus-work-claims', 'claims.json'))).toBe(false);

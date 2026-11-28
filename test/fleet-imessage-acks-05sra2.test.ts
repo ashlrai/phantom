@@ -20,6 +20,15 @@ async function run(dir: string, args: string[]) {
 }
 
 describe('fleet imessage-acks', () => {
+  it('prints usage for --help and -h without reading evidence', async () => {
+    const { dir } = fixture();
+    for (const flag of ['--help', '-h']) {
+      const result = await run(dir, [flag]);
+      expect(result.code).toBe(0);
+      expect(result.out).toContain('Usage: phm fleet imessage-acks');
+      expect(result.errors).toBe('');
+    }
+  });
   it('projects and redacts records in both formats, and does not claim delivery', async () => {
     const { dir, file } = fixture();
     writeFileSync(file, `${row(1, { text: 'FAKE_PRIVATE_TEXT', receipt: 'FAKE_RECEIPT', extra: 'FAKE_EXTRA' })}\n${row(2, { status: 'duplicate', delivery: 'FAKE_PRIVATE_DELIVERY' })}\n`);

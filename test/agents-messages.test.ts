@@ -210,6 +210,30 @@ describe('phm agents messages', () => {
     expect(await runAgentsMessagesCli(['--before', '1h', '--before', '2h'], () => {}, line => err.push(line))).toBe(2);
   });
 
+  it('the CLI --frame prints the timeline as a bounded untrusted block and carries it as framed in JSON', async () => {
+    const root = store(chat);
+    const options = { root, now: () => NOW };
+    const out: string[] = [], err: string[] = [];
+    // The human read is the bare framed block.
+    expect(await runAgentsMessagesCli(['--frame', 'claude'], line => out.push(line), line => err.push(line), options)).toBe(0);
+    const block = out.join('\n');
+    expect(block).toContain('BEGIN UNTRUSTED AGENT BUS TIMELINE');
+    expect(block).toContain('please look at the build');
+    expect(block).toContain('END UNTRUSTED AGENT BUS TIMELINE');
+    expect(block).not.toContain('"schema"');
+    // --json carries the block as `framed` beside the full projection.
+    const json: string[] = [];
+    expect(await runAgentsMessagesCli(['--frame', 'grok', '--json'], line => json.push(line), line => err.push(line), options)).toBe(0);
+    const parsed = JSON.parse(json.join('\n')) as { schema: string; framed: string };
+    expect(parsed.schema).toBe('agents.messages.v1');
+    expect(parsed.framed).toContain('BEGIN UNTRUSTED AGENT BUS TIMELINE');
+    expect(parsed.framed).toContain('please look at the build');
+    // A bad cli or a repeated flag is a usage error before any store read.
+    expect(await runAgentsMessagesCli(['--frame', 'gemini'], () => {}, line => err.push(line), options)).toBe(2);
+    expect(await runAgentsMessagesCli(['--frame', 'claude', '--frame', 'grok'], () => {}, line => err.push(line), options)).toBe(2);
+    expect(await runAgentsMessagesCli(['--frame'], () => {}, line => err.push(line), options)).toBe(2);
+  });
+
   it('the API serves the same read and refuses unknown params', async () => {
     const root = store(chat);
     const api = createFleetLiveMapApi(async () => { throw new Error('unused'); }, () => null, input => readAgentsMessages(input, { root, now: () => NOW }));

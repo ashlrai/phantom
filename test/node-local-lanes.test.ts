@@ -245,7 +245,7 @@ describe('standalone join advertises the planned local lane caps', () => {
       const store = new MemoryStore();
       const code = await cmdNodeFleet('join',
         ['--node', 'n-broken-text', '--owner', 'mason'],
-        { store, phmVersion: () => null, localLanes: deps({ headroom: headroom() }) });
+        { store, phmVersion: () => null, localLanes: deps({ headroom: headroom() }), providerLanes: () => [] });
       expect(code).toBe(0);
       expect(lines.join('\n')).toContain('Local model lanes not advertised: local-lanes.json is not valid JSON. Run: phm node lanes');
     } finally { vi.restoreAllMocks(); }

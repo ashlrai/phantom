@@ -7,6 +7,7 @@ import {
   type WorkerHandoff,
 } from '../core/verse/handoff.js';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
+import { isPlainRecord } from '../core/knowledge/wiki/store.js';
 
 const MAX_INPUT_BYTES = 64 * 1024;
 const MAX_PROBLEMS_EMITTED = 50;
@@ -29,10 +30,6 @@ Text mode prints the rendered prompt. --json emits a single versioned object:
 Exit 0 valid, 1 unreadable input or failed validation, 2 bad arguments.
 `;
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
 function unexpectedKeys(value: Record<string, unknown>, allowed: string[]): boolean {
   return Object.keys(value).some(key => !allowed.includes(key));
 }
@@ -46,7 +43,7 @@ function unexpectedKeys(value: Record<string, unknown>, allowed: string[]): bool
  */
 function shapeProblems(value: unknown): HandoffProblem[] {
   const problems: HandoffProblem[] = [];
-  if (!isObject(value)) {
+  if (!isPlainRecord(value)) {
     problems.push({ field: 'handoff', detail: 'must be a JSON object' });
     return problems;
   }
@@ -61,7 +58,7 @@ function shapeProblems(value: unknown): HandoffProblem[] {
   } else {
     value.files.forEach((ref, index) => {
       const base = `files[${index}]`;
-      if (!isObject(ref)) {
+      if (!isPlainRecord(ref)) {
         problems.push({ field: base, detail: 'must be an object' });
         return;
       }
@@ -73,7 +70,7 @@ function shapeProblems(value: unknown): HandoffProblem[] {
         problems.push({ field: `${base}.why`, detail: 'must be a string' });
       }
       if (ref.lines !== undefined) {
-        if (!isObject(ref.lines)) {
+        if (!isPlainRecord(ref.lines)) {
           problems.push({ field: `${base}.lines`, detail: 'must be an object' });
         } else {
           if (unexpectedKeys(ref.lines, ['from', 'to'])) {
@@ -93,7 +90,7 @@ function shapeProblems(value: unknown): HandoffProblem[] {
   } else {
     value.constraints.forEach((constraint, index) => {
       const base = `constraints[${index}]`;
-      if (!isObject(constraint)) {
+      if (!isPlainRecord(constraint)) {
         problems.push({ field: base, detail: 'must be an object' });
         return;
       }

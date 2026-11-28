@@ -63,10 +63,14 @@ export async function cmdFleetOwnerLive(args: string[], deps: FleetOwnerLiveDeps
   const options = deps.options ?? { ...ownerThreadOptions(), ...(runsDir === undefined ? {} : { runsDir }) };
   // Apply mode: pair Mason's iMessage handle (one text, then wait for YES) before the hourly send looks for a binding.
   let pairing: PairTickReport | undefined;
+  let pairingFailed = false;
   const held = options.halted === true || options.paused === true || killSwitchOn() || isPaused();
   if (apply && !held && options.settings.imessageBridge === 'loopback' && (deps.pair !== undefined || deps.options === undefined)) {
     const pairDeps = deps.pair ?? { configDir: fixedOwnerConfigDir(), bridge: loopbackPairBridge(loadConfigAt(fixedOwnerConfigDir())) };
-    pairing = await pairTick(pairDeps).catch(() => ({ action: 'none', detail: 'pairing check failed' } as PairTickReport));
+    pairing = await pairTick(pairDeps).catch(() => {
+      pairingFailed = true;
+      return { action: 'none', detail: 'pairing check failed' } as PairTickReport;
+    });
     // A fresh binding is on disk now; the hourly send in this same tick should see it.
     if (pairing.action === 'bound' && deps.options === undefined) options.settings = ownerThreadOptions().settings;
   }
@@ -74,14 +78,15 @@ export async function cmdFleetOwnerLive(args: string[], deps: FleetOwnerLiveDeps
   const ownerReply = await sendOwnerPlanReply(options, { dryRun: !apply, planLog: loadConfigReadOnly().comms?.leaderPlanLogPath });
   const report = { ...notices, ownerReply };
   if (json) {
-    output(JSON.stringify(pairing ? { ...report, pair: pairing } : report));
+    output(JSON.stringify(pairing ? { ...report, pair: pairing, ...(pairingFailed ? { pairingFailed: true } : {}) } : report));
   } else {
     output(`owner-live: sent=${report.sent.length} planned=${report.planned.length} failed=${report.failed.length} skipped=${report.skipped.length}${report.halted ? ' halted' : ''}`);
     for (const row of [...report.failed, ...report.skipped]) output(`  ${row.channel}: ${row.detail ?? row.reason}`);
-    if (pairing && pairing.action !== 'none') output(`  imessage pairing: ${pairing.detail}`);
+    if (pairingFailed) output('  imessage pairing: pairing check failed');
+    else if (pairing && pairing.action !== 'none') output(`  imessage pairing: ${pairing.detail}`);
     output(`  leader reply: ${ownerReply.reason}`);
   }
-  return apply && report.failed.length > 0 ? 1 : 0;
+  return apply && (pairingFailed || report.failed.length > 0) ? 1 : 0;
 }
 
 /** `phm owner-live enable|disable imessage [--json]`: flips only `[imessage] bridge` in owner-adapters.toml. */

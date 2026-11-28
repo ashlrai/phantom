@@ -130,6 +130,7 @@ const HELP_STRICT_REFUSALS: Record<string, string> = {
   'channels add': `rejectUnknownOptions in src/cli/args.ts: ${STRICT_VERB_PARSER}`,
   'channels status': `rejectUnknownOptions in src/cli/args.ts: ${STRICT_VERB_PARSER}`,
   'route': '`route` only has the `explain` verb and accepts only --json (src/cli/route.ts); anything else prints the usage line and exits 2',
+  'owner-live': 'the owner-live dispatcher requires one of its status|enable|disable verbs before any flag is accepted (src/cli/index.ts); a bare help flag prints the usage line and exits 2',
   'radar list': 'radar verbs take an exact grammar of only --json (src/cli/radar.ts); anything else prints the usage block and exits 2 before sources load',
   'radar run': 'radar verbs take an exact grammar of only --json (src/cli/radar.ts); anything else prints the usage block and exits 2 before any fetch',
   'radar diff': 'radar verbs take an exact grammar of only --json (src/cli/radar.ts); anything else prints the usage block and exits 2 before snapshots are read',

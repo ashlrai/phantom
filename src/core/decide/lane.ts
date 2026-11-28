@@ -18,9 +18,9 @@
  */
 
 import type { TypeSafeChoiceQuestion } from '../classify/typesafe-client.js';
-import { decide } from './decide.js';
+import { decide, readChoiceAnswer } from './decide.js';
 import { WORK_LANES } from './registry.js';
-import type { DecideOptions, Decision } from './types.js';
+import type { Decision, DecisionCallOptions } from './types.js';
 
 export type WorkLane = (typeof WORK_LANES)[number];
 
@@ -46,7 +46,7 @@ export interface LaneContext {
   readonly operatorPresent?: boolean;
 }
 
-export type ChooseLaneOptions = Omit<DecideOptions<WorkLane>, 'fallback' | 'interpret' | 'escalateOnly'>;
+export type ChooseLaneOptions = DecisionCallOptions;
 
 const INTERACTIVE_HINT = /\b(design|decide|should we|explore|brainstorm|figure out|investigate why|proposal|rfc|spec out|product|pricing|ux|question|discuss|plan)\b/i;
 const SMALL_HINT = /\b(lint|typo|bump|deps?|dependency|upgrade|format|test|flaky|docs?|readme|changelog|rename|small|minor|one-line|typecheck)\b/i;
@@ -83,7 +83,7 @@ const LANE_CRITERIA: Readonly<Record<WorkLane, string>> = {
   interactive: 'Needs the operator in the loop: ambiguous requirements, product or design judgement, exploration, or sensitive/protected areas.',
 };
 
-export function laneTaskState(task: LaneTask): string {
+function laneTaskState(task: LaneTask): string {
   const lines = [`Task: ${task.title}`];
   if (task.body) lines.push(`Details: ${task.body.slice(0, 3_000)}`);
   if (task.repo) lines.push(`Repository: ${task.repo}${task.githubRepo === false ? ' (local only, not on GitHub)' : ''}`);
@@ -121,9 +121,8 @@ export async function chooseLane(
     fallback,
     cacheSalt: open.join(','),
     interpret: (answers) => {
-      const a = answers['lane'];
-      if (!a || a.type !== 'choice' || !open.includes(a.choice as WorkLane)) return undefined;
-      return { value: a.choice as WorkLane, confidence: a.confidence, label: a.choice };
+      const a = readChoiceAnswer(answers, 'lane', open);
+      return a ? { value: a.choice, confidence: a.confidence, label: a.choice } : undefined;
     },
   });
 }

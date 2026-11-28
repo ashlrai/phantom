@@ -8,10 +8,13 @@
  * opaque local resource digests.
  */
 
-import { createHash } from 'node:crypto';
 import {
   EXECUTION_IDENTITY_V1_MAX_FUTURE_SKEW_MS,
+  canonicalJson,
+  canonicalTimestamp as timestamp,
   digestExecutionIdentityModelResourcesV1,
+  exactKeys,
+  sha256,
   type ExecutionIdentityPublicResourceV1,
 } from './execution-identity.js';
 
@@ -225,35 +228,12 @@ function record(value: unknown): Record<string, unknown> | null {
   }
 }
 
-function exactKeys(value: Record<string, unknown>, keys: ReadonlySet<string>): boolean {
-  const actual = Object.keys(value);
-  return actual.length === keys.size && actual.every((key) => keys.has(key));
-}
-
-function digest(value: unknown, domain: string): Digest {
-  return `sha256:${createHash('sha256').update(domain, 'utf8').update('\0')
-    .update(canonicalJson(value), 'utf8').digest('hex')}`;
-}
-
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  const row = value as Record<string, unknown>;
-  return `{${Object.keys(row).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(row[key])}`).join(',')}}`;
-}
-
 function isDigest(value: unknown): value is Digest {
   return typeof value === 'string' && DIGEST_RE.test(value);
 }
 
 function isLineageDigest(value: unknown): value is LineageDigest {
   return typeof value === 'string' && LINEAGE_DIGEST_RE.test(value);
-}
-
-function timestamp(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length > 40) return false;
-  const milliseconds = Date.parse(value);
-  return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === value;
 }
 
 function integer(value: unknown, minimum: number, maximum: number): value is number {
@@ -275,7 +255,7 @@ function compareText(left: string, right: string): number {
 /** Hash a non-secret capability label before it enters the public projection. */
 export function digestCapabilityClassV1(capabilityKind: CapabilityKind, label: unknown): Digest | null {
   if (!kind(capabilityKind) || typeof label !== 'string' || !ENGINE_RE.test(label)) return null;
-  return digest({ capabilityKind, label }, 'ashlr:capability-spectrum:class:v1');
+  return sha256('ashlr:capability-spectrum:class:v1', canonicalJson({ capabilityKind, label }));
 }
 
 function identityResource(value: unknown): ExecutionIdentityPublicResourceV1 | null {
@@ -659,7 +639,7 @@ export function buildCapabilitySpectrumShadowV1(value: unknown): CapabilitySpect
   };
   return {
     ok: true, globalHalt: false, issues: [],
-    spectrum: { ...unsigned, projectionDigest: digest(unsigned, 'ashlr:capability-spectrum:projection:v1') },
+    spectrum: { ...unsigned, projectionDigest: sha256('ashlr:capability-spectrum:projection:v1', canonicalJson(unsigned)) },
   };
 }
 
@@ -839,6 +819,6 @@ function verifyCapabilitySpectrumShadowEnvelopeV1(value: unknown): CapabilitySpe
   // validated scalar, so hostile/cyclic envelopes cannot amplify canonicalization.
   const unsigned = { ...row };
   delete unsigned['projectionDigest'];
-  if (row['projectionDigest'] !== digest(unsigned, 'ashlr:capability-spectrum:projection:v1')) return null;
+  if (row['projectionDigest'] !== sha256('ashlr:capability-spectrum:projection:v1', canonicalJson(unsigned))) return null;
   return value as CapabilitySpectrumShadowV1;
 }

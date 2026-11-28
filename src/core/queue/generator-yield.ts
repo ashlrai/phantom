@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { canonicalJson } from '../authority/canonical-json.js';
+import { prKeyOf } from '../fleet/eval-report.js';
 import { isNodePoolLedgerRow, ledgerEventTs } from '../fleet/jobs-ledger-dialect.js';
 
 export interface GenerationDecision {
@@ -18,6 +20,10 @@ export interface GeneratorYieldReport {
 type Job = { generator: string | null; explicit: boolean; empty: boolean | null; pr: boolean; merged: boolean; diff: number | null; tokens: number | null;
   launched: boolean };
 const string = (v: unknown): string | null => typeof v === 'string' && v.trim() ? v.trim() : null;
+function observedSource(value: unknown): string | null {
+  const source = string(value);
+  return source?.toLowerCase() === 'unknown' ? null : source;
+}
 const count = (v: unknown): number | null => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
 /** jobs.jsonl field dialects, the same sets dispatchd `_vc_pick` accepts:
  * ids job|job_id|jobId|id, events event|type|kind, phases
@@ -58,7 +64,7 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
   const generation = new Map<string, Map<string, { drafted: boolean; reasons: Set<string> }>>();
   const launchedBatches = new Map<string, number>();
   const memberBatches = new Map<string, Map<string, number>>();
-  const rows: { id: string; at: number; event: string | undefined; terminal: ReturnType<typeof terminalVerdict>; row: Record<string, unknown> }[] = [];
+  const rows: { id: string; at: number; event: string | undefined; terminal: ReturnType<typeof terminalVerdict>; row: Record<string, unknown>; line: string }[] = [];
   const since = now - hours * 3600000;
   for (const [text, isGenerationJournal] of [[raw, false], [decisions, true]] as const) {
     for (const line of text.split(/\r?\n/)) {
@@ -71,39 +77,55 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
       const event = pickString(r, EVENT_KEYS)?.toLowerCase();
       const isDecision = event === 'drafted' || event === 'rejected';
       if (isGenerationJournal !== isDecision) continue;
+      if (!isDecision && r.launched === false) continue;
       const id = pickString(r, JOB_ID_KEYS);
       const terminal = isDecision ? null : terminalVerdict(r, event);
       // Reconciled outcomes can retain the original publish timestamp.
       const at = ledgerEventTs(r, terminal);
       if (!id || at === null) { malformedLines++; continue; }
       if (at < since || at > now) continue;
-      rows.push({ id, at, event, terminal, row: r });
+      rows.push({ id, at, event, terminal, row: r, line });
     }
   }
   // Late receipts can be appended out of order. Stable sorting preserves
   // ledger order when receipts share a timestamp.
-  let emptyEvidenceAt: number | undefined;
-  const seenEmptyEvidence = new Set<string>();
-  for (const { id, at, event, terminal, row: r } of rows.sort((a, b) => a.at - b.at)) {
+  let receiptTime: number | undefined;
+  const seenReceipts = new Set<string>();
+  for (const { id, at, event, terminal, row: r, line } of rows.sort((a, b) => a.at - b.at)) {
     const launch = event === 'launch' || event === 'launched';
     if (id.startsWith('RQ-BATCH-')) {
       if (launch) launchedBatches.set(id, at);
       continue;
     }
     if (event === 'drafted' || event === 'rejected') {
-      const source = string(r.src) ?? 'unknown', group = generation.get(source) ?? new Map<string, { drafted: boolean; reasons: Set<string> }>();
+      const observed = observedSource(r.src);
+      const source = observed ?? 'unknown', group = generation.get(source) ?? new Map<string, { drafted: boolean; reasons: Set<string> }>();
       const decision = group.get(id) ?? { drafted: false, reasons: new Set<string>() };
       if (event === 'drafted') {
         decision.drafted = true;
-        const sources = drafts.get(id) ?? new Set<string>();
-        sources.add(source);
-        drafts.set(id, sources);
+        if (observed !== null) {
+          const sources = drafts.get(id) ?? new Set<string>();
+          sources.add(observed);
+          drafts.set(id, sources);
+        }
       }
       else decision.reasons.add(string(r.reason) ?? 'unknown');
       group.set(id, decision); generation.set(source, group); continue;
     }
+    if (at !== receiptTime) {
+      seenReceipts.clear();
+      receiptTime = at;
+    }
+    let receipt = line.trim();
+    try {
+      receipt = canonicalJson(r);
+    } catch {
+      // Fall back to the original text for rows that cannot be canonicalized.
+    }
+    if (seenReceipts.has(receipt)) continue;
+    seenReceipts.add(receipt);
     const job = jobs.get(id) ?? { generator: null, explicit: false, empty: null, pr: false, merged: false, diff: null, tokens: null, launched: false };
-    const src = string(r.src);
+    const src = observedSource(r.src);
     if (src) { job.generator = src; job.explicit = true; }
     else if (!job.explicit) job.generator = generator(id);
     const phase = pickString(r, PHASE_KEYS);
@@ -116,20 +138,14 @@ export function generatorYield(raw: string, hours = 24, now = Date.now(), decisi
         memberBatches.set(id, batches);
       }
     }
+    const reserved = event === 'claim' && r.launch_dedupe === true;
     const empty = phase?.toLowerCase() === 'empty' ? true : typeof r.empty === 'boolean' ? r.empty : null;
-    const dispatch = launch || event === 'batch_claim';
-    if (dispatch || empty !== null) {
-      if (at !== emptyEvidenceAt) {
-        seenEmptyEvidence.clear();
-        emptyEvidenceAt = at;
-      }
-      const receipt = JSON.stringify(r);
-      if (!seenEmptyEvidence.has(receipt)) {
-        seenEmptyEvidence.add(receipt);
-        job.empty = empty;
-      }
-    }
-    if (pickString(r, PR_KEYS) !== null) job.pr = true;
+    if (reserved) job.empty = null;
+    else if (launch || event === 'batch_claim' || empty !== null) job.empty = empty;
+    if (!job.pr && PR_KEYS.some(key => {
+      const pr = prKeyOf(r[key]);
+      return pr !== null && Number.isSafeInteger(pr.number) && pr.number > 0;
+    })) job.pr = true;
     if (terminal === 'MERGED') { job.merged = true; job.pr = true; }
     job.diff = count(r.diff_lines) ?? job.diff;
     job.tokens = count(r.tokens_total ?? r.tokens) ?? job.tokens;

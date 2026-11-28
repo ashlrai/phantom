@@ -7,6 +7,7 @@
  *   low-yield  20 or more finished jobs and empty_rate >= 0.8
  *   productive everything else
  */
+import { canonicalJson } from '../authority/canonical-json.js';
 import { parseLedgerTs } from '../metrics/loop.js';
 import { hasRevertEvidence } from './slot-yield.js';
 
@@ -72,7 +73,7 @@ const JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const EVENT_KEYS = ['event', 'type', 'kind'] as const;
 const PHASE_KEYS = ['state', 'outcome', 'status', 'phase', 'result', 'conclusion'] as const;
 const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
-const TS_FIELDS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+const TS_FIELDS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt', 'revertedAt', 'reverted_at'] as const;
 
 /** Terminal "no work" phases: the fleet's empty-outcome vocabulary (skill-nudge EMPTY_PHASES, launch_precheck _TERMINAL_EMPTY). */
 const EMPTY_PHASES: ReadonlySet<string> = new Set(['DONE-NOOP', 'EMPTY', 'EMPTY_DONE', 'SKIPPED-EMPTY', 'NOOP']);
@@ -80,6 +81,17 @@ const EMPTY_PHASES: ReadonlySet<string> = new Set(['DONE-NOOP', 'EMPTY', 'EMPTY_
 const OUTCOME_EVENTS: ReadonlySet<string> = new Set(['outcome', 'result', 'resolved', 'resolution']);
 const FINISH_EVENTS: ReadonlySet<string> = new Set(['finish', 'finished', 'complete', 'completed']);
 const RESOLVED_PHASES: ReadonlySet<string> = new Set(['MERGED', 'CLOSED', 'OPEN']);
+/**
+ * RQ-BATCH-* ids are batch-session infrastructure, not jobs: dispatchd runs
+ * related ready lines as one session whose members arrive through
+ * `batch_claim`/`task_outcome` rows, while the session id's own launch/finish
+ * rows carry session-aggregate evidence no single job owns. Every sibling
+ * reader — outcome-metrics, lane-reward, the router outcome fold and the
+ * unfed claims fold — skips the prefix; counting the session here would add
+ * a finished job that is never empty and never merged, diluting the lane's
+ * empty rate toward zero.
+ */
+const BATCH_SESSION_PREFIX = 'RQ-BATCH-';
 
 const firstString = (row: Record<string, unknown>, keys: readonly string[]): string | null => {
   for (const key of keys) {
@@ -129,51 +141,60 @@ const emptyEvidence = (row: Record<string, unknown>, event: string | null, phase
 export function parseLaneJobs(ledger: string): LaneJob[] {
   type Receipt = { at: number | null; seq: number };
   type Launch = Receipt & { lane: string };
-  type Finish = Receipt & { empty: boolean };
+  type Outcome = Receipt & { merged: boolean; reverted: boolean; finished: boolean; empty: boolean };
   const launches = new Map<string, Launch>();
-  const done = new Map<string, { mergeAt: number | null; merged: boolean; finishes: Finish[] }>();
-  const reverted = new Set<string>();
+  const seenLaunchReceipts = new Set<string>();
+  const outcomes = new Map<string, Outcome[]>();
   for (const [seq, line] of ledger.split('\n').entries()) {
     let row: unknown;
     try { row = JSON.parse(line); } catch { continue; }
     if (!isObject(row)) continue;
     const id = firstString(row, JOB_KEYS);
-    if (!id) continue;
+    if (!id || id.startsWith(BATCH_SESSION_PREFIX)) continue;
     const phase = phaseOf(row);
     const event = ledgerEvent(row, phase);
     const at = eventTs(row, phase);
     if (event === 'launch') {
-      const lane = firstString(row, LANE_KEYS) ?? '';
+      const lane = firstString(row, LANE_KEYS);
+      if (!lane) continue;
+      if (at !== null) {
+        let receipt: string;
+        try {
+          receipt = canonicalJson(row);
+        } catch {
+          // Retain exact-text deduplication for rows that cannot be canonicalized.
+          receipt = line.trim();
+        }
+        if (seenLaunchReceipts.has(receipt)) continue;
+        seenLaunchReceipts.add(receipt);
+      }
       const prev = launches.get(id);
-      if (lane && (!prev || (at ?? 0) >= (prev.at ?? 0))) launches.set(id, { lane, at, seq });
+      if (!prev || (at ?? 0) >= (prev.at ?? 0)) launches.set(id, { lane, at, seq });
       continue;
     }
-    if (hasRevertEvidence(row)) reverted.add(id);
+    const reverted = hasRevertEvidence(row);
     const merged = mergeEvidence(row, event, phase);
     // An outcome row without merge evidence only ends an attempt when it
     // records empty work. A pre-launch skip cannot finish an earlier attempt.
     const empty = emptyEvidence(row, event, phase);
     const finished = empty || (row.launched !== false && event !== null && FINISH_EVENTS.has(event));
-    if (!merged && !finished) continue;
-    const job = done.get(id) ?? { mergeAt: null, merged: false, finishes: [] };
-    if (merged) {
-      job.merged = true;
-      if (at !== null && (job.mergeAt === null || at > job.mergeAt)) job.mergeAt = at;
-    }
-    if (finished) job.finishes.push({ at, seq, empty });
-    done.set(id, job);
+    if (!merged && !finished && !reverted) continue;
+    const receipts = outcomes.get(id) ?? [];
+    receipts.push({ at, seq, merged, reverted, finished, empty });
+    outcomes.set(id, receipts);
   }
   const out: LaneJob[] = [];
-  for (const [job, d] of done) {
+  for (const [job, receipts] of outcomes) {
     const launch = launches.get(job);
     if (!launch) continue;
-    const finishes = d.finishes.filter(finish =>
-      finish.at !== null && launch.at !== null && finish.at !== launch.at
-        ? finish.at > launch.at
-        : finish.seq > launch.seq);
-    if (!d.merged && finishes.length === 0) continue;
-    const merged = d.merged && !reverted.has(job);
-    let at = d.mergeAt;
+    const eligible = receipts.filter(receipt =>
+      receipt.at !== null && launch.at !== null && receipt.at !== launch.at
+        ? receipt.at > launch.at
+        : receipt.seq > launch.seq);
+    const finishes = eligible.filter(receipt => receipt.finished || receipt.merged);
+    if (finishes.length === 0) continue;
+    const merged = finishes.some(receipt => receipt.merged) && !eligible.some(receipt => receipt.reverted);
+    let at: number | null = null;
     for (const finish of finishes) {
       if (finish.at !== null && (at === null || finish.at > at)) at = finish.at;
     }

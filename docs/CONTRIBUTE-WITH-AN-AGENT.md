@@ -25,6 +25,21 @@ Clone the upstream repository as `origin` and add your fork as a second remote.
 `node scripts/verify-changed.mjs` diffs against `origin/master`, so `origin`
 must be `ashlrai/phantom`, not your fork.
 
+One-time GitHub setup on this machine — a person runs it once and every agent
+on the machine reuses the sign-in. The `gh` commands below and `git push fork`
+both need it, and the fork must exist before the remote can push:
+
+```sh
+gh auth login                              # sign in to GitHub on this machine
+gh auth setup-git                          # git push uses the gh sign-in (safe to re-run)
+gh repo fork ashlrai/phantom --clone=false # creates github.com/<you>/phantom if missing
+```
+
+Skip `gh repo fork` once your fork exists. Prefer SSH for pushes? Keep
+`git remote add fork` pointed at `git@github.com:<you>/phantom.git` with your
+own deploy key instead of running `gh auth setup-git`; the `gh` commands still
+need the sign-in above.
+
 ```sh
 git clone https://github.com/ashlrai/phantom.git
 cd phantom
@@ -33,8 +48,9 @@ git switch -c <topic-branch>
 npm ci
 ```
 
-Requires Node 22.15 or newer and git. If you run several agents in parallel
-worktrees on one machine, use `npm run install:worktree` instead of `npm ci`
+Requires Node 22.15 or newer, git and the GitHub CLI (`gh`). If you run
+several agents in parallel worktrees on one machine, use
+`npm run install:worktree` instead of `npm ci`
 in each worktree: it needs pnpm 10.28.2 and shares one dependency store
 across worktrees (details in [CONTRIBUTING.md](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md#shared-installs-for-trusted-local-worktrees)).
 Run the CLI from source with `npm run dev -- --help`. To open the web console
@@ -74,7 +90,7 @@ protected path, it waits for the owner's review; see
 Run these in the foreground and wait for each to finish:
 
 ```sh
-node scripts/verify-changed.mjs           # lint of changed files, one type check, docs check when docs/deletions changed, quarantine check when tests/ledger changed, syntax check of changed files by type (table below)
+node scripts/verify-changed.mjs           # lint of changed files, one type check, docs check when docs/deletions changed, generated-file freshness when index/launcher/caps inputs changed, quarantine check when tests/ledger changed, syntax check of changed files by type (table below)
 npm run test:ci -- test/<file>.test.ts    # affected backend suites, isolated HOME
 npm run test:web                          # only if src/web-ui/ or desktop/ changed
 npm run check:docs                        # if docs changed (verify-changed already ran it when the diff touched markdown or deleted files)
@@ -128,6 +144,7 @@ exit code is non-zero if any of them failed.
 | Fleet registry | A `src/cli/fleet-*.ts` file changed | Run `node scripts/gen-fleet-registry.mjs` and commit the result. |
 | Authority drift | The diff touches `src/`, `test/`, `scripts/` or `.github/CODEOWNERS` | Review the drift, run `npm run authority:regen` and list each new Tier-1 root in the pull request body. When `origin/master` changed drift-relevant paths since you branched, the step reruns as `authority drift on current master` on your changed files laid over `origin/master`; if that fails, rebase onto `origin/master`, then regenerate. |
 | Docs check | A markdown file changed or a path was deleted | Fix the link or anchor it reports. |
+| Generated-file freshness | A `docs/` page, `docs/llms-source.txt`, `docs/llms.txt` or the llms generator/page-model changed, or `bin/ashlr`, `scripts/canonical-launcher-digests.json` or `scripts/canonical-launcher-digests.mjs` changed; the caps suite also runs when `capabilities/registry.v1.json`, any file under `capabilities/generated/`, any file under `src/core/caps/`, or the generator's outside imports (`src/core/connectors/profile.ts`, `src/core/run/engine-registry.ts`, `src/core/run/model-catalog.ts`) changed | The same read-only checks Merge Gate's "Check generated files" job runs, plus `test/caps-registry.test.ts` for capability-adapter drift. A stale `docs/llms.txt`: run `node scripts/generate-docs-llms.mjs` and commit the result. A launcher digest missing from the manifest: run `npm run canonical-launcher-digests:regen` and commit the result. Stale `capabilities/generated/` adapters: run `npm run dev -- caps generate` (or `phm caps generate`) in the repo and commit the result, or revert the input change. |
 | ESLint | A JavaScript or TypeScript file changed | Fix the reported lines. |
 | Python syntax check | A `.py` file or an extensionless script with a python shebang changed | Fix the reported `SyntaxError`. The files are compiled with `python3` without writing bytecode; with no working `python3` the step prints `SKIP`. |
 | Shell syntax check | A `.sh` file or an extensionless script with a `sh`/`bash`/`dash` shebang changed | Fix the parse error `bash -n` reports. With no working `bash` the step prints `SKIP`. |

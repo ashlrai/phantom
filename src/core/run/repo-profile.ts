@@ -10,6 +10,7 @@
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, win32 } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { isRecord } from './tool-calls.js';
 import type { VerifyCommand, VerifyCommandProfile } from './verify-commands.js';
 
 export type RepoPackageManager =
@@ -194,7 +195,7 @@ function readPackageJson(root: string): PackageJsonSubset | null {
 
 function scriptsOf(pkg: PackageJsonSubset | null): Record<string, string> {
   const scripts = pkg?.scripts;
-  if (!scripts || typeof scripts !== 'object') return {};
+  if (!isRecord(scripts)) return {};
   const out: Record<string, string> = {};
   for (const [name, value] of Object.entries(scripts)) {
     if (typeof value === 'string') out[name] = value;
@@ -205,8 +206,8 @@ function scriptsOf(pkg: PackageJsonSubset | null): Record<string, string> {
 function hasDep(pkg: PackageJsonSubset | null, dep: string): boolean {
   if (!pkg) return false;
   return (
-    (pkg.dependencies !== undefined && dep in pkg.dependencies) ||
-    (pkg.devDependencies !== undefined && dep in pkg.devDependencies)
+    (isRecord(pkg.dependencies) && dep in pkg.dependencies) ||
+    (isRecord(pkg.devDependencies) && dep in pkg.devDependencies)
   );
 }
 
@@ -620,7 +621,7 @@ function projectCwd(repoRoot: string, projectRoot: string): string | undefined {
 }
 
 /** Normalize verifier metadata so equivalent repositories hash identically. */
-export function canonicalizeVerifyCommands(
+function canonicalizeVerifyCommands(
   repoRoot: string,
   commands: readonly VerifyCommand[],
 ): CanonicalVerifyCommand[] {

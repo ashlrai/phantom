@@ -246,6 +246,15 @@ describe('planFleetAutopilot', () => {
     expect(report.action).toMatchObject({ kind: 'no-op', reason: 'fleet-healthy' });
   });
 
+  it.each(['codex-local', 'omlx'])('proposes restock for %s while open work feeds cloud lanes', local => {
+    const report = planFleetAutopilot(state({
+      admission: admission([admissionLane('devin', 0, 3, 0), admissionLane(local, 0, 2, 0)], 18, 0),
+      queue: queueView({ ready: 2, total: 2, unhinted: 2 }),
+    }));
+    expect(report.gaps.map(gap => [gap.kind, gap.lane])).toEqual([['missing-restock', local]]);
+    expect(report.action).toMatchObject({ kind: 'enqueue', type: 'restock', count: 2, lane: local });
+  });
+
   it('proposes rebase jobs for uncovered conflicting PRs, capped', () => {
     const report = planFleetAutopilot(state({
       sources: { status: 'healthy', queue: 'healthy', slots: 'healthy', rebase: 'ok' },
@@ -392,7 +401,7 @@ describe('readFleetAutopilotState', () => {
       repos: ['ashlrai/phantom'],
       statusText: async () => JSON.stringify({
         last_tick: '2026-11-06T23:59:00Z',
-        admission: { cap: 4, running: 2, load1: 1, reason: null },
+        admission: { admit: true, cap: 4, running: 2, load1: 1, reason: null },
         lanes: { devin: { running: 1, target: 2, queued: 1, held: false } },
       }),
       queue: async () => queue,
@@ -419,7 +428,7 @@ describe('readFleetAutopilotState', () => {
         now: () => new Date('2026-11-07T00:00:00Z'),
         statusText: async () => JSON.stringify({
           last_tick,
-          admission: { cap: 4, running: 1, load1: 1, reason: null },
+          admission: { admit: true, cap: 4, running: 1, load1: 1, reason: null },
           lanes: {
             devin: { running: 1, target: 2, queued: 1, held: false },
             codex: { running: 0, target: 2, queued: 0, held: false },
@@ -449,7 +458,7 @@ describe('readFleetAutopilotState', () => {
       now: () => new Date(lastTick),
       statusText: async () => JSON.stringify({
         last_tick: lastTick,
-        admission: { ts, cap: 4, running: 1, load1: 1 },
+        admission: { ts, admit: true, cap: 4, running: 1, load1: 1 },
         lanes: { devin: { running: 0, target: 2, queued: 0, held: false } },
       }),
       queue: async () => queueView(),
@@ -460,6 +469,36 @@ describe('readFleetAutopilotState', () => {
     expect(report.global.cap).toBe(source === 'healthy' ? 4 : null);
     expect(report.lanes[0]).toMatchObject({ ready: 0, target: 2 });
     expect(report.action.kind).toBe(action);
+  });
+
+  it.each([
+    { fields: {}, closed: null },
+    { fields: { admit: 'true' }, closed: null },
+    { fields: { decision: 'unknown' }, closed: null },
+    { fields: { admit: true, decision: 'stop' }, closed: null },
+    { fields: { admit: false, decision: 'admit' }, closed: null },
+    { fields: { decision: 'admit' }, closed: false },
+    { fields: { admit: false }, closed: true },
+    { fields: { admit: false, decision: 'stop' }, closed: true },
+  ])('requires usable dispatcher admission evidence from $fields', async ({ fields, closed }) => {
+    const lastTick = '2026-11-07T00:00:00Z';
+    const assembled = await readFleetAutopilotState({
+      now: () => new Date(lastTick),
+      statusText: async () => JSON.stringify({
+        last_tick: lastTick,
+        admission: { ...fields, ts: lastTick, cap: 4, running: 1, load1: 1 },
+        lanes: { devin: { running: 1, target: 2, queued: 0, held: false } },
+      }),
+      queue: async () => queueView(),
+      slots: async () => slotsView([slotLane('devin', 2)]),
+    });
+    const report = planFleetAutopilot(assembled);
+    expect(report.sources.status).toBe(closed === null ? 'degraded' : 'healthy');
+    expect(report.global.closed).toBe(closed);
+    expect(report.lanes[0]).toMatchObject({ ready: 0, target: 2, freeSlots: closed === null ? null : 1 });
+    expect(report.action).toMatchObject(closed === false
+      ? { kind: 'enqueue', type: 'restock', count: 1 }
+      : { kind: 'no-op', reason: closed ? 'admission-closed' : 'fleet-healthy' });
   });
 
   it('reports missing status and skips rebase reads without --repo', async () => {
@@ -575,6 +614,32 @@ describe('readFleetQueue depDetail metDeps', () => {
     return dir;
   };
 
+  it.each([
+    { hint: 'devin', readyFirst: false },
+    { hint: 'devin', readyFirst: true },
+    { hint: '', readyFirst: false },
+    { hint: '', readyFirst: true },
+  ])('skips dependency recovery for a READY copy ($hint, first=$readyFirst)', async ({ hint, readyFirst }) => {
+    const dir = await seed();
+    const metPrompt = join(dir, 'queue', 'prompts', 'met.md');
+    const unmetPrompt = join(dir, 'queue', 'prompts', 'unmet.md');
+    await writeFile(metPrompt, 'DEPENDENCY GATE: RQ-DONE\n');
+    await writeFile(unmetPrompt, 'DEPENDENCY GATE: RQ-OPEN\n');
+    const ready = `RQ-MET\tphantom\t${hint}\twork\t${metPrompt}`;
+    const parked = `RQ-MET\tphantom\tPARKED-DEP.devin\twork\t${metPrompt}`;
+    await writeFile(join(dir, 'queue', 'ready.tsv'), [
+      ...(readyFirst ? [ready, parked] : [parked, ready]),
+      `RQ-UNMET\tphantom\tPARKED-DEP.devin\twork\t${unmetPrompt}`,
+    ].join('\n'));
+    await writeFile(join(dir, 'metrics', 'jobs.jsonl'), '{"event":"outcome","state":"MERGED","job":"RQ-DONE"}\n');
+
+    const queue = await readFleetQueue({ runsDir: dir, depDetail: true });
+    expect(queue).toMatchObject({ ready: 1, parked: 2, malformed: 0, unhinted: hint === '' ? 1 : 0, metDeps: [] });
+    expect(queue.unmetDeps).toEqual([{ job: 'RQ-UNMET', lane: 'devin', unmet: ['RQ-OPEN'] }]);
+    const report = planFleetAutopilot(state({ queue }));
+    expect(report.gaps.some((gap) => gap.kind === 'stale-parked-deps')).toBe(false);
+  });
+
   it('caps met and unmet dependency projections independently at 50 rows', async () => {
     const dir = await seed();
     const metPrompt = join(dir, 'queue', 'prompts', 'met.md');
@@ -627,7 +692,7 @@ describe('fleet autopilot end-to-end on a fixture runs dir', () => {
       'READY\tRQ-NEW\tdevin\twork\tphantom\tprompts/x.md\n');
     await writeFile(join(dir, 'queue', 'status.json'), JSON.stringify({
       last_tick: '2026-11-07T00:00:00Z',
-      admission: { cap: 4, running: 1, load1: 1, reason: null },
+      admission: { admit: true, cap: 4, running: 1, load1: 1, reason: null },
       lanes: {
         devin: { running: 1, target: 2, queued: 1, held: false },
         'codex-local': { running: 0, target: 2, queued: 0, held: false },
@@ -661,7 +726,7 @@ describe('fleet autopilot end-to-end on a fixture runs dir', () => {
       `${JSON.stringify({ event: 'outcome', state: 'MERGED', job: 'RQ-DONE' })}\n`);
     await writeFile(join(dir, 'queue', 'status.json'), JSON.stringify({
       last_tick: '2026-11-07T00:00:00Z',
-      admission: { cap: 4, running: 2, load1: 1, reason: null },
+      admission: { admit: true, cap: 4, running: 2, load1: 1, reason: null },
       lanes: { devin: { running: 2, target: 2, queued: 1, held: false } },
     }));
     await writeFile(join(dir, 'queue', 'slots.json'), JSON.stringify({
@@ -686,7 +751,7 @@ describe('fleet autopilot end-to-end on a fixture runs dir', () => {
       'READY\tRQ-NEW\tdevin\twork\tphantom\tprompts/x.md\n');
     await writeFile(join(dir, 'queue', 'status.json'), JSON.stringify({
       last_tick: '2026-11-07T00:00:00Z',
-      admission: { cap: 4, running: 1, load1: 1, reason: null },
+      admission: { admit: true, cap: 4, running: 1, load1: 1, reason: null },
       lanes: {
         devin: { running: 1, target: 1, queued: 1, held: false },
         'codex-local': { running: 0, target: 2, queued: 0, held: false },

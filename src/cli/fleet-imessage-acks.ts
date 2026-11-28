@@ -10,6 +10,7 @@ export interface FleetImessageAcksDeps {
 export async function cmdFleetImessageAcks(args: string[], deps: FleetImessageAcksDeps = {}): Promise<number> {
   const output = deps.output ?? console.log;
   const error = deps.error ?? console.error;
+  if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { output(USAGE); return 0; }
   let limit = 20;
   let json = false;
   let seenLimit = false;

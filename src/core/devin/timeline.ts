@@ -40,9 +40,9 @@ import {
 } from '../cloud/timeline.js';
 import { CLOUD_TIMELINE_SCHEMA_VERSION, type CloudTimelineResponse, type TimelineStep } from '../cloud/timeline-types.js';
 import { readDevinBudget, readDevinTask } from './store.js';
-import { DEVIN_REPORT_FENCE, DEVIN_TASK_ID_PATTERN, DEVIN_USAGE_URL, type DevinTaskV1 } from './types.js';
+import { DEVIN_REPORT_FENCE, DEVIN_TASK_ID_PATTERN, DEVIN_USAGE_URL, isValidDevinAcu, type DevinTaskV1 } from './types.js';
 
-export const DEVIN_TIMELINE_WORDS: TimelineLaneWords = {
+const DEVIN_TIMELINE_WORDS: TimelineLaneWords = {
   record: 'Devin task record',
   tracker: 'GitHub, read by the Devin tracker',
   trackerAndGit: 'GitHub (Devin tracker) + local git',
@@ -163,7 +163,7 @@ function workerStep(task: DevinTaskV1, model: string | null): Step {
 const fmtAcu = (n: number): string => (Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0+$/, '').replace(/\.$/, ''));
 
 function validAcu(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+  return isValidDevinAcu(value) ? value : null;
 }
 
 function costStep(task: DevinTaskV1, usdPerAcu: number | null): Step {

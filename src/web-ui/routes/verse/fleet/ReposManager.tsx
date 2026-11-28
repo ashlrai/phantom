@@ -13,16 +13,28 @@ const display = (value: string | number | null) => value === null ? 'Unknown' : 
 export function ReposManager({ grantFlow, readOnly }: { grantFlow: GrantFlow; readOnly: boolean }) {
   const [data, setData] = useState<Repos | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [requested, setRequested] = useState<{ repo: string; priority: RepoPriority } | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
     void apiGet<Repos>('/api/repos', controller.signal).then(value => {
-      if (!controller.signal.aborted) setData(value);
+      if (!controller.signal.aborted) {
+        setData(value);
+        setRequested(previous => previous && value.repos.some(row =>
+          row.repo === previous.repo && row.priority === previous.priority) ? null : previous);
+      }
     }).catch(() => {
-      if (!controller.signal.aborted) setError('Repository data could not be loaded.');
+      if (!controller.signal.aborted) {
+        setError('Repository data could not be loaded.');
+        setData(previous => previous && previous.prioritySync !== 'leader' ? {
+          ...previous, prioritySync: 'unavailable', prioritySource: null,
+          repos: previous.repos.map(row => ({ ...row, priority: null, allocation: null })),
+        } : previous);
+      }
     });
-    return () => controller.abort();
+    const timer = setTimeout(() => setRevision(value => value + 1), 30_000);
+    return () => { controller.abort(); clearTimeout(timer); };
   }, [revision]);
 
   async function setPriority(repo: string, priority: RepoPriority) {
@@ -33,6 +45,7 @@ export function ReposManager({ grantFlow, readOnly }: { grantFlow: GrantFlow; re
     try {
       await apiPost('/api/repos/priority', { repo, priority }, token);
       touchMutationHold();
+      setRequested({ repo, priority });
       setRevision(value => value + 1);
     } catch {
       setError('The priority could not be saved.');
@@ -41,15 +54,21 @@ export function ReposManager({ grantFlow, readOnly }: { grantFlow: GrantFlow; re
     }
   }
 
+  const pending = requested && data?.repos.some(row => row.repo === requested.repo && row.priority !== requested.priority);
+
   return <section id="repos-manager" className={styles.card} aria-labelledby="repos-manager-title">
     <header className={styles.heading}>
       <div><div className={styles.eyebrow}>FLEET / WORK MARKET</div><h2 id="repos-manager-title">Repos manager</h2></div>
       <div className={styles.buttons}>
-        {data?.prioritySync === 'local-only' ? <span className={styles.badge} title="Priority changes apply only on this Mac.">Not synced</span> : null}
+        {data?.prioritySync === 'unavailable' ? <span className={styles.badge} title="No fresh priority snapshot from the fleet leader.">Not synced</span> : null}
         <Button size="sm" onClick={() => { setError(null); setRevision(value => value + 1); }}>Refresh</Button>
       </div>
     </header>
     <p className={styles.description}>Work is allocated by evidence, not repo order. Boost adds at most 25% to a scheduling score; pause stops new queue claims without changing the signed grant.</p>
+    {data?.prioritySync === 'synced' && data.prioritySource ? <p className={styles.description}>
+      Priorities from {data.prioritySource.machine} · {data.prioritySource.ageSeconds}s old · Read-only
+    </p> : null}
+    {pending ? <p role="status">Priority request queued for the leader scheduler.</p> : null}
     {error ? <p role="status">{error}</p> : !data ? <p role="status">Reading repository evidence…</p> : null}
     {data?.enrollmentStatus === 'degraded' ? <p role="status">Enrollment data is unavailable. Authority has not changed.</p> : null}
     {data?.canManageGrant === false ? <p className={styles.description}>Review signed grant changes on the leader.</p> : null}
@@ -65,14 +84,15 @@ export function ReposManager({ grantFlow, readOnly }: { grantFlow: GrantFlow; re
           <td>{display(row.queueDepth)}</td><td>{display(row.mergesPerDay)}</td><td>{display(row.openPrs)}</td>
           <td><span className={styles.ci} data-ci={row.ciHealth ?? 'unknown'}>{display(row.ciHealth)}</span></td>
           <td>{row.lastRelease ? <>{row.lastRelease.tag}<small><time dateTime={row.lastRelease.publishedAt}>{row.lastRelease.publishedAt.slice(0, 10)}</time></small></> : 'Unknown'}</td>
-          <td className={styles.allocation}>
+          <td className={styles.allocation}>{row.allocation ? <>
             <strong>{(row.allocation.share * 100).toFixed(1)}%</strong><small>{row.allocation.source === 'queue' ? 'Queue target' : 'Estimate'}</small>
             <details><summary>Why</summary><ul>{row.allocation.reasonCodes.map(reason => <li key={reason}><code>{reason}</code></li>)}</ul></details>
-          </td>
-          <td><select aria-label={`Priority for ${row.label}`} value={row.priority} disabled={readOnly || saving !== null}
+          </> : 'Unknown'}</td>
+          <td>{data.prioritySync === 'leader' ? <select aria-label={`Priority for ${row.label}`} value={row.priority ?? ''} disabled={readOnly || saving !== null}
             onChange={event => void setPriority(row.repo, event.target.value as RepoPriority)}>
+            {row.priority === null ? <option value="" disabled>Unknown</option> : null}
             <option value="normal">Normal</option><option value="boost">Boost</option><option value="pause">Pause</option>
-          </select>
+          </select> : <span>{row.priority === 'boost' ? 'Boost' : row.priority === 'pause' ? 'Pause' : row.priority === 'normal' ? 'Normal' : 'Unknown'}</span>}
           <div className={styles.buttons}>
             {row.enrolled === false ? <Button size="sm" disabled={readOnly || !data.canManageGrant} onClick={() => grantFlow.open('grant',
               `Review enrolling ${row.repo}. If its checkout is not ready, first prepare and enroll it. Only the signed grant enables standing authority.`, null,

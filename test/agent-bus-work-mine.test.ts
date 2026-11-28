@@ -19,7 +19,7 @@ import { enqueueBusWake, readBusWakes } from '../src/core/fleet/bus-wake-queue.j
 import { createBusMailbox } from '../src/core/fleet/bus-mailbox.js';
 import { SharedStore } from '../src/core/fleet/shared-store.js';
 import type { AshlrConfig } from '../src/core/types.js';
-import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
+import type { BusEnvelope, BusPriority } from '../src/core/fleet/bus-envelope.js';
 import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import { runAgentsBusUnified } from '../src/cli/agents-bus-unified.js';
 
@@ -898,15 +898,16 @@ describe('readBusWorkMine', () => {
       { root: options.root, now: options.now });
     expect(aliasPost.status).toBe('posted');
     // Handoff-shaped bodies handoff-receive would refuse are not pending assignments.
-    for (const [i, body] of [
+    const badBodies: BusEnvelope['body'][] = [
       { kind: 'worker-handoff', taskId: 'not a job id!', prompt: 'x' },
       { kind: 'worker-handoff', taskId: 'RQ-H-9', prompt: '' },
       { kind: 'worker-handoff', taskId: 'RQ-H-9', prompt: 'x', extra: 1 },
       { kind: 'worker-handoff', taskId: 'RQ-H-9' },
       { kind: 'note', text: 'worker-handoff-ish' },
-    ].entries()) {
+    ];
+    for (const [i, body] of badBodies.entries()) {
       const posted = appendBusInbox({ id: `ho-bad-${i}`, from: 'agent:nova', to: 'agent:atlas',
-        priority: 'P0', ttl: 120_000, body: body as BusEnvelope['body'] },
+        priority: 'P0', ttl: 120_000, body },
         { root: options.root, now: options.now });
       expect(posted.status).toBe('posted');
     }
@@ -1011,14 +1012,14 @@ describe('readBusWorkMine', () => {
       prompt: 'take the unanswered task', id: 'ho-unans' }, options)).toMatchObject({ status: 'posted' });
     // A bystander citing the id and the assigner replying onward are not the
     // assignee's routed answer, so the assignment stays pending.
-    for (const env of [
-      { id: 'ho-unans-bye', from: 'agent:bystander', to: 'leaders',
+    const envelopes: BusEnvelope[] = [
+      { id: 'ho-unans-bye', from: 'agent:bystander', to: 'leaders', priority: 'P2', ttl: 120_000,
         body: { kind: 'note', inReplyTo: 'ho-unans', text: 'fyi' } },
-      { id: 'ho-unans-fwd', from: 'agent:nova', to: 'agent:atlas',
+      { id: 'ho-unans-fwd', from: 'agent:nova', to: 'agent:atlas', priority: 'P2', ttl: 120_000,
         body: { kind: 'worker-exit', inReplyTo: 'ho-unans', exitCode: 0, succeeded: true } },
-    ]) {
-      const posted = appendBusInbox({ ...env, priority: 'P2', ttl: 120_000 } as BusEnvelope,
-        { root: options.root, now: options.now });
+    ];
+    for (const env of envelopes) {
+      const posted = appendBusInbox(env, { root: options.root, now: options.now });
       expect(posted.status).toBe('posted');
     }
     const result = readBusWorkMine('atlas', options);
@@ -1480,7 +1481,7 @@ describe('readBusWorkMine', () => {
     postLetter(options, 'dl-other', deadLetterBody({ id: 'orig-3', to: 'agent:ghost' }));
     postLetter(options, 'dl-bare', deadLetterBody({ bare: true }));
     postLetter(options, 'dl-self', deadLetterBody({ id: 'orig-5', from: 'agent:atlas', to: 'group:eng:general' }));
-    createAgentChannel({ name: 'eng', members: ['atlas'] }, options);
+    createAgentChannel({ name: 'eng', createdBy: 'atlas', members: ['atlas'] }, options);
 
     const result = readBusWorkMine('atlas', options);
     expect(result.status).toBe('ok');
@@ -2766,7 +2767,7 @@ describe('readBusWorkMine', () => {
       .toBe('created');
 
     const post = (id: string, from: string, to: string, body: Record<string, unknown>,
-      priority: 'P0' | 'P2' = 'P2'): void => {
+      priority: BusPriority = 'P2'): void => {
       const posted = appendBusInbox({ id, from, to, priority, ttl: 120_000, body },
         { root: options.root, now: options.now });
       expect(posted.status).toBe('posted');
@@ -2974,7 +2975,7 @@ describe('readBusWorkMine', () => {
     if (none.next.status !== 'ok' || none.jobs.status !== 'ok' || none.announced.status !== 'ok' ||
         none.threads.status !== 'ok' || none.awaiting.status !== 'ok' || none.blocked.status !== 'ok' ||
         none.wakes.status !== 'ok' || none.inbox.status !== 'ok' || none.mailbox.status !== 'ok' ||
-        none.claims.status !== 'ok') throw new Error('unreachable');
+        none.claims.status !== 'ok' || none.handoffs.status !== 'ok') throw new Error('unreachable');
     expect(none.next.matched).toBe(0);
     expect(none.handoffs.matched).toBe(0);
     expect(none.jobs.open).toBe(0);
@@ -2990,6 +2991,292 @@ describe('readBusWorkMine', () => {
     expect(none.channels).toEqual(all.channels);
   });
 
+  it('filters the digest to one group topic across the address-bearing sections', async () => {
+    // Real wall time: mutateBusWorkClaim checks the leased envelope's TTL
+    // against Date.now(), not the injected read clock.
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova', 'ghost');
+    for (const [handle, cli, provider] of [['atlas', 'claude', 'claude'], ['nova', 'codex', 'codex-personal'],
+      ['ghost', 'grok', 'local']] as const) {
+      registerAgentIdentity({ handle, runtime: { cli, provider, model: null } }, options);
+    }
+    // eng and ops both count atlas and nova; ghost belongs to neither.
+    expect(createAgentChannel({ name: 'eng', createdBy: 'atlas', members: ['nova'] }, options).status)
+      .toBe('created');
+    expect(createAgentChannel({ name: 'ops', createdBy: 'nova', members: ['atlas'] }, options).status)
+      .toBe('created');
+
+    const post = (id: string, from: string, to: string, body: Record<string, unknown>,
+      priority: 'P0' | 'P1' | 'P2' = 'P2'): void => {
+      const posted = appendBusInbox({ id, from, to, priority, ttl: 120_000, body },
+        { root: options.root, now: options.now });
+      expect(posted.status).toBe('posted');
+    };
+
+    // Claimable work and worker-handoffs on the eng room's two topics, one
+    // ops-room alerts post (the topic match is room-agnostic), and a DM.
+    postClaimable(options, 'w-eng-gen', { to: 'group:eng:general', from: 'agent:ghost', priority: 'P1' });
+    postClaimable(options, 'w-eng-al', { to: 'group:eng:alerts', from: 'agent:ghost', priority: 'P0' });
+    postClaimable(options, 'w-dm', { to: 'agent:atlas', priority: 'P2' });
+    post('ho-eng-gen', 'agent:ghost', 'group:eng:general',
+      { kind: 'worker-handoff', taskId: 'RQ-T-EG', prompt: 'eng general handoff' }, 'P1');
+    post('ho-eng-al', 'agent:ghost', 'group:eng:alerts',
+      { kind: 'worker-handoff', taskId: 'RQ-T-EA', prompt: 'eng alerts handoff' }, 'P1');
+    post('ho-ops-al', 'agent:ghost', 'group:ops:alerts',
+      { kind: 'worker-handoff', taskId: 'RQ-T-OA', prompt: 'ops alerts handoff' }, 'P2');
+    post('ho-dm', 'agent:nova', 'agent:atlas',
+      { kind: 'worker-handoff', taskId: 'RQ-T-D', prompt: 'dm handoff' }, 'P2');
+
+    // Feed announcements on each topic; atlas announces one per eng topic.
+    await announce(options, 'ghost', 'RQ-T-J-EG', ['queue:RQ-T-J-EG'], 'group:eng:general');
+    await announce(options, 'ghost', 'RQ-T-J-EA', ['queue:RQ-T-J-EA'], 'group:eng:alerts');
+    await announce(options, 'ghost', 'RQ-T-J-OA', ['queue:RQ-T-J-OA'], 'group:ops:alerts');
+    await announce(options, 'atlas', 'RQ-T-J-MG', ['queue:RQ-T-J-MG'], 'group:eng:general');
+    await announce(options, 'atlas', 'RQ-T-J-MA', ['queue:RQ-T-J-MA'], 'group:eng:alerts');
+
+    // Threads, atlas's own asks and blocked reports on each topic plus a DM.
+    post('th-gen', 'agent:ghost', 'group:eng:general', { kind: 'note', text: 'gen question?', thread: 't-gen' });
+    post('th-al', 'agent:ghost', 'group:eng:alerts', { kind: 'note', text: 'alerts question?', thread: 't-al' });
+    post('th-dm', 'agent:nova', 'agent:atlas', { kind: 'note', text: 'dm question?', thread: 't-dm' });
+    post('aw-gen', 'agent:atlas', 'group:eng:general', { kind: 'note', text: 'gen ask?', thread: 't-aw-gen' });
+    post('aw-al', 'agent:atlas', 'group:eng:alerts', { kind: 'note', text: 'alerts ask?', thread: 't-aw-al' });
+    post('blk-gen', 'agent:ghost', 'group:eng:general',
+      { kind: 'blocker', text: 'gen deploy blocked', thread: 't-blk-gen' });
+    post('blk-al', 'agent:ghost', 'group:eng:alerts',
+      { kind: 'blocker', text: 'alerts deploy blocked', thread: 't-blk-al' });
+
+    // Wake hints on each topic plus the DM.
+    const wake = (id: string, from: string, to: string): void => {
+      expect(enqueueBusWake({ kind: 'bus.send', id, from, to },
+        { root: options.runsRoot, now: options.now })).toBe('queued');
+    };
+    wake('wk-gen', 'agent:ghost', 'group:eng:general');
+    wake('wk-al', 'agent:ghost', 'group:eng:alerts');
+    wake('wk-ops-al', 'agent:ghost', 'group:ops:alerts');
+    wake('wk-dm', 'agent:nova', 'agent:atlas');
+
+    // Legacy mailbox mail addressed to each topic label.
+    const mailboxSend = (id: string, to: string): void => {
+      expect(createBusMailbox(dirname(options.root), options.now).send({ id, from: 'agent:nova',
+        to, priority: 'P2', ttl: 120_000, body: { text: `legacy ${id}` } }).replayed).toBe(false);
+    };
+    mailboxSend('mb-gen', 'group:eng:general');
+    mailboxSend('mb-al', 'group:eng:alerts');
+
+    // Dead letters whose ORIGINAL recipient sits on each topic.
+    postLetter(options, 'dl-gen', deadLetterBody({ id: 'orig-dl-gen', from: 'agent:ghost',
+      to: 'group:eng:general' }));
+    postLetter(options, 'dl-al', deadLetterBody({ id: 'orig-dl-al', from: 'agent:ghost',
+      to: 'group:eng:alerts' }));
+    postLetter(options, 'dl-ops-al', deadLetterBody({ id: 'orig-dl-ops-al', from: 'agent:ghost',
+      to: 'group:ops:alerts' }));
+    postLetter(options, 'dl-dm', deadLetterBody({ id: 'orig-dl-dm', from: 'agent:nova',
+      to: 'agent:atlas' }));
+
+    // Message claims on the claimable envelopes, a scope claim with no
+    // message at all, and a message claim whose envelope does not resolve.
+    takeWork(options, 'w-eng-gen', 'atlas');
+    takeWork(options, 'w-eng-al', 'atlas');
+    takeWork(options, 'w-dm', 'atlas');
+    claim(options, 'repo:a/b', 'atlas', 'test:scope', options.clock.now);
+    expect(acquireCoordination({ root: options.root, origin: 'message', key: 'queue:missing-1',
+      owner: 'atlas', leaseMs: 60_000, leaseUntil: options.clock.now + 60_000,
+      sourceId: 'missing-1:0:0', now: options.clock.now,
+      started: new Date(options.clock.now).toISOString() }).status).toBe('acquired');
+
+    const all = readBusWorkMine('atlas', options);
+    expect(all.status).toBe('ok');
+    if (all.status !== 'ok') throw new Error('unreachable');
+    const result = readBusWorkMine('atlas', { ...options, topic: 'general' });
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    expect(result.topic).toBe('general');
+    expect(formatBusWorkMine(result)[0]).toContain('topic=general');
+
+    // next and handoffs keep only envelopes whose to parses to the topic —
+    // room-agnostic, so an ops room's `general` traffic would match too
+    // (none exists here); the DM and alerts posts drop.
+    expect(result.next).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.next.status !== 'ok') throw new Error('unreachable');
+    expect(result.next.items.map(item => item.id)).toEqual(['w-eng-gen']);
+    expect(result.handoffs).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.handoffs.status !== 'ok') throw new Error('unreachable');
+    expect(result.handoffs.items.map(item => item.id)).toEqual(['ho-eng-gen']);
+    if (all.next.status !== 'ok' || all.handoffs.status !== 'ok') throw new Error('unreachable');
+    expect(all.next.matched).toBe(3);
+    expect(all.handoffs.matched).toBe(4);
+
+    // Open jobs keep only announcements addressed to the topic; announced
+    // keeps only atlas's own general announcement.
+    expect(result.jobs).toMatchObject({ status: 'ok', open: 2 });
+    if (result.jobs.status !== 'ok') throw new Error('unreachable');
+    expect(result.jobs.jobs.map(entry => entry.id).sort())
+      .toEqual(['RQ-T-J-EG', 'RQ-T-J-MG']);
+    expect(result.announced).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.announced.status !== 'ok') throw new Error('unreachable');
+    expect(result.announced.items.map(entry => entry.id)).toEqual(['RQ-T-J-MG']);
+    if (all.jobs.status !== 'ok' || all.announced.status !== 'ok') throw new Error('unreachable');
+    expect(all.jobs.open).toBe(5);
+    expect(all.announced.matched).toBe(2);
+
+    // Claims keep only the message claim whose leased envelope sits on the
+    // topic: the alerts/dm leases, the scope claim and the unresolvable
+    // lease name no provable topic.
+    expect(result.claims.status).toBe('ok');
+    if (result.claims.status !== 'ok') throw new Error('unreachable');
+    expect(result.claims.claims.map(row => row.key)).toEqual(['queue:w-eng-gen']);
+    if (all.claims.status !== 'ok') throw new Error('unreachable');
+    expect(all.claims.claims.map(row => row.key).sort())
+      .toEqual(['queue:missing-1', 'queue:w-dm', 'queue:w-eng-al', 'queue:w-eng-gen', 'repo:a/b']);
+
+    // Threads keep waits whose latest message is addressed to the topic:
+    // the gen note, gen handoff and ghost's gen job announcement stay;
+    // the alerts pair, the ops alerts pair, the DM thread and atlas's own
+    // posts drop (her gen posts wait in awaiting instead).
+    expect(result.threads).toMatchObject({ status: 'ok', matched: 3 });
+    if (result.threads.status !== 'ok') throw new Error('unreachable');
+    expect(result.threads.items.map(item => item.messageId).sort())
+      .toEqual(['ho-eng-gen', 'post-RQ-T-J-EG', 'th-gen']);
+    expect(result.awaiting).toMatchObject({ status: 'ok', matched: 2 });
+    if (result.awaiting.status !== 'ok') throw new Error('unreachable');
+    expect(result.awaiting.items.map(item => item.messageId).sort())
+      .toEqual(['aw-gen', 'post-RQ-T-J-MG']);
+    expect(result.blocked).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.blocked.status !== 'ok') throw new Error('unreachable');
+    expect(result.blocked.items.map(item => item.messageId)).toEqual(['blk-gen']);
+
+    // Wakes keep only hints whose own to parses to the topic.
+    expect(result.wakes).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.wakes.status !== 'ok') throw new Error('unreachable');
+    expect(result.wakes.wakes.map(row => row.id)).toEqual(['wk-gen']);
+    if (all.wakes.status !== 'ok') throw new Error('unreachable');
+    expect(all.wakes.matched).toBe(4);
+
+    // Inbox keeps only mail addressed under the topic — the section forwards
+    // the shared filter to the delegated read, whose matched scan still
+    // reports the true filtered total across the retained store.
+    expect(result.inbox.status).toBe('ok');
+    if (result.inbox.status !== 'ok') throw new Error('unreachable');
+    expect(result.inbox.matched).toBe(5);
+    expect(result.inbox.messages.map(message => message.id).sort())
+      .toEqual(['blk-gen', 'ho-eng-gen', 'post-RQ-T-J-EG', 'th-gen', 'w-eng-gen']);
+
+    // Mailbox keeps only rows whose to parses to the topic: atlas's labels
+    // never name a group address, so the section stays empty for her and
+    // only the ref that IS the topic address lists its own row.
+    expect(result.mailbox).toMatchObject({ status: 'ok', matched: 0, messages: [] });
+    const topicRef = readBusWorkMine('group:eng:general', { ...options, topic: 'general' });
+    expect(topicRef.status).toBe('ok');
+    if (topicRef.status !== 'ok') throw new Error('unreachable');
+    expect(topicRef.mailbox).toMatchObject({ status: 'ok', matched: 1 });
+    if (topicRef.mailbox.status !== 'ok') throw new Error('unreachable');
+    expect(topicRef.mailbox.messages.map(message => message.id)).toEqual(['mb-gen']);
+    const alertsRef = readBusWorkMine('group:eng:alerts', { ...options, topic: 'alerts' });
+    if (alertsRef.status !== 'ok') throw new Error('unreachable');
+    if (alertsRef.mailbox.status !== 'ok') throw new Error('unreachable');
+    expect(alertsRef.mailbox.messages.map(message => message.id)).toEqual(['mb-al']);
+
+    // Dead letters keep only reports whose ORIGINAL recipient parses to the
+    // topic — the ops alerts letter matches 'alerts' but not 'general'.
+    expect(result.deadLetters).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.deadLetters.status !== 'ok') throw new Error('unreachable');
+    expect(result.deadLetters.items.map(item => item.id)).toEqual(['dl-gen']);
+
+    // Board, channels, sessions, coordination and seats carry no per-item
+    // topic and stay whole.
+    expect(result.board).toEqual(all.board);
+    expect(result.channels).toEqual(all.channels);
+
+    // The topic verdict is room-agnostic like every other bus --topic read:
+    // 'alerts' keeps the eng AND ops alerts traffic, while channel+topic
+    // composes into one room AND topic.
+    const alerts = readBusWorkMine('atlas', { ...options, topic: 'alerts' });
+    expect(alerts.status).toBe('ok');
+    if (alerts.status !== 'ok') throw new Error('unreachable');
+    expect(alerts.topic).toBe('alerts');
+    if (alerts.next.status !== 'ok' || alerts.handoffs.status !== 'ok' ||
+        alerts.wakes.status !== 'ok' || alerts.claims.status !== 'ok' ||
+        alerts.inbox.status !== 'ok' || alerts.deadLetters.status !== 'ok') throw new Error('unreachable');
+    expect(alerts.next.items.map(item => item.id)).toEqual(['w-eng-al']);
+    expect(alerts.handoffs.items.map(item => item.id)).toEqual(['ho-eng-al', 'ho-ops-al']);
+    expect(alerts.wakes.wakes.map(row => row.id).sort()).toEqual(['wk-al', 'wk-ops-al']);
+    expect(alerts.claims.claims.map(row => row.key)).toEqual(['queue:w-eng-al']);
+    expect(alerts.inbox.matched).toBe(7);
+    expect(alerts.deadLetters.matched).toBe(2);
+    if (alerts.jobs.status !== 'ok' || alerts.announced.status !== 'ok' ||
+        alerts.threads.status !== 'ok' || alerts.awaiting.status !== 'ok' ||
+        alerts.blocked.status !== 'ok') throw new Error('unreachable');
+    expect(alerts.jobs.jobs.map(entry => entry.id).sort())
+      .toEqual(['RQ-T-J-EA', 'RQ-T-J-MA', 'RQ-T-J-OA']);
+    expect(alerts.announced.items.map(entry => entry.id)).toEqual(['RQ-T-J-MA']);
+    expect(alerts.threads.items.map(item => item.messageId).sort())
+      .toEqual(['ho-eng-al', 'ho-ops-al', 'post-RQ-T-J-EA', 'post-RQ-T-J-OA', 'th-al']);
+    expect(alerts.awaiting.items.map(item => item.messageId).sort())
+      .toEqual(['aw-al', 'post-RQ-T-J-MA']);
+    expect(alerts.blocked.items.map(item => item.messageId)).toEqual(['blk-al']);
+
+    const engAlerts = readBusWorkMine('atlas', { ...options, channel: 'eng', topic: 'alerts' });
+    expect(engAlerts.status).toBe('ok');
+    if (engAlerts.status !== 'ok') throw new Error('unreachable');
+    expect(engAlerts.channel).toBe('eng');
+    expect(engAlerts.topic).toBe('alerts');
+    if (engAlerts.next.status !== 'ok' || engAlerts.handoffs.status !== 'ok' ||
+        engAlerts.wakes.status !== 'ok' || engAlerts.claims.status !== 'ok' ||
+        engAlerts.inbox.status !== 'ok' || engAlerts.deadLetters.status !== 'ok' ||
+        engAlerts.jobs.status !== 'ok' || engAlerts.threads.status !== 'ok') throw new Error('unreachable');
+    expect(engAlerts.next.items.map(item => item.id)).toEqual(['w-eng-al']);
+    expect(engAlerts.handoffs.items.map(item => item.id)).toEqual(['ho-eng-al']);
+    expect(engAlerts.wakes.wakes.map(row => row.id)).toEqual(['wk-al']);
+    expect(engAlerts.claims.claims.map(row => row.key)).toEqual(['queue:w-eng-al']);
+    expect(engAlerts.inbox.matched).toBe(5);
+    expect(engAlerts.deadLetters.items.map(item => item.id)).toEqual(['dl-al']);
+    expect(engAlerts.jobs.jobs.map(entry => entry.id).sort())
+      .toEqual(['RQ-T-J-EA', 'RQ-T-J-MA']);
+    expect(engAlerts.threads.items.map(item => item.messageId).sort())
+      .toEqual(['ho-eng-al', 'post-RQ-T-J-EA', 'th-al']);
+
+    // A syntactically valid topic nothing addresses is an honest empty
+    // match — never an error and never a widened one.
+    const none = readBusWorkMine('atlas', { ...options, topic: 'nosuchtopic' });
+    expect(none.status).toBe('ok');
+    if (none.status !== 'ok') throw new Error('unreachable');
+    expect(none.topic).toBe('nosuchtopic');
+    if (none.next.status !== 'ok' || none.jobs.status !== 'ok' || none.announced.status !== 'ok' ||
+        none.threads.status !== 'ok' || none.awaiting.status !== 'ok' || none.blocked.status !== 'ok' ||
+        none.wakes.status !== 'ok' || none.inbox.status !== 'ok' || none.mailbox.status !== 'ok' ||
+        none.claims.status !== 'ok' || none.deadLetters.status !== 'ok' ||
+        none.handoffs.status !== 'ok') throw new Error('unreachable');
+    expect(none.next.matched).toBe(0);
+    expect(none.handoffs.matched).toBe(0);
+    expect(none.jobs.open).toBe(0);
+    expect(none.announced.matched).toBe(0);
+    expect(none.threads.matched).toBe(0);
+    expect(none.awaiting.matched).toBe(0);
+    expect(none.blocked.matched).toBe(0);
+    expect(none.wakes.matched).toBe(0);
+    expect(none.inbox.matched).toBe(0);
+    expect(none.mailbox.matched).toBe(0);
+    expect(none.deadLetters.matched).toBe(0);
+    expect(none.claims.claims).toEqual([]);
+    expect(none.board).toEqual(all.board);
+    expect(none.channels).toEqual(all.channels);
+  });
+
+  it('rejects a topic outside the channel-name grammar', () => {
+    const options = setup();
+    register(options, 'atlas');
+    for (const bad of ['Has-Caps', 'has space', 'group:eng', 'a'.repeat(33), '', 'x/y', 5, null]) {
+      expect(readBusWorkMine('atlas', { ...options, topic: bad as never }))
+        .toEqual({ status: 'invalid', reason: 'invalid-topic' });
+    }
+    // The bound's own edges stay valid: the strict channel-name grammar.
+    for (const good of ['general', 'alerts', 'a-b_c', 'x'.repeat(32)]) {
+      const result = readBusWorkMine('atlas', { ...options, topic: good });
+      expect(result.status).toBe('ok');
+      if (result.status === 'ok') expect(result.topic).toBe(good);
+    }
+  });
+
   it('filters the digest to one sender across the sender-bearing sections', async () => {
     // Real wall time: mutateBusWorkClaim checks the leased envelope's TTL
     // against Date.now(), not the injected read clock.
@@ -3001,7 +3288,7 @@ describe('readBusWorkMine', () => {
     }
 
     const post = (id: string, from: string, to: string, body: Record<string, unknown>,
-      priority: 'P0' | 'P2' = 'P2'): void => {
+      priority: BusPriority = 'P2'): void => {
       const posted = appendBusInbox({ id, from, to, priority, ttl: 120_000, body },
         { root: options.root, now: options.now });
       expect(posted.status).toBe('posted');
@@ -3245,7 +3532,7 @@ describe('readBusWorkMine', () => {
     registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
 
     const post = (id: string, from: string, to: string, body: Record<string, unknown>,
-      priority: 'P0' | 'P2' = 'P2'): void => {
+      priority: BusPriority = 'P2'): void => {
       const posted = appendBusInbox({ id, from, to, priority, ttl: 120_000, body },
         { root: options.root, now: options.now });
       expect(posted.status).toBe('posted');
@@ -3373,7 +3660,7 @@ describe('readBusWorkMine', () => {
     if (none.next.status !== 'ok' || none.jobs.status !== 'ok' || none.announced.status !== 'ok' ||
         none.threads.status !== 'ok' || none.awaiting.status !== 'ok' || none.blocked.status !== 'ok' ||
         none.wakes.status !== 'ok' || none.inbox.status !== 'ok' || none.mailbox.status !== 'ok' ||
-        none.claims.status !== 'ok') throw new Error('unreachable');
+        none.claims.status !== 'ok' || none.handoffs.status !== 'ok') throw new Error('unreachable');
     expect(none.next.matched).toBe(0);
     expect(none.handoffs.matched).toBe(0);
     expect(none.jobs.open).toBe(0);
@@ -3402,7 +3689,7 @@ describe('readBusWorkMine', () => {
     registerAgentIdentity({ handle: 'ghost', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
 
     const post = (id: string, from: string, to: string, body: Record<string, unknown>,
-      priority: 'P0' | 'P2' = 'P2'): void => {
+      priority: BusPriority = 'P2'): void => {
       const posted = appendBusInbox({ id, from, to, priority, ttl: 120_000, body },
         { root: options.root, now: options.now });
       expect(posted.status).toBe('posted');
@@ -3427,7 +3714,7 @@ describe('readBusWorkMine', () => {
       { kind: 'note', text: 'still there?', thread: 't-reply' });
     post('ho-plain', 'agent:nova', 'agent:atlas',
       { kind: 'worker-handoff', taskId: 'RQ-IRT-H', prompt: 'plain handoff' }, 'P2');
-    const mailboxSend = (id: string, body: Record<string, unknown>): void => {
+    const mailboxSend = (id: string, body: BusEnvelope['body']): void => {
       expect(createBusMailbox(dirname(options.root), options.now).send({ id, from: 'agent:nova',
         to: 'atlas', priority: 'P2', ttl: 120_000, body }).replayed).toBe(false);
     };
@@ -3535,7 +3822,7 @@ describe('readBusWorkMine', () => {
     if (none.next.status !== 'ok' || none.jobs.status !== 'ok' || none.announced.status !== 'ok' ||
         none.threads.status !== 'ok' || none.awaiting.status !== 'ok' || none.blocked.status !== 'ok' ||
         none.wakes.status !== 'ok' || none.inbox.status !== 'ok' || none.mailbox.status !== 'ok' ||
-        none.claims.status !== 'ok') throw new Error('unreachable');
+        none.claims.status !== 'ok' || none.handoffs.status !== 'ok') throw new Error('unreachable');
     expect(none.next.matched).toBe(0);
     expect(none.handoffs.matched).toBe(0);
     expect(none.threads.matched).toBe(0);
@@ -3562,7 +3849,7 @@ describe('readBusWorkMine', () => {
     registerAgentIdentity({ handle: 'ghost', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
 
     const post = (id: string, from: string, to: string, body: Record<string, unknown>,
-      priority: 'P0' | 'P2' = 'P2'): void => {
+      priority: BusPriority = 'P2'): void => {
       const posted = appendBusInbox({ id, from, to, priority, ttl: 120_000, body },
         { root: options.root, now: options.now });
       expect(posted.status).toBe('posted');
@@ -3579,7 +3866,7 @@ describe('readBusWorkMine', () => {
       { kind: 'worker-handoff', taskId: 'RQ-BK-H', prompt: 'kinded handoff' }, 'P2');
     post('note-mail', 'agent:nova', 'agent:atlas', { kind: 'note', text: 'just a note' });
     post('kindless-mail', 'agent:nova', 'agent:atlas', { text: 'no discriminator' });
-    const mailboxSend = (id: string, body: Record<string, unknown>): void => {
+    const mailboxSend = (id: string, body: BusEnvelope['body']): void => {
       expect(createBusMailbox(dirname(options.root), options.now).send({ id, from: 'agent:nova',
         to: 'atlas', priority: 'P2', ttl: 120_000, body }).replayed).toBe(false);
     };
@@ -3785,7 +4072,7 @@ describe('readBusWorkMine', () => {
     if (none.next.status !== 'ok' || none.jobs.status !== 'ok' || none.announced.status !== 'ok' ||
         none.threads.status !== 'ok' || none.awaiting.status !== 'ok' || none.blocked.status !== 'ok' ||
         none.wakes.status !== 'ok' || none.inbox.status !== 'ok' || none.mailbox.status !== 'ok' ||
-        none.claims.status !== 'ok') throw new Error('unreachable');
+        none.claims.status !== 'ok' || none.handoffs.status !== 'ok') throw new Error('unreachable');
     expect(none.next.matched).toBe(0);
     expect(none.handoffs.matched).toBe(0);
     expect(none.jobs.open).toBe(0);
@@ -3814,7 +4101,7 @@ describe('readBusWorkMine', () => {
     registerAgentIdentity({ handle: 'ghost', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
 
     const post = (id: string, from: string, to: string, body: Record<string, unknown>,
-      priority: 'P0' | 'P2' = 'P2'): void => {
+      priority: BusPriority = 'P2'): void => {
       const posted = appendBusInbox({ id, from, to, priority, ttl: 120_000, body },
         { root: options.root, now: options.now });
       expect(posted.status).toBe('posted');
@@ -3847,7 +4134,7 @@ describe('readBusWorkMine', () => {
     // A non-result body that must stay out under every outcome.
     post('note-mail', 'agent:nova', 'agent:atlas', { kind: 'note', text: 'just a note' });
     // Legacy mailbox mail in the same shapes.
-    const mailboxSend = (id: string, body: Record<string, unknown>): void => {
+    const mailboxSend = (id: string, body: BusEnvelope['body']): void => {
       expect(createBusMailbox(dirname(options.root), options.now).send({ id, from: 'agent:nova',
         to: 'atlas', priority: 'P2', ttl: 120_000, body }).replayed).toBe(false);
     };
@@ -4022,7 +4309,7 @@ describe('readBusWorkMine', () => {
     if (reserved.next.status !== 'ok' || reserved.jobs.status !== 'ok' ||
         reserved.announced.status !== 'ok' || reserved.wakes.status !== 'ok' ||
         reserved.inbox.status !== 'ok' || reserved.mailbox.status !== 'ok' ||
-        reserved.claims.status !== 'ok') throw new Error('unreachable');
+        reserved.claims.status !== 'ok' || reserved.handoffs.status !== 'ok') throw new Error('unreachable');
     expect(reserved.next.matched).toBe(0);
     expect(reserved.handoffs.matched).toBe(0);
     expect(reserved.jobs.open).toBe(0);
@@ -4052,7 +4339,7 @@ describe('readBusWorkMine', () => {
     registerAgentIdentity({ handle: 'ghost', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
 
     const post = (id: string, from: string, to: string, body: Record<string, unknown>,
-      priority: 'P0' | 'P2' = 'P2'): void => {
+      priority: BusPriority = 'P2'): void => {
       const posted = appendBusInbox({ id, from, to, priority, ttl: 120_000, body },
         { root: options.root, now: options.now });
       expect(posted.status).toBe('posted');
@@ -4075,7 +4362,7 @@ describe('readBusWorkMine', () => {
     post('note-free', 'agent:nova', 'agent:atlas',
       { kind: 'note', text: 'no thread label' });
     // Legacy mailbox mail in the same shapes.
-    const mailboxSend = (id: string, body: Record<string, unknown>): void => {
+    const mailboxSend = (id: string, body: BusEnvelope['body']): void => {
       expect(createBusMailbox(dirname(options.root), options.now).send({ id, from: 'agent:nova',
         to: 'atlas', priority: 'P2', ttl: 120_000, body }).replayed).toBe(false);
     };
@@ -4216,7 +4503,7 @@ describe('readBusWorkMine', () => {
     if (none.next.status !== 'ok' || none.jobs.status !== 'ok' || none.announced.status !== 'ok' ||
         none.threads.status !== 'ok' || none.awaiting.status !== 'ok' || none.blocked.status !== 'ok' ||
         none.wakes.status !== 'ok' || none.inbox.status !== 'ok' || none.mailbox.status !== 'ok' ||
-        none.claims.status !== 'ok') throw new Error('unreachable');
+        none.claims.status !== 'ok' || none.handoffs.status !== 'ok') throw new Error('unreachable');
     expect(none.next.matched).toBe(0);
     expect(none.handoffs.matched).toBe(0);
     expect(none.threads.matched).toBe(0);
@@ -5021,7 +5308,7 @@ describe('sessions section', () => {
 });
 
 describe('coordination section', () => {
-  const ledgerPath = (options: BusWorkMineOptions) => join(dirname(options.root), 'coordination.jsonl');
+  const ledgerPath = (options: BusWorkMineOptions) => join(dirname(options.root!), 'coordination.jsonl');
   const ledger = (options: BusWorkMineOptions, now?: number) =>
     ({ path: ledgerPath(options), now: now ?? options.now?.() ?? 0 });
 
@@ -5369,6 +5656,17 @@ describe('phm agents bus work mine', () => {
     expect(bad.json).toMatchObject({ error: 'invalid-argument' });
   });
 
+  it('accepts --topic, echoes the applied topic and rejects a bad value', async () => {
+    const env = { PHM_AGENT_ID: 'atlas' };
+    await run(['id', 'register', 'atlas', '--cli', 'claude'], env);
+    const result = await run(['work', 'mine', '--topic', 'general'], env);
+    expect(result.code).toBe(0);
+    expect(result.json).toMatchObject({ status: 'ok', topic: 'general' });
+    const bad = await run(['work', 'mine', '--topic', 'Bad Name'], env);
+    expect(bad.code).toBe(2);
+    expect(bad.json).toMatchObject({ error: 'invalid-argument' });
+  });
+
   it('accepts --from and --exclude-from, echoes the applied senders and rejects bad values', async () => {
     const env = { PHM_AGENT_ID: 'atlas' };
     await run(['id', 'register', 'atlas', '--cli', 'claude'], env);
@@ -5657,7 +5955,7 @@ describe('seats section', () => {
       claim: { nodeId: 'n1', session: 1, jobId: 'J-1', token: 5, leaderToken: 2,
         expiresAt: options.clock.now + 60_000 } });
     const seats: SeatOptions = { ...seatOptions(options, home),
-      nodesStore: { transaction: fn => fn(nodes, options.clock.now) } };
+      nodesStore: { transaction: fn => fn(nodes) } };
 
     const unfiltered = await readBusWorkMineSeats('atlas', { ...options, seats });
     expect(unfiltered).toMatchObject({ status: 'ok', matched: 1 });

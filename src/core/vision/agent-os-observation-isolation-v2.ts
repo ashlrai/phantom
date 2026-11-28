@@ -7,8 +7,20 @@
  * launch work, or establish that a broker's claims are independently true.
  */
 
-import { createHash } from 'node:crypto';
-
+import {
+  canonicalEpochDomainBytes as domainBytes,
+  canonicalEpochJson as canonicalJson,
+  canonicalEpochJsonDigest as digest,
+  decodeEpochBase64url,
+  deepFreezeEpochValue as deepFreeze,
+  epochPlainRecord as record,
+  exactEpochBytes as exactBytes,
+  exactEpochKeys as exactKeys,
+  immutablePlainDataSnapshot as immutableDataSnapshot,
+  isValidEpochTimestamp as timestamp,
+  isValidRawEpochDigest as rawDigest,
+  matchesEpochAuthority,
+} from './agent-os-epoch-shared.js';
 import {
   inspectAgentOsLocalContainerCreatePolicyV1,
   isAgentOsLocalContainerLimitsV1,
@@ -18,18 +30,15 @@ import {
 export const AGENT_OS_OBSERVATION_ISOLATION_PROTOCOL_V2 =
   'ashlr-agent-os-observation-isolation-v2' as const;
 export const AGENT_OS_OBSERVATION_ISOLATION_SIGNATURE_ALGORITHM_V2 = 'ed25519' as const;
-export const AGENT_OS_OBSERVATION_ISOLATION_MAX_ATTESTATION_LIFETIME_MS_V2 = 5 * 60_000;
-export const AGENT_OS_OBSERVATION_ISOLATION_MAX_FUTURE_SKEW_MS_V2 = 5_000;
-export const AGENT_OS_OBSERVATION_ISOLATION_MAX_DEADLINE_KILL_LAG_MS_V2 = 5_000;
-export const AGENT_OS_OBSERVATION_ISOLATION_MAX_CLEANUP_DURATION_MS_V2 = 10_000;
+const AGENT_OS_OBSERVATION_ISOLATION_MAX_ATTESTATION_LIFETIME_MS_V2 = 5 * 60_000;
+const AGENT_OS_OBSERVATION_ISOLATION_MAX_FUTURE_SKEW_MS_V2 = 5_000;
+const AGENT_OS_OBSERVATION_ISOLATION_MAX_DEADLINE_KILL_LAG_MS_V2 = 5_000;
+const AGENT_OS_OBSERVATION_ISOLATION_MAX_CLEANUP_DURATION_MS_V2 = 10_000;
 
 const PREPARE_SIGNATURE_DOMAIN = 'ashlr:agent-os:observation-isolation:prepare-signature:v2\0';
 const PREPARE_DIGEST_DOMAIN = 'ashlr:agent-os:observation-isolation:prepare-digest:v2\0';
 const FINALIZE_SIGNATURE_DOMAIN = 'ashlr:agent-os:observation-isolation:finalize-signature:v2\0';
 const FINALIZE_DIGEST_DOMAIN = 'ashlr:agent-os:observation-isolation:finalize-digest:v2\0';
-const RAW_SHA256_RE = /^[a-f0-9]{64}$/u;
-const CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
-const BASE64URL_RE = /^[A-Za-z0-9_-]+$/u;
 
 export const AGENT_OS_OBSERVATION_ISOLATION_NO_AUTHORITY_V2 = Object.freeze({
   authority: 'observation-only' as const,
@@ -221,134 +230,16 @@ const FINALIZE_UNSIGNED_KEYS = [
 ] as const;
 const FINALIZE_KEYS = [...FINALIZE_UNSIGNED_KEYS, 'attestationDigest', 'signature'] as const;
 
-function record(value: unknown): Record<string, unknown> | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return null;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    if (Reflect.ownKeys(value).some((key) => typeof key !== 'string' ||
-      descriptors[String(key)]?.enumerable !== true ||
-      !Object.hasOwn(descriptors[String(key)]!, 'value'))) return null;
-    return value as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
-  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
-}
-
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  const row = value as Record<string, unknown>;
-  return `{${Object.keys(row).sort().map((key) =>
-    `${JSON.stringify(key)}:${canonicalJson(row[key])}`).join(',')}}`;
-}
-
-function canonicalBytes(value: unknown): Buffer {
-  return Buffer.from(canonicalJson(value), 'utf8');
-}
-
-function domainBytes(domain: string, value: unknown): Buffer {
-  return Buffer.concat([Buffer.from(domain, 'utf8'), canonicalBytes(value)]);
-}
-
-function digest(domain: string, value: unknown): string {
-  return createHash('sha256').update(domain, 'utf8').update(canonicalJson(value), 'utf8').digest('hex');
-}
-
-function exactBytes(left: Uint8Array, right: Uint8Array): boolean {
-  return left.byteLength === right.byteLength && Buffer.compare(
-    Buffer.from(left.buffer, left.byteOffset, left.byteLength),
-    Buffer.from(right.buffer, right.byteOffset, right.byteLength),
-  ) === 0;
-}
-
-function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
-  if (ArrayBuffer.isView(value)) return value;
-  if (value !== null && typeof value === 'object' && !seen.has(value)) {
-    seen.add(value);
-    for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested, seen);
-    Object.freeze(value);
-  }
-  return value;
-}
-
-function plainDataGraph(value: unknown, seen = new Set<object>(), depth = 0): boolean {
-  if (value === null || typeof value === 'boolean' || typeof value === 'string' ||
-    typeof value === 'number') return typeof value !== 'number' || Number.isSafeInteger(value);
-  if (typeof value !== 'object' || depth > 16 || seen.size >= 256 || seen.has(value)) return false;
-  seen.add(value);
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    if (Array.isArray(value)) {
-      if (prototype !== Array.prototype || value.length > 128) return false;
-    } else if (prototype !== Object.prototype && prototype !== null) return false;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    if (Reflect.ownKeys(value).some((key) => typeof key !== 'string')) return false;
-    for (const descriptor of Object.values(descriptors)) {
-      if (!Object.hasOwn(descriptor, 'value') || !plainDataGraph(descriptor.value, seen, depth + 1)) {
-        return false;
-      }
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function immutableDataSnapshot<T>(value: T): T | null {
-  try {
-    if (!plainDataGraph(value)) return null;
-    const snapshot = structuredClone(value);
-    return plainDataGraph(snapshot) ? deepFreeze(snapshot) : null;
-  } catch {
-    return null;
-  }
-}
-
 function owned<T>(value: T): T | null {
   try { return deepFreeze(JSON.parse(canonicalJson(value)) as T); } catch { return null; }
 }
 
-function rawDigest(value: unknown): value is string {
-  return typeof value === 'string' && RAW_SHA256_RE.test(value);
-}
-
-function timestamp(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length !== 24) return false;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
-}
-
-function requestNonce(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length > 128 || !BASE64URL_RE.test(value)) return false;
-  try {
-    const bytes = Buffer.from(value, 'base64url');
-    return bytes.byteLength >= 16 && bytes.byteLength <= 64 && bytes.toString('base64url') === value;
-  } catch {
-    return false;
-  }
-}
-
-function authority(value: Record<string, unknown>): boolean {
-  return AUTHORITY_KEYS.every((key) => value[key] ===
-    AGENT_OS_OBSERVATION_ISOLATION_NO_AUTHORITY_V2[
-      key as keyof typeof AGENT_OS_OBSERVATION_ISOLATION_NO_AUTHORITY_V2
-    ]);
-}
-
 function bindings(value: unknown): value is AgentOsObservationIsolationBindingsV2 {
   const row = record(value);
-  if (!row || !exactKeys(row, BINDING_KEYS) || !requestNonce(row['requestNonce']) ||
+  if (!row || !exactKeys(row, BINDING_KEYS) ||
+    decodeEpochBase64url(row['requestNonce'], 16, 64) === null ||
     !rawDigest(row['requestDigest']) || !timestamp(row['deadlineAt']) ||
-    typeof row['containerId'] !== 'string' ||
-    !CONTAINER_ID_RE.test(row['containerId']) || !isAgentOsLocalContainerLimitsV1(row['limits'])) return false;
+    !rawDigest(row['containerId']) || !isAgentOsLocalContainerLimitsV1(row['limits'])) return false;
   return ['brokerDigest', 'engineDigest', 'imageDigest', 'producerDigest', 'seccompDigest',
     'createConfigDigest'].every((key) => rawDigest(row[key]));
 }
@@ -491,7 +382,8 @@ function validPrepareUnsigned(value: unknown): value is PrepareUnsigned {
   const row = record(value);
   if (!row || !exactKeys(row, PREPARE_UNSIGNED_KEYS) || row['schemaVersion'] !== 2 ||
     row['protocol'] !== AGENT_OS_OBSERVATION_ISOLATION_PROTOCOL_V2 || row['phase'] !== 'prepared' ||
-    !authority(row) || !rawDigest(row['attestationKeyId']) ||
+    !matchesEpochAuthority(row, AGENT_OS_OBSERVATION_ISOLATION_NO_AUTHORITY_V2) ||
+    !rawDigest(row['attestationKeyId']) ||
     row['signatureAlgorithm'] !== AGENT_OS_OBSERVATION_ISOLATION_SIGNATURE_ALGORITHM_V2) return false;
   const selected = Object.fromEntries(PREPARE_INPUT_KEYS.map((key) => [key, row[key]]));
   return validPrepareInput(selected);
@@ -501,26 +393,17 @@ function validFinalizeUnsigned(value: unknown): value is FinalizeUnsigned {
   const row = record(value);
   if (!row || !exactKeys(row, FINALIZE_UNSIGNED_KEYS) || row['schemaVersion'] !== 2 ||
     row['protocol'] !== AGENT_OS_OBSERVATION_ISOLATION_PROTOCOL_V2 || row['phase'] !== 'finalized' ||
-    !authority(row) || !rawDigest(row['attestationKeyId']) ||
+    !matchesEpochAuthority(row, AGENT_OS_OBSERVATION_ISOLATION_NO_AUTHORITY_V2) ||
+    !rawDigest(row['attestationKeyId']) ||
     row['signatureAlgorithm'] !== AGENT_OS_OBSERVATION_ISOLATION_SIGNATURE_ALGORITHM_V2) return false;
   const selected = Object.fromEntries(FINALIZE_INPUT_KEYS.map((key) => [key, row[key]]));
   return validFinalizeInput(selected);
 }
 
-function canonicalSignature(value: unknown): Buffer | null {
-  if (typeof value !== 'string' || !BASE64URL_RE.test(value)) return null;
-  try {
-    const decoded = Buffer.from(value, 'base64url');
-    return decoded.byteLength === 64 && decoded.toString('base64url') === value ? decoded : null;
-  } catch {
-    return null;
-  }
-}
-
 function validPrepare(value: unknown): value is AgentOsObservationIsolationPrepareAttestationV2 {
   const row = record(value);
   if (!row || !exactKeys(row, PREPARE_KEYS) || !rawDigest(row['attestationDigest']) ||
-    canonicalSignature(row['signature']) === null) return false;
+    decodeEpochBase64url(row['signature'], 64, 64) === null) return false;
   const unsigned = Object.fromEntries(PREPARE_UNSIGNED_KEYS.map((key) => [key, row[key]]));
   return validPrepareUnsigned(unsigned) &&
     digest(PREPARE_DIGEST_DOMAIN, unsigned) === row['attestationDigest'];
@@ -529,19 +412,17 @@ function validPrepare(value: unknown): value is AgentOsObservationIsolationPrepa
 function validFinalize(value: unknown): value is AgentOsObservationIsolationFinalizeAttestationV2 {
   const row = record(value);
   if (!row || !exactKeys(row, FINALIZE_KEYS) || !rawDigest(row['attestationDigest']) ||
-    canonicalSignature(row['signature']) === null) return false;
+    decodeEpochBase64url(row['signature'], 64, 64) === null) return false;
   const unsigned = Object.fromEntries(FINALIZE_UNSIGNED_KEYS.map((key) => [key, row[key]]));
   return validFinalizeUnsigned(unsigned) &&
     digest(FINALIZE_DIGEST_DOMAIN, unsigned) === row['attestationDigest'];
 }
 
-/** Canonical domain-separated bytes an external prepare signer authenticates. */
-export function canonicalAgentOsObservationIsolationPreparePayloadV2(value: unknown): Buffer | null {
+function canonicalPreparePayload(value: unknown): Buffer | null {
   return validPrepareUnsigned(value) ? domainBytes(PREPARE_SIGNATURE_DOMAIN, value) : null;
 }
 
-/** Canonical domain-separated bytes an external finalize signer authenticates. */
-export function canonicalAgentOsObservationIsolationFinalizePayloadV2(value: unknown): Buffer | null {
+function canonicalFinalizePayload(value: unknown): Buffer | null {
   return validFinalizeUnsigned(value) ? domainBytes(FINALIZE_SIGNATURE_DOMAIN, value) : null;
 }
 
@@ -551,8 +432,8 @@ function signUnsigned<T extends PrepareUnsigned | FinalizeUnsigned>(
   phase: 'prepared' | 'finalized',
 ): (T & { attestationDigest: string; signature: string }) | null {
   const payload = phase === 'prepared'
-    ? canonicalAgentOsObservationIsolationPreparePayloadV2(unsigned)
-    : canonicalAgentOsObservationIsolationFinalizePayloadV2(unsigned);
+    ? canonicalPreparePayload(unsigned)
+    : canonicalFinalizePayload(unsigned);
   if (!payload) return null;
   const callbackBytes = Buffer.from(payload);
   const before = Buffer.from(callbackBytes);
@@ -677,9 +558,9 @@ function verifySignature(
     return 'attestation-key-mismatch';
   }
   const payload = phase === 'prepared'
-    ? canonicalAgentOsObservationIsolationPreparePayloadV2(unsigned)
-    : canonicalAgentOsObservationIsolationFinalizePayloadV2(unsigned);
-  const signatureBytes = canonicalSignature(signature);
+    ? canonicalPreparePayload(unsigned)
+    : canonicalFinalizePayload(unsigned);
+  const signatureBytes = decodeEpochBase64url(signature, 64, 64);
   if (!payload || !signatureBytes) return 'signature-invalid';
   const callbackBytes = Buffer.from(payload);
   const before = Buffer.from(callbackBytes);

@@ -42,7 +42,7 @@ export function onClaudeRateLimitEventRecorded(listener: ClaudeRateLimitEventLis
   };
 }
 
-function fabricDir(): string {
+export function fabricDir(): string {
   return join(homedir(), '.ashlr', 'fabric');
 }
 

@@ -18,7 +18,7 @@ const sha = (bytes: string | Buffer) => createHash('sha256').update(bytes).diges
 // Builtins only, like the existing native-profile launcher. Node's execve
 // retains the registered PID/group and the original stdio; there is no shell
 // or second process leader between identity publication and provider exec.
-export const NATIVE_METADATA_LAUNCH_SOURCE = String.raw`import * as fs from 'node:fs';
+const NATIVE_METADATA_LAUNCH_SOURCE = String.raw`import * as fs from 'node:fs';
 import {createHash,randomUUID} from 'node:crypto';
 import {Socket} from 'node:net';
 import {execFileSync} from 'node:child_process';

@@ -20,17 +20,18 @@ import { isAbsolute } from 'node:path';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 import {
   ALL_CLASSES, GATED_CLASSES, planDiskMaint,
-  resolveMaintRoots, type DiskMaintPlan, type MaintClassId, type MaintDeps, type MaintPolicy,
-  type MaintRoots,
+  type DiskMaintPlan, type MaintClassId, type MaintDeps, type MaintPolicy,
 } from '../core/disk-maint/plan.js';
 import { applyDiskMaint, type ApplyDeps } from '../core/disk-maint/apply.js';
+import { resolveMaintRoots, type MaintRoots } from '../core/disk-maint/protect.js';
+import { bytesToGb } from '../core/disk-maint/removal-plan.js';
 import { diskMaintSchedule } from '../core/disk-maint/schedule.js';
 import { isWorktreeJobId } from '../core/disk-maint/worktrees.js';
 import { installScheduleUnits } from './steward.js';
 
 const USAGE =
   'usage: phm disk-maint [--apply] [--json] [--only <class>]... [--allow <class>]... ' +
-  '[--compress-days N] [--prune-days N] [--worktree <job-id>]\n' +
+  '[--compress-days N] [--prune-days N] [--worktree <job-id>] [--worktree-failed-hours N]\n' +
   '       phm disk-maint schedule [--install] [--apply] [--hour 0-23 | --worktrees]\n' +
   `classes: ${ALL_CLASSES.join(', ')}  (gated: ${[...GATED_CLASSES].join(', ')})`;
 
@@ -46,7 +47,7 @@ export interface DiskMaintCliDeps extends ApplyDeps {
   deadlineMs?: number;
 }
 
-const gb = (bytes: number): string => `${Math.round((bytes / 1e9) * 10) / 10} GB`;
+const gb = (bytes: number): string => `${bytesToGb(bytes)} GB`;
 
 function schedule(argv: string[], deps: DiskMaintCliDeps): number {
   const out = deps.output ?? { log: console.log, error: console.error };
@@ -182,11 +183,14 @@ export async function cmdDiskMaint(args: string[], deps: DiskMaintCliDeps = {}):
           only.add(name as MaintClassId);
         }
       }
-    } else if (arg === '--compress-days' || arg === '--prune-days') {
+    } else if (arg === '--compress-days' || arg === '--prune-days' || arg === '--worktree-failed-hours') {
       const value = argv[++i];
-      if (!value || !/^\d{1,4}$/.test(value) || Number(value) < 1) { out.error(`error: ${arg} needs a positive day count\n${USAGE}`); return 2; }
+      if (!value || !/^\d{1,4}$/.test(value) || Number(value) < 1) {
+        out.error(`error: ${arg} needs a positive ${arg === '--worktree-failed-hours' ? 'hour' : 'day'} count\n${USAGE}`); return 2;
+      }
       if (arg === '--compress-days') policy.compressAfterDays = Number(value);
-      else policy.deleteAfterDays = Number(value);
+      else if (arg === '--prune-days') policy.deleteAfterDays = Number(value);
+      else policy.worktreeFailedAgeHours = Number(value);
     } else if (ROOT_FLAGS[arg]) {
       const value = argv[++i];
       if (!value || !isAbsolute(value)) { out.error(`error: ${arg} needs an absolute path\n${USAGE}`); return 2; }
@@ -207,10 +211,13 @@ export async function cmdDiskMaint(args: string[], deps: DiskMaintCliDeps = {}):
   const roots = deps.roots ?? resolveMaintRoots(rootOverrides);
   const plan = await planDiskMaint({
     readJobs: deps.readJobs, readWorktreeProcesses: deps.readWorktreeProcesses, worktreeHasUnpushed: deps.worktreeHasUnpushed,
+    lookupWorktreePulls: deps.lookupWorktreePulls, readWorktreeBridgeCommits: deps.readWorktreeBridgeCommits,
     ...deps.plan, roots, only: only.size ? only : undefined, worktree, allow, policy, now: deps.now,
     deadlineMs: deps.deadlineMs,
   });
-  const applied = apply ? await applyDiskMaint(plan, { ...deps, roots }) : undefined;
+  const applied = apply ? await applyDiskMaint(plan, {
+    ...deps, roots, worktreeFailedAgeHours: policy.worktreeFailedAgeHours, readWorktreeBridgeCommits: deps.readWorktreeBridgeCommits ?? deps.plan?.readWorktreeBridgeCommits,
+  }) : undefined;
   if (json) {
     out.log(JSON.stringify(sanitizePublicJson({ ...plan, apply, ...(applied ? { reclaimAdvice: null, freeGb: applied.freeGb, results: applied.classes, totals: { ...plan.totals, freedBytes: applied.totals.freedBytes, failures: applied.totals.failures } } : {}) }), null, 2));
   } else {

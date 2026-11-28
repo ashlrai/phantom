@@ -22,7 +22,7 @@
  *     ROUTER_OUTCOME_LEDGER_LIMIT bytes of jobs.jsonl like the sibling
  *     syncs. A job whose finish rows fell out of the tail is simply not a
  *     candidate this pass; its earlier recorded tag still stands. A new
- *     launch or batch claim supersedes finishes from an earlier attempt
+ *     launch, batch claim or launch reservation supersedes earlier finishes
  *     because the job's log can already belong to the newer attempt.
  *   - LOG TAIL IS THE ONLY INPUT. The tag comes from `tagEmpty` over the
  *     job's `<runs>/<id>.log` tail — the same 64 KiB bounded read
@@ -45,7 +45,8 @@ import { join } from 'node:path';
 
 import { currentAttemptFinishes } from './empty-finishes.js';
 import { readLedgerLines } from './ledger-lines.js';
-import { EMPTY_TAGS, recordEmptyTags, tagEmpty, type EmptyTag, type TaggedEmptyJob } from './empty-tags.js';
+import { parseEmptyTagReceipt } from './empty-tag-receipt.js';
+import { recordEmptyTags, tagEmpty, type EmptyTag, type TaggedEmptyJob } from './empty-tags.js';
 import { readSource } from './runs-parked-queue.js';
 import { recordDupcheckOutcomes } from '../queue/dupcheck-gate.js';
 import {
@@ -106,22 +107,6 @@ async function tailOrInjected(injected: string | undefined, path: string): Promi
   return readLedgerTail(path);
 }
 
-/** Collect recorded tags for the current candidates only. */
-function collectRecordedTag(line: string, candidates: ReadonlySet<string>, tags: Map<string, EmptyTag>): void {
-  if (!line.includes('job.empty-tag.v1')) return;
-  let row: Record<string, unknown>;
-  try {
-    const parsed: unknown = JSON.parse(line);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
-    row = parsed as Record<string, unknown>;
-  } catch { return; }
-  if (row['schema'] !== 'job.empty-tag.v1') return;
-  const job = row['job'];
-  const tag = row['tag'];
-  if (typeof job !== 'string' || !candidates.has(job) || typeof tag !== 'string') return;
-  if ((EMPTY_TAGS as readonly string[]).includes(tag)) tags.set(job, tag as EmptyTag);
-}
-
 /**
  * Refresh the empty-job evidence ledgers from the fleet jobs ledger. Runs
  * inside the daemon's empty-tag-sync off-tick job on the self-improvement
@@ -160,7 +145,12 @@ export async function syncEmptyTagsFromJobsLedger(
 
     const candidateIds = new Set(candidates.map(candidate => candidate.id));
     const seen = new Map<string, EmptyTag>();
-    const collect = (line: string) => collectRecordedTag(line, candidateIds, seen);
+    const collect = (line: string) => {
+      const receipt = parseEmptyTagReceipt(line);
+      if (receipt && candidateIds.has(receipt.job) && !seen.has(receipt.job)) {
+        seen.set(receipt.job, receipt.tag);
+      }
+    };
     if (tagsRead.state === 'read') {
       if (tagsRead.truncated) {
         // Older tags still reserve their jobs in the writer. Recover them

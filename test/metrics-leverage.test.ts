@@ -2,7 +2,10 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { buildLeverageReport, classifyMerge, readLeverageReport } from '../src/core/metrics/leverage-class.js';
+import {
+  buildLeverageReport, classifyMerge, isTestPath, parseLeverageSources,
+  readLeverageInputs, readLeverageReport,
+} from '../src/core/metrics/leverage-class.js';
 import { cmdMetrics } from '../src/cli/metrics.js';
 
 const fixtures = [
@@ -90,5 +93,16 @@ describe('phm metrics leverage', () => {
     expect(parsed.sources.jobsTruncated).toBe(false);
     expect(await cmdMetrics(['leverage', '--hours', '0'], { out: () => {}, err: () => {} })).toBe(2);
     expect(await cmdMetrics(['leverage', '--bad', 'x'], { out: () => {}, err: () => {} })).toBe(2);
+    expect(await cmdMetrics(['leverage-mix', '--prs', 'a.json', '--prs', 'b.json'], { out: () => {}, err: () => {} })).toBe(2);
+  });
+
+  it('shares test-path detection, bounded input reads, and source parsing across leverage reports', async () => {
+    expect(isTestPath('test/unit.test.ts')).toBe(true);
+    expect(isTestPath('src/core/metrics/leverage-class.ts')).toBe(false);
+    const inputs = await readLeverageInputs({ jobs: null, prsPath: '/nonexistent/prs.json' });
+    expect(inputs).toEqual({ jobs: null, prsText: null });
+    const now = Date.parse('2026-11-18T12:00:00Z');
+    const parsed = parseLeverageSources({ text: 'not-json\n', truncated: true }, null, now - 3_600_000, now);
+    expect(parsed.sources).toEqual({ jobs: 'degraded', jobsTruncated: true, pullRequests: 'missing' });
   });
 });

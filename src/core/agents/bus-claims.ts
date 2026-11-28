@@ -92,6 +92,21 @@ export interface BusClaimsListOptions {
    * stays unknown, never an empty list.
    */
   jobs?: boolean;
+  /**
+   * When set, keep only live claims that block the named feed job — the same
+   * `coordinationRowBlocks` overlap the feed's holds join and `key` apply,
+   * decided over every claim key the job's `work.post` announcement declared.
+   * The job's declared scope resolves through the same work-feed read `jobs`
+   * performs, and the read's state is always reported as `feed` when `job` is
+   * given. A feed read that cannot complete leaves the job's scope unknown:
+   * while claims remain listed the read answers `unavailable` with `feed`
+   * carrying the feed's own state — never an unfiltered list or an invented
+   * empty one — and a claim table already empty keeps its proven-empty list
+   * under the reported `feed` state. A feed that reads ok but announces no
+   * such job leaves the list provably empty (`job.announced:false`) — nothing
+   * announced declares no scope a claim could block.
+   */
+  job?: string;
 }
 
 export type BusClaimResult =
@@ -238,8 +253,18 @@ export function busClaimJobRef(job: BusWorkFeedJob): BusClaimJobRef {
     postId: job.postId, statusId: job.statusId };
 }
 
-/** Feed read state behind a `jobs` request; a non-ok state means blocked jobs are unknown, not absent. */
+/** Feed read state behind a `jobs` or `job` request; a non-ok state means blocked jobs are unknown, not absent. */
 export type BusClaimsFeedState = 'ok' | 'refused' | 'unavailable' | 'retryable' | 'invalid';
+
+/** How a `job` filter resolved the named feed job once the feed read completed. */
+export interface BusClaimsJobMatch {
+  /** The job id the filter named. */
+  id: string;
+  /** false: the feed read ok but announces no job with this id — the filtered list is then provably empty. */
+  announced: boolean;
+  /** How many claim keys the job's announcement declared — the scope the filter matched against; 0 when unannounced. */
+  claimKeys: number;
+}
 
 /**
  * Read-side companion to `executeBusClaimBody`: the live coordination claims
@@ -265,14 +290,23 @@ export type BusClaimsFeedState = 'ok' | 'refused' | 'unavailable' | 'retryable' 
  * lately" or "what was held before time T" is one filtered read of the
  * claim table itself. With `jobs`, each claim also names the announced feed jobs
  * it blocks and `feed` reports the read state; a non-ok feed leaves
- * `jobs` absent.
+ * `jobs` absent. With `job`, the list narrows to the live claims that block
+ * the one named feed job and `job` reports how the id resolved; the same
+ * feed read serves both, so `feed` reports its state whenever either was
+ * requested, and a feed that cannot complete while claims remain listed
+ * answers `unavailable` — the job's declared scope, and so the filtered
+ * list, stays unknown rather than guessed.
  */
 export type BusClaimsListResult =
   | { status: 'ok'; source: 'missing' | 'available'; claims: BusClaimsListClaim[]; asOf: string;
-      owner?: BusClaimsOwnerMatch; excludeOwner?: BusClaimsOwnerMatch; feed?: BusClaimsFeedState }
-  | { status: 'invalid' | 'unavailable'; asOf: string };
+      owner?: BusClaimsOwnerMatch; excludeOwner?: BusClaimsOwnerMatch; feed?: BusClaimsFeedState;
+      /** Present when `job` was given and the feed read completed: how the named job resolved. */
+      job?: BusClaimsJobMatch }
+  | { status: 'invalid' | 'unavailable'; asOf: string; feed?: BusClaimsFeedState };
 
 const OWNER_LABEL = /^[\x21-\x7e]{1,256}$/;
+/** The printable routing-label bound job ids share — the feed `--job` grammar: 1-128 chars. */
+const JOB_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 /** The claim fields `contains` searches: the row's own rendered text, never a field the list hides. */
 function busClaimRowContains(row: CoordinationView, needle: string): boolean {
@@ -296,6 +330,8 @@ export function listBusClaims(options: BusClaimsListOptions = {}): BusClaimsList
   if (containsNeedle === null) return { status: 'invalid', asOf };
   const origin = options.origin;
   if (origin !== undefined && !COORDINATION_ORIGINS.includes(origin)) return { status: 'invalid', asOf };
+  const job = options.job;
+  if (job !== undefined && !JOB_LABEL.test(job)) return { status: 'invalid', asOf };
   const since = options.since;
   if (since !== undefined && (!Number.isSafeInteger(since) || since < 0)) return { status: 'invalid', asOf };
   const before = options.before;
@@ -347,25 +383,44 @@ export function listBusClaims(options: BusClaimsListOptions = {}): BusClaimsList
   }
   const claims = key === undefined ? live : live.filter(row => coordinationRowBlocks(row, key));
   let feed: BusClaimsFeedState | undefined;
-  let annotated: BusClaimsListClaim[] = claims;
-  if (options.jobs === true) {
+  let jobMatch: BusClaimsJobMatch | undefined;
+  let filtered = claims;
+  let feedJobs: BusWorkFeedJob[] | undefined;
+  if (options.jobs === true || job !== undefined) {
     let result: ReturnType<typeof readBusWorkFeed>;
     try { result = readBusWorkFeed({ root: options.root, now: () => now }); }
     catch { result = { status: 'unavailable', asOf }; }
     feed = result.status;
-    if (result.status === 'ok') {
-      annotated = claims.map(row => ({
-        ...row,
-        jobs: result.jobs
-          .filter(job => job.claimKeys.some(claimKey => coordinationRowBlocks(row, claimKey)))
-          .map(busClaimJobRef),
-      }));
+    if (result.status === 'ok') feedJobs = result.jobs;
+    if (job !== undefined) {
+      if (result.status !== 'ok') {
+        // The job's declared scope is unknown, so the job-scoped list is too —
+        // unless the claim table already proved empty under the other filters.
+        if (claims.length > 0) return { status: 'unavailable', asOf, feed };
+      } else {
+        const announced = result.jobs.find(entry => entry.id === job);
+        jobMatch = { id: job, announced: announced !== undefined,
+          claimKeys: announced?.claimKeys.length ?? 0 };
+        filtered = announced === undefined ? [] : claims.filter(row =>
+          announced.claimKeys.some(claimKey => coordinationRowBlocks(row, claimKey)));
+      }
     }
+  }
+  let annotated: BusClaimsListClaim[] = filtered;
+  if (options.jobs === true && feedJobs !== undefined) {
+    const jobsFeed = feedJobs;
+    annotated = filtered.map(row => ({
+      ...row,
+      jobs: jobsFeed
+        .filter(entry => entry.claimKeys.some(claimKey => coordinationRowBlocks(row, claimKey)))
+        .map(busClaimJobRef),
+    }));
   }
   return { status: 'ok', source: listed.source, claims: annotated, asOf,
     ...(ownerMatch === undefined ? {} : { owner: ownerMatch }),
     ...(excludeOwnerMatch === undefined ? {} : { excludeOwner: excludeOwnerMatch }),
-    ...(feed === undefined ? {} : { feed }) };
+    ...(feed === undefined ? {} : { feed }),
+    ...(jobMatch === undefined ? {} : { job: jobMatch }) };
 }
 
 // ─── Job-level claims ───────────────────────────────────────────────
@@ -383,6 +438,16 @@ export interface BusWorkJobClaimRef {
   postId: string;
   /** Wire id of the newest accepted `work.status` receipt; null while no status has moved the job. */
   statusId: string | null;
+  /** Routing label the `work.post` announcement addressed — the sink, topic or agent label the job was announced for. */
+  to: string;
+  /** Provider the feed resolved for the job — the post's own value or the announcer's newest runtime. */
+  provider: Participant['provider'];
+  /** Every claim key the announcement declared, in declared order — the full scope set, not only the key this claim took. */
+  claimKeys: readonly string[];
+  /** The dispatch spec the announcement declared (tier, scope, acceptance); absent when the post carried none. */
+  dispatch?: WorkDispatch;
+  /** Receipt time of the job's newest accepted status, or of the `work.post` while no status has moved it. */
+  updatedAt: number;
 }
 
 export interface BusWorkJobClaimOptions extends BusClaimOptions {
@@ -437,10 +502,10 @@ export type BusWorkJobClaimResult =
   | { status: 'invalid' | 'refused' | 'unavailable' | 'retryable' | 'full'; reason: string;
       job?: BusWorkJobClaimRef; scope?: BusWorkJobClaimScope };
 
-const JOB_LABEL = /^[\x21-\x7e]{1,128}$/;
-
 function jobClaimRef(job: BusWorkFeedJob): BusWorkJobClaimRef {
-  return { ...busClaimJobRef(job), repo: job.repo };
+  return { ...busClaimJobRef(job), repo: job.repo, to: job.to, provider: job.provider,
+    claimKeys: [...job.claimKeys],
+    ...(job.dispatch === undefined ? {} : { dispatch: job.dispatch }), updatedAt: job.updatedAt };
 }
 
 /**

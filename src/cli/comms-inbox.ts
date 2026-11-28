@@ -1,7 +1,7 @@
 import { dirname, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
-import { readUnifiedInbox, isUnifiedInboxKind, isUnifiedInboxSeverity, isUnifiedInboxSource, UNIFIED_INBOX_CONTAINS_MAX,
+import { readUnifiedInbox, isUnifiedInboxItemId, isUnifiedInboxKind, isUnifiedInboxSeverity, isUnifiedInboxSource, UNIFIED_INBOX_CONTAINS_MAX, UNIFIED_INBOX_MAX_ITEMS,
   type UnifiedInbox, type UnifiedInboxFilter, type UnifiedInboxKind, type UnifiedInboxSeverity, type UnifiedInboxSource } from '../core/comms/unified-inbox.js';
 import { createChannelReceiver } from '../core/fleet/channel-envelope.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
@@ -9,7 +9,7 @@ import { INBOX_MAX_CHARS, readInboxEntries } from '../core/fleet/mason-inbox.js'
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { entryInstant, parseInboxReadQuery, projectInboxRead } from '../core/verse/fleet-inbox-read.js';
 
-const HELP = `phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]
+const HELP = `phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--id <item-id>] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..200>] [--json]
 phm comms inbox read [--source <label>] [--contains <text>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--before <RFC3339-with-zone>] [--limit <1..200>] [--watch [--new-only] [--interval-ms <1000..60000>] [--max-samples <1..10000>]] [--json]
 phm comms inbox post --file <text-file|-> [--receipt-only] [--json]
 With no verb, lists every pending comms item — unresolved needs-you lines
@@ -18,10 +18,11 @@ phm needs-you resolve --auto), needs-you
 answers not confirmed in the planner inbox or with unreadable delivery receipts,
 unanswered iMessage
 teammate texts, unsettled Dot/Instinct teammate tasks, owner-thread messages awaiting a recorded reply, recorded owner
-replies whose channel fanout is not fully delivered, drafts awaiting approval,
+replies whose channel fanout is not fully delivered, a live iMessage
+owner-pairing wait, drafts awaiting approval,
 pending bus work (unclaimed envelopes, open, unclaimable or stalled feed jobs, worker handoffs and dead-lettered deliveries), pending legacy phm bus mailbox mail across every recipient label, pending shared task board deliveries and unheld tasks across every peer, agent
 conversation threads waiting on a reply or blocked, pending wake hints grouped by addressee, bot seats with pending handoffs, unpublished peer work-dispatch
-results, comms
+results, peer mail the live peer bindings admit this host to read, comms
 questions/approvals awaiting an answer, inbound .eml files awaiting the email
 drop pass, .reply.eml artifacts stuck in the
 email outbox, pending team approvals, inbox proposals awaiting review and
@@ -32,7 +33,12 @@ one source's items, --kind one item kind — the item's own classification,
 finer than --source where one source emits several kinds (the bus source's
 bus-work/bus-handoff/bus-dead-letter split, the board source's board-delivery/board-task
 split) — --severity one severity band, --blocking only items that
-block, --job only items that provably name one job id — a bus or mailbox
+block, --id only the item whose stable <source>:<ref> id strictly equals
+the value — the exact-id match every bus read's --id applies, so an agent
+holding a cited item id re-resolves exactly that item across every source
+in one read (--contains searches title/detail only, never the id, and
+--job matches the citation set, not the item id) — --job only items that
+provably name one job id — a bus or mailbox
 body's job citation, a feed job's id, a board task's fleet item or a
 delivery on a job-carrying thread, a conversation thread's jobs, a wake hint's cited job, a teammate
 task's job, a seat's node-job handoff or a peer-dispatch receipt's job — and --since only items whose
@@ -48,7 +54,10 @@ dimensions AND together, and the
 per-source counts still report every
 store's real pending total — null when a source could not be read, never a
 fabricated 0 — so a filtered view never hides a busy or degraded
-source. --json prints the same view as JSON.
+source. --limit <1..200> keeps only the first N ranked items of the matched
+view — the same slice GET /api/verse/comms/inbox and fleet_comms_inbox apply,
+with total still the true matched count and omitted covering every unshown
+item. --json prints the same view as JSON.
 read and post read and write the owner's local inbox file. Output is JSON; post returns the receiver acknowledgement.
 --receipt-only on post returns only the acknowledgement status, channel and durable deduplication key, or a failure reason; it excludes message text and private paths.
 Read options select the newest matching entries (default limit 50), returned oldest first; source is metadata, not identity.
@@ -112,6 +121,7 @@ function describeUnifiedFilter(filter: UnifiedInboxFilter): string {
     ...(filter.kind === undefined ? [] : [`kind=${filter.kind}`]),
     ...(filter.severity === undefined ? [] : [`severity=${filter.severity}`]),
     ...(filter.blocking === undefined ? [] : ['blocking']),
+    ...(filter.id === undefined ? [] : [`id=${filter.id}`]),
     ...(filter.job === undefined ? [] : [`job=${filter.job}`]),
     ...(filter.since === undefined ? [] : [`since=${new Date(filter.since).toISOString()}`]),
     ...(filter.before === undefined ? [] : [`before=${new Date(filter.before).toISOString()}`]),
@@ -151,8 +161,9 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
     if (args.length === 0 || args[0] !== 'read' && args[0] !== 'post') {
       let json = false, blocking = false;
       let source: UnifiedInboxSource | undefined, kind: UnifiedInboxKind | undefined,
-        severity: UnifiedInboxSeverity | undefined, job: string | undefined, contains: string | undefined;
-      let sinceMs: number | undefined, beforeMs: number | undefined;
+        severity: UnifiedInboxSeverity | undefined, itemId: string | undefined,
+        job: string | undefined, contains: string | undefined;
+      let sinceMs: number | undefined, beforeMs: number | undefined, limit: number | undefined;
       const seen = new Set<string>();
       for (let i = 0; i < args.length; i++) {
         const arg = args[i]!;
@@ -172,6 +183,14 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
           const value = args[++i];
           if (value === undefined || !isUnifiedInboxSeverity(value)) return invalid();
           seen.add(arg); severity = value; continue;
+        }
+        if (arg === '--id' && !seen.has(arg)) {
+          const value = args[++i];
+          // The exact-id rule every bus read's --id applies, widened for the
+          // namespaced <source>:<ref> item id: a bounded printable label — a
+          // flag-looking, blank or over-long value is a missing id, not a match.
+          if (value === undefined || value.startsWith('--') || !isUnifiedInboxItemId(value)) return invalid();
+          seen.add(arg); itemId = value; continue;
         }
         if (arg === '--job' && !seen.has(arg)) {
           const value = args[++i];
@@ -209,14 +228,27 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
             value.length > UNIFIED_INBOX_CONTAINS_MAX) return invalid();
           seen.add(arg); contains = value; continue;
         }
+        if (arg === '--limit' && !seen.has(arg)) {
+          const value = args[++i];
+          // The same --limit bound the API query and fleet_comms_inbox apply:
+          // an integer from 1 to the inbox's own item cap — a flag-looking,
+          // blank, non-numeric or out-of-range value is a missing bound, not
+          // a page size.
+          if (value === undefined || !/^[0-9]+$/.test(value)) return invalid();
+          const bound = Number(value);
+          if (!Number.isSafeInteger(bound) || bound < 1 || bound > UNIFIED_INBOX_MAX_ITEMS) return invalid();
+          seen.add(arg); limit = bound; continue;
+        }
         return invalid();
       }
       const filter: UnifiedInboxFilter | undefined =
         source === undefined && kind === undefined && severity === undefined && !blocking &&
+          itemId === undefined &&
           job === undefined && sinceMs === undefined && beforeMs === undefined && contains === undefined ? undefined
           : { ...(source === undefined ? {} : { source }),
               ...(kind === undefined ? {} : { kind }),
               ...(severity === undefined ? {} : { severity }),
+              ...(itemId === undefined ? {} : { id: itemId }),
               ...(job === undefined ? {} : { job }),
               ...(sinceMs === undefined ? {} : { since: sinceMs }),
               ...(beforeMs === undefined ? {} : { before: beforeMs }),
@@ -224,7 +256,14 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
               ...(blocking ? { blocking: true } : {}) };
       const report = await readUnifiedInbox({ runsDir: options.runsDir, busRoot: options.busRoot,
         ...(filter === undefined ? {} : { filter }) });
-      if (json) console.log(JSON.stringify(report)); else printUnified(report);
+      // --limit keeps only the first N ranked items of the matched view — the
+      // same edge slice GET /api/verse/comms/inbox and fleet_comms_inbox
+      // apply; total stays the true matched count and omitted covers the
+      // unshown tail, so a page never reads as the whole pending set.
+      const items = limit === undefined ? report.items : report.items.slice(0, limit);
+      const view: UnifiedInbox = limit === undefined ? report
+        : { ...report, items, omitted: Math.max(0, report.total - items.length) };
+      if (json) console.log(JSON.stringify(view)); else printUnified(view);
       return 0;
     }
     const [verb, ...rest] = args;

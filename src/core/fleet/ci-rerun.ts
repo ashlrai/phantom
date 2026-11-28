@@ -6,7 +6,7 @@ import { ashlrHome } from '../cloud/store.js';
 import { displaySurfaceTarget, evaluateStandingAuthority } from '../authority/effective-config.js';
 import { readKillSwitch } from '../sandbox/policy.js';
 import { analyzeCiBaseline, enqueueBaselineFixes } from './ci-baseline.js';
-import { enqueueFlakeFixes, JOURNAL_TEST_MAX, recurringFlakes } from './ci-flakes.js';
+import { enqueueFlakeFixes, JOURNAL_TEST_MAX, recurringFlakes, RECURRING_FLAKE_WINDOW_MS } from './ci-flakes.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { defaultCiGh } from './ci-failure-groups.js';
 
@@ -28,16 +28,20 @@ function rerunKey(e: Pick<Entry, 'repo' | 'head' | 'runId'>): string {
   return JSON.stringify([e.repo.toLowerCase(), e.head, e.runId]);
 }
 
+function workflowRunKey(e: Pick<Entry, 'repo' | 'runId'>): string {
+  return JSON.stringify([e.repo.toLowerCase(), e.runId]);
+}
+
 function compareVerdictPosition(a: VerdictCursor, b: VerdictCursor): number {
   return Date.parse(a.at) - Date.parse(b.at) || rerunKey(a).localeCompare(rerunKey(b));
 }
 
 /** Keep one verdict per workflow run as of the observation time. */
-function observedVerdicts(entries: readonly Entry[], nowMs: number): Entry[] {
+export function observedVerdicts(entries: readonly Entry[], nowMs: number): Entry[] {
   const runs = new Map<string, { first: Entry; verdictConflict: boolean; testConflict: boolean }>();
   for (const entry of entries) {
     if (entry.outcome !== 'verdict' || Date.parse(entry.at) > nowMs) continue;
-    const key = JSON.stringify([entry.repo.toLowerCase(), entry.runId]);
+    const key = workflowRunKey(entry);
     const run = runs.get(key);
     if (!run) {
       runs.set(key, { first: entry, verdictConflict: false, testConflict: false });
@@ -51,40 +55,68 @@ function observedVerdicts(entries: readonly Entry[], nowMs: number): Entry[] {
     .map(({ first, testConflict }) => testConflict ? { ...first, test: undefined } : first);
 }
 
-/** Count the first durable attempt for each rerun identity in the retained journal. */
-function observedAttempts(entries: readonly Entry[], nowMs: number): Entry[] {
-  const attempts = new Map<string, Entry>();
+function triggeringTests(entry: Entry): string[] {
+  const validTest = (test: unknown): test is string =>
+    typeof test === 'string' && test.length > 0 && test.length <= JOURNAL_TEST_MAX;
+  if (entry.tests === undefined) return validTest(entry.test) ? [entry.test] : [];
+  if (!Array.isArray(entry.tests) || !entry.tests.every(validTest)) return [];
+  const tests = [...new Set(entry.tests)].sort();
+  if (entry.test !== undefined && (tests.length !== 1 || tests[0] !== entry.test)) return [];
+  return tests;
+}
+
+/** Keep the earliest attempt time and only attribute consistent test evidence. */
+export function observedAttempts(entries: readonly Entry[], nowMs: number): Entry[] {
+  const attempts = new Map<string, { first: Entry; testsKey: string; testConflict: boolean }>();
   for (const entry of entries) {
     if (entry.outcome !== 'attempt' || Date.parse(entry.at) > nowMs) continue;
-    const key = rerunKey(entry);
-    const first = attempts.get(key);
-    if (!first || Date.parse(entry.at) < Date.parse(first.at)) attempts.set(key, entry);
+    const key = workflowRunKey(entry);
+    const testsKey = JSON.stringify(triggeringTests(entry));
+    const attempt = attempts.get(key);
+    if (!attempt) {
+      attempts.set(key, { first: entry, testsKey, testConflict: false });
+      continue;
+    }
+    attempt.testConflict ||= attempt.first.head !== entry.head || attempt.testsKey !== testsKey;
+    if (Date.parse(entry.at) < Date.parse(attempt.first.at)) attempt.first = entry;
   }
-  return [...attempts.values()];
+  return [...attempts.values()].map(({ first, testConflict }) =>
+    testConflict ? { ...first, test: undefined, tests: undefined } : first);
+}
+
+/** Attribute workflow verdicts only to a matching single-test attempt in the window. */
+export function attributedTestVerdicts(attempts: readonly Entry[], verdicts: readonly Entry[], nowMs: number): Entry[] {
+  const cutoff = nowMs - RECURRING_FLAKE_WINDOW_MS;
+  const attemptsByRun = new Map(attempts.filter(entry => Date.parse(entry.at) >= cutoff)
+    .map(entry => [rerunKey(entry), entry]));
+  return verdicts.filter(verdict => {
+    if (!verdict.test) return false;
+    const attempt = attemptsByRun.get(rerunKey(verdict));
+    if (!attempt || Date.parse(attempt.at) > Date.parse(verdict.at)) return false;
+    const tests = triggeringTests(attempt);
+    return tests.length === 1 && tests[0] === verdict.test;
+  });
 }
 
 /** Expand each observed attempt once for each triggering test. */
 function summarizeFlakes(attempts: readonly Entry[], nowMs: number, verdicts: readonly Entry[]) {
-  const testsByAttempt = attempts.flatMap(entry => {
-    if (!Array.isArray(entry.tests)) return [entry];
-    const tests = new Set(entry.tests.filter(test => typeof test === 'string' && test.length > 0 && test.length <= JOURNAL_TEST_MAX));
-    return [...tests].map(test => ({ ...entry, test }));
-  });
-  return recurringFlakes([...testsByAttempt, ...verdicts], { nowMs });
+  const recentAttempts = attempts.filter(entry => Date.parse(entry.at) >= nowMs - RECURRING_FLAKE_WINDOW_MS);
+  const testsByAttempt = recentAttempts.flatMap(entry => triggeringTests(entry).map(test => ({ ...entry, test })));
+  return recurringFlakes([...testsByAttempt, ...attributedTestVerdicts(recentAttempts, verdicts, nowMs)], { nowMs });
 }
 
 /** Reconcile call receipts without treating replays as new calls. */
-function observedCallResults(entries: readonly Entry[], nowMs: number): Entry[] {
+export function observedCallResults(entries: readonly Entry[], nowMs: number): Entry[] {
   const calls = new Map<string, { first: Entry; outcomeConflict: boolean; testConflict: boolean }>();
   for (const e of entries) {
     if ((e.outcome !== 'ok' && e.outcome !== 'failed') || Date.parse(e.at) > nowMs) continue;
-    const key = rerunKey(e);
+    const key = workflowRunKey(e);
     const call = calls.get(key);
     if (!call) {
       calls.set(key, { first: e, outcomeConflict: false, testConflict: false });
       continue;
     }
-    call.outcomeConflict ||= call.first.outcome !== e.outcome;
+    call.outcomeConflict ||= call.first.head !== e.head || call.first.outcome !== e.outcome;
     call.testConflict ||= call.first.test !== e.test;
     if (Date.parse(e.at) < Date.parse(call.first.at)) call.first = e;
   }
@@ -94,9 +126,9 @@ function observedCallResults(entries: readonly Entry[], nowMs: number): Entry[] 
 
 /** Fired reruns still awaiting a run verdict, oldest first. */
 function pendingVerdicts(entries: readonly Entry[], calls: readonly Entry[], nowMs: number): Entry[] {
-  const verdicted = new Set(entries.filter(e => e.outcome === 'verdict' && Date.parse(e.at) <= nowMs).map(rerunKey));
+  const verdicted = new Set(entries.filter(e => e.outcome === 'verdict' && Date.parse(e.at) <= nowMs).map(workflowRunKey));
   return calls
-    .filter(e => e.outcome === 'ok' && !verdicted.has(rerunKey(e)) && Date.parse(e.at) >= nowMs - VERDICT_MAX_AGE_MS)
+    .filter(e => e.outcome === 'ok' && !verdicted.has(workflowRunKey(e)) && Date.parse(e.at) >= nowMs - VERDICT_MAX_AGE_MS)
     .sort(compareVerdictPosition);
 }
 
@@ -145,10 +177,12 @@ export function readCiReruns(path = ciRerunPaths().journalPath, now = Date.now()
     const fd = openSync(path, 'r');
     try {
       const size = fstatSync(fd).size, start = Math.max(0, size - 4 * 1024 * 1024);
-      const buffer = Buffer.alloc(size - start);
-      readSync(fd, buffer, 0, buffer.length, start);
-      const lines = buffer.toString('utf8').split('\n');
-      if (start) lines.shift();
+      // Inspect the preceding byte to tell a partial row from a complete one.
+      const offset = Math.max(0, start - 1);
+      const buffer = Buffer.alloc(size - offset);
+      const bytesRead = readSync(fd, buffer, 0, buffer.length, offset);
+      const lines = buffer.toString('utf8', start - offset, bytesRead).split('\n');
+      if (start && buffer[0] !== 0x0a) lines.shift();
       for (const line of lines) {
         try {
           const e = JSON.parse(line) as Entry;
@@ -218,6 +252,7 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
     for (const repo of opts.repos) {
       opts.signal.throwIfAborted();
       const repoKey = repo.toLowerCase();
+      const recordedRuns = new Set(journal.filter(entry => entry.repo.toLowerCase() === repoKey).map(entry => entry.runId));
       const s: RepoStatus = { groups: 0, attempted: 0, ok: 0, failed: 0, skippedDuplicate: 0, skippedCap: 0, queued: 0, flakeFixesQueued: 0, recurringFlakes: 0, verdictsPending: 0, verdictsResolved: 0, queueBlocked: null, errors: [] };
       const previousRepo = Object.keys(previous?.repos ?? {}).find(name => name.toLowerCase() === repoKey);
       s.verdictCursor = previousRepo === undefined ? undefined : previous?.repos[previousRepo]?.verdictCursor;
@@ -232,6 +267,7 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
         const rerunGroups = new Set(eligibleGroups);
         const runsWithOtherFailures = new Set<string>();
         const testsByRun = new Map<string, Set<string>>();
+        const headsByRun = new Map<number, string | null>();
         for (const group of report.groups) {
           // A shortened or redacted ID can collide with a different test.
           const test = rerunGroups.has(group) && typeof group.testId === 'string'
@@ -239,6 +275,8 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
             ? group.testId
             : '';
           for (const run of group.runs) {
+            const head = headsByRun.get(run.runId);
+            headsByRun.set(run.runId, head === undefined || head === run.head ? run.head : null);
             const key = rerunKey({ repo, ...run });
             if (!test) {
               runsWithOtherFailures.add(key);
@@ -249,20 +287,25 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
             testsByRun.set(key, tests);
           }
         }
+        for (const [runId, head] of headsByRun) {
+          if (head === null) s.errors.push(`conflicting heads for workflow run ${runId}`);
+        }
         for (const group of eligibleGroups) {
           opts.signal.throwIfAborted();
           for (const run of group.runs) {
             opts.signal.throwIfAborted();
-            const key = rerunKey({ repo, ...run });
-            if (journal.some(e => rerunKey(e) === key)) { s.skippedDuplicate++; continue; }
+            if (headsByRun.get(run.runId) === null) continue;
+            if (recordedRuns.has(run.runId)) { s.skippedDuplicate++; continue; }
             const cap = opts.maxPerHour ?? 10;
             const evaluatedAt = now();
             if (!Number.isFinite(cap) || hourlyAttempts(observedAttempts(journal, evaluatedAt), evaluatedAt) >= Math.max(0, cap)) { s.skippedCap++; continue; }
             const entry: Entry = { at: new Date(now()).toISOString(), repo, ...run, outcome: 'attempt' };
+            const key = rerunKey({ repo, ...run });
             const tests = [...(testsByRun.get(key) ?? [])];
             if (tests.length === 1) entry.test = tests[0];
             else if (tests.length > 1) entry.tests = tests;
             append(entry);
+            recordedRuns.add(run.runId);
             s.attempted++;
             let ok = false;
             try { ok = (await gh(['run', 'rerun', String(run.runId), '--failed', '--repo', repo])).ok; }
@@ -291,11 +334,12 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
         }
         const pendingAt = now();
         const pending = pendingVerdicts(repoEntries, observedCallResults(repoEntries, pendingAt), pendingAt);
+        const attemptsByRun = new Map(observedAttempts(repoEntries, pendingAt).map(entry => [workflowRunKey(entry), entry]));
         s.verdictsPending = pending.length;
         // A future-dated verdict is invisible to the tally but still deduplicates writes.
-        const recordedVerdicts = new Set(journal.filter(e => e.outcome === 'verdict').map(rerunKey));
+        const recordedVerdicts = new Set(journal.filter(e => e.outcome === 'verdict').map(workflowRunKey));
         const eligible = pending.filter(e =>
-          !recordedVerdicts.has(rerunKey(e)) && Date.parse(e.at) <= now() - VERDICT_MIN_AGE_MS);
+          !recordedVerdicts.has(workflowRunKey(e)) && Date.parse(e.at) <= now() - VERDICT_MIN_AGE_MS);
         const cursor = s.verdictCursor;
         const next = cursor ? eligible.findIndex(e => compareVerdictPosition(e, cursor) > 0) : 0;
         const start = Math.max(0, next);
@@ -314,7 +358,11 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
           } catch (error) { if (opts.signal.aborted) throw error; }
           s.verdictCursor = { at: p.at, repo: p.repo, head: p.head, runId: p.runId };
           if (verdict === null) continue;
-          append({ at: new Date(observedAt).toISOString(), repo: p.repo, head: p.head, runId: p.runId, pr: p.pr, outcome: 'verdict', verdict, ...(p.test ? { test: p.test } : {}) });
+          const attempt = attemptsByRun.get(workflowRunKey(p));
+          const tests = attempt ? triggeringTests(attempt) : [];
+          // Older or truncated journals can have a call receipt without its attempt.
+          const test = p.test && (!attempt || (attempt.head === p.head && tests.length === 1 && tests[0] === p.test)) ? p.test : undefined;
+          append({ at: new Date(observedAt).toISOString(), repo: p.repo, head: p.head, runId: p.runId, pr: p.pr, outcome: 'verdict', verdict, ...(test ? { test } : {}) });
           s.verdictsResolved++;
         }
       } catch (error) {

@@ -18,7 +18,7 @@
  * better. Teaching engines about it would be noise; the retro still records it
  * (the chart shows it) so Mason can fix the setup.
  */
-import { cleanText, retroIdFor } from './store.js';
+import { cleanText, isRecord, RETRO_ID_PATTERN, RETRO_REPO_PATTERN, retroIdFor } from './store.js';
 import { KNOWLEDGE_EVIDENCE_MAX } from './types.js';
 import type {
   KnowledgeCandidate,
@@ -35,12 +35,12 @@ import type { ExecutionFeedbackCase } from '../../fleet/execution-feedback-types
 import type { NightlyCause, NightlyJob, NightlyReview } from './nightly-types.js';
 
 function nightlyRecord(raw: unknown): Record<string, unknown> {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Invalid nightly record');
-  return raw as Record<string, unknown>;
+  if (!isRecord(raw)) throw new Error('Invalid nightly record');
+  return raw;
 }
 
 function nightlyIdentifier(raw: unknown, repo = false): string {
-  const pattern = repo ? /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/ : /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$/;
+  const pattern = repo ? RETRO_REPO_PATTERN : RETRO_ID_PATTERN;
   if (typeof raw !== 'string' || !pattern.test(raw) || cleanText(raw, 201) !== raw) throw new Error('Invalid nightly identifier');
   return raw;
 }

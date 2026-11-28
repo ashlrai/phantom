@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { budgetEntryQuota, refreshLanes, type LaneState, type SelfLane } from '../src/core/fabric/lane-usage-self.js';
+import { quotaEvidence, type QuotaMeasurement } from '../src/core/fleet/resource-reset-evidence.js';
 
 const now = Date.parse('2026-11-11T12:00:00Z');
 const at = (offset: number): string => new Date(now + offset).toISOString();
@@ -8,6 +9,20 @@ const state = (resetAt: string): LaneState => ({
 });
 
 describe('usage reset evidence', () => {
+  it.each([
+    { captured: -2001, reason: 'quota-recovered', conflict: 'recovered-quota-while-held' },
+    { captured: -2000, reason: 'measured-quota', conflict: null },
+    { captured: -1999, reason: 'measured-quota', conflict: null },
+  ])('qualifies dispatcher exhaustion captured at offset $captured', ({ captured, reason, conflict }) => {
+    const status: QuotaMeasurement = { lane: 'claude', window: 'weekly', usedPct: 100,
+      resetAt: at(-2000), source: 'dispatcher', observedAt: at(captured) };
+    const measured: QuotaMeasurement = { ...status, usedPct: 10, resetAt: at(3_600_000),
+      source: 'claude-native-usage', observedAt: at(-1000) };
+    expect(quotaEvidence(status, measured, true, now)).toMatchObject({
+      state: 'observed-headroom', reason, holdConflict: conflict, statusQuota: status, measuredQuota: measured,
+    });
+  });
+
   it.each(['claude', 'codex-personal'] as const)('%s does not infer renewal from a passed reset', async lane => {
     const previous = { weekly_used_pct: 100, reset_at: at(-1), as_of: at(-3_600_000), estimated: false };
     const result = await refreshLanes({ lanes: [lane], overrides: { [lane]: previous },

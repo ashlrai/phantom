@@ -33,7 +33,7 @@ test('pool dispatch prefers measured free slots and shares one host budget acros
   f.add('mbp-w1', { hostId: 'mbp', slots: 3 }); f.add('mbp-w2', { hostId: 'mbp', slots: 3 });
   f.add('air', { slots: 1 }); f.add('held', { slots: 0, held: 'memory-pressure' });
   for (let i = 0; i < 6; i++) f.enqueue(`j${i}`);
-  expect(f.plan().map(r => r.nodeId)).toEqual(['mbp-w1', 'mbp-w1', 'air', 'mbp-w1', null, null]);
+  expect(f.plan().map(r => r.nodeId)).toEqual(['mbp-w1', 'mbp-w2', 'air', 'mbp-w1', null, null]);
   const node = f.state.nodes[0]!;
   expect(f.run('pull', ['--node', node.nodeId, '--session', String(node.session)]).pulled).toBe(true);
   const report = projectFleetAwareness(f.state, f.now(), { schema: 'dispatchd.status.v1', last_tick: new Date(f.now()).toISOString(), paused: null,
@@ -42,6 +42,11 @@ test('pool dispatch prefers measured free slots and shares one host budget acros
   expect(report.lanes[0]).toMatchObject({ running: 2, target: 5, effectiveTarget: 4, floor: 1, queued: 6, available: 2 });
   expect(report.queue).toEqual({ nodePending: 5, laneQueued: 6 });
   expect(f.plan().filter(r => r.nodeId)).toHaveLength(3);
+  expect(f.plan()[0]).toMatchObject({ nodeId: 'mbp-w2', jobId: 'j1' });
+  const sibling = f.state.nodes.find(n => n.nodeId === 'mbp-w2')!;
+  expect(f.run('pull', ['--node', sibling.nodeId, '--session', String(sibling.session)])).toMatchObject({
+    pulled: true, job: { id: 'j1' },
+  });
 });
 
 test('unknown, stale, future and expired reports never become pool capacity; exact two-interval boundary is fresh', () => {
@@ -89,6 +94,23 @@ test('a fresh lane hold establishes zero availability with missing counts', () =
   expect(open).toMatchObject({ running: null, target: null, available: null });
   expect(projectFleetAwareness(null, now + 60_001, status).lanes[0]?.available).toBeNull();
   expect(projectFleetAwareness(null, now - 1, status).lanes[0]?.available).toBeNull();
+});
+
+test.each([
+  { admit: true, decision: 'stop' },
+  { admit: false, decision: 'admit' },
+  { admit: 'false', decision: 'stop' },
+  { admit: false, decision: null },
+])('fleet availability ignores a malformed embedded admission record (%j)', verdict => {
+  const now = 100_000;
+  const lastTick = new Date(now).toISOString();
+  const status = {
+    schema: 'dispatchd.status.v1', last_tick: lastTick, paused: null,
+    lanes: { codex: { running: 1, target: 4, held: false } },
+    admission: { ts: lastTick, cap: 2, running: 2, ...verdict },
+  };
+  expect(projectFleetAwareness(null, now, status).lanes[0]?.available).toBe(3);
+  expect(projectFleetAwareness(null, now, { ...status, paused: true }).lanes[0]?.available).toBe(0);
 });
 
 test('a claim fenced by a rejoined session frees its host slots at once', () => {

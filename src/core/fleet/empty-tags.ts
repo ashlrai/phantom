@@ -5,8 +5,9 @@
  */
 import { classifyFinalEmpty, type FinalEmptyReason, type FinalEmptyVerdict } from './empty-final-reason.js';
 
-export const EMPTY_TAGS = ['already_done', 'pool_cap', 'blocked', 'no_change_needed', 'unknown'] as const;
-export type EmptyTag = (typeof EMPTY_TAGS)[number];
+import { EMPTY_TAGS, EMPTY_TAG_RECEIPT_SCHEMA, parseEmptyTagReceipt, type EmptyTag } from './empty-tag-receipt.js';
+
+export { EMPTY_TAGS, type EmptyTag } from './empty-tag-receipt.js';
 export const EMPTY_TAGS_SCHEMA = 'jobs.empty-tags.v1';
 /** Above this share of finished jobs, the digest names the top reason. */
 export const EMPTY_RATE_ALERT = 0.15;
@@ -85,10 +86,26 @@ export async function recordEmptyTags(runsDir: string, jobs: readonly TaggedEmpt
   const { join } = await import('node:path');
   const file = join(runsDir, 'metrics', 'empty-tags.jsonl');
   const seen = new Set<string>();
-  for (const line of (await readFile(file, 'utf8').catch(() => '')).split('\n')) {
-    try { const row = JSON.parse(line) as { job?: unknown }; if (typeof row.job === 'string') seen.add(row.job); } catch { /* skip a torn line */ }
+  const existing = await readFile(file, 'utf8').catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return '';
+    throw error;
+  });
+  for (const line of existing.split('\n')) {
+    const receipt = parseEmptyTagReceipt(line);
+    if (receipt) seen.add(receipt.job);
   }
-  const fresh = jobs.filter(job => !seen.has(job.id));
-  if (fresh.length) await appendFile(file, fresh.map(job => `${JSON.stringify({ schema: 'job.empty-tag.v1', job: job.id, lane: job.lane, tag: job.tag })}\n`).join(''));
+  const fresh = jobs.filter(job => {
+    if (seen.has(job.id)) return false;
+    seen.add(job.id);
+    return true;
+  });
+  if (fresh.length) {
+    const ts = new Date().toISOString();
+    const rows = fresh.map(job => JSON.stringify({
+      schema: EMPTY_TAG_RECEIPT_SCHEMA, job: job.id, lane: job.lane, tag: job.tag, ts,
+    }));
+    const separator = existing && !existing.endsWith('\n') ? '\n' : '';
+    await appendFile(file, separator + rows.join('\n') + '\n');
+  }
   return fresh.length;
 }

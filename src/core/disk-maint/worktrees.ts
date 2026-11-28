@@ -6,70 +6,172 @@ import { ledgerPhase, ledgerPrUrl } from '../fleet/empty-cause.js';
 import { ledgerEventTs, ledgerJobId, ledgerLifecycleEvent, ledgerOutcomeState } from '../fleet/jobs-ledger-dialect.js';
 import { readSource, type Source } from '../fleet/runs-parked-queue.js';
 import { parseKeepList, parsePsJobs } from '../fleet/wt-audit.js';
-import { withDaemonGitHardening } from '../sandbox/safe-git.js';
+import { parseLedgerTs } from '../metrics/loop.js';
 import { protectedReason, type MaintRoots } from './protect.js';
+import { hardenedGitEnv, isCommitId, isPullUrl, readWorktreeBridgeCommits, readWorktreePulls, type WorktreeEvidenceDeps } from './worktree-evidence.js';
 
 const run = promisify(execFile);
 const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const REOPEN = new Set(['launch', 'enqueue', 'enqueued', 'queued', 'claim', 'batch_claim']);
 const TERMINAL = new Set(['MERGED', 'CLOSED', 'DONE-NOOP']);
 export const isWorktreeJobId = (name: string): boolean => JOB_ID.test(name) && !name.includes('..');
-const gitOptions = () => ({
-  env: {
-    ...withDaemonGitHardening(Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')))),
-    GIT_TERMINAL_PROMPT: '0', GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1',
-  },
-  timeout: 2_000,
-});
+export const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+const gitOptions = () => ({ env: hardenedGitEnv(), timeout: 2_000 });
 
-type JobState = { reason: string; at: number; prHead?: string };
+export interface JobLedgerRecord {
+  state: string | null;
+  finishMs: number | null;
+  finishEmpty: boolean;
+}
+
+/**
+ * Latest outcome and finish rows after the last launch per job id, read in the
+ * jobs-ledger dialect (job|job_id|jobId|id, event|type|kind, phase aliases,
+ * timestamp aliases and eventless reconciler rows). The last resolved outcome
+ * wins — a phase-less outcome row records nothing rather than overwriting a
+ * merge — and finish.empty marks an empty run. Publish claims and other
+ * operational rows are not lifecycle rows. Torn lines are skipped, never
+ * echoed.
+ */
+export function parseJobLedger(text: string): Map<string, JobLedgerRecord> {
+  const latest = new Map<string, { outcome?: string; finishMs: number | null; finishEmpty: boolean }>();
+  for (const line of text.split(/\r?\n/)) {
+    try {
+      const row: unknown = JSON.parse(line);
+      if (!isPlainRecord(row)) continue;
+      const id = ledgerJobId(row);
+      if (id === null) continue;
+      const phase = ledgerPhase(row);
+      const event = ledgerLifecycleEvent(row, phase);
+      if (event === 'launch') { latest.delete(id); continue; }
+      const state = ledgerOutcomeState(row, event, phase);
+      if (event !== 'finish' && state === null) continue;
+      const entry = latest.get(id) ?? { finishMs: null, finishEmpty: false };
+      if (event === 'finish') {
+        entry.finishMs = ledgerEventTs(row, phase);
+        entry.finishEmpty = row['empty'] === true;
+      }
+      if (state !== null) entry.outcome = state.toLowerCase();
+      latest.set(id, entry);
+    } catch { /* skip damaged rows; never echo their contents */ }
+  }
+  const records = new Map<string, JobLedgerRecord>();
+  for (const [id, entry] of latest) {
+    records.set(id, {
+      state: entry.outcome ?? null,
+      finishMs: entry.finishMs,
+      finishEmpty: entry.finishEmpty,
+    });
+  }
+  return records;
+}
+
+type JobState = { reason: string; at: number; prHead?: string; failed?: boolean; hold?: boolean; prUrl?: string };
 type ProcessText = { argv: string; cwd: string };
 type Activity = { live: Set<string>; queued: Set<string>; kept: Set<string> };
-export interface WorktreeDeps {
+export interface WorktreeDeps extends WorktreeEvidenceDeps {
   readWorktreeProcesses?: () => Promise<ProcessText | null>;
   worktreeHasUnpushed?: (path: string, prHead?: string) => Promise<boolean | null>;
 }
 
-export function worktreeOutcomes(jobs: { state: Source; text: string }): Map<string, JobState> | null {
-  if (jobs.state !== 'healthy') return null;
+function ledgerWorktreeOutcomes(jobs: { state: Source; text: string }, names: ReadonlySet<string>): Map<string, JobState> | null {
+  if (jobs.state === 'degraded') return null;
   const result = new Map<string, JobState>();
-  const finishes = new Map<string, number>();
-  const published = new Map<string, { url: string; head: string }>();
+  const groups = new Map<string, { rows: { row: Record<string, unknown>; at: number | null; order: number }[]; latest: number }>();
   for (const line of jobs.text.split('\n')) {
     if (!line.trim()) continue;
-    let row: Record<string, unknown>;
-    try { row = JSON.parse(line) as Record<string, unknown>; } catch { return null; }
-    if (!row || typeof row !== 'object' || Array.isArray(row)) return null;
+    let parsed: unknown;
+    try { parsed = JSON.parse(line); } catch { return null; }
+    if (!isPlainRecord(parsed)) return null;
+    const row = parsed;
     const job = ledgerJobId(row);
-    if (job === null || !JOB_ID.test(job)) continue;
+    if (job === null || !names.has(job) || !isWorktreeJobId(job)) continue;
     const phase = ledgerPhase(row);
-    const event = ledgerLifecycleEvent(row, phase);
-    const outcome = ledgerOutcomeState(row, event, phase);
-    const at = ledgerEventTs(row, phase);
-    const url = ledgerPrUrl(row) ?? '';
-    const isPr = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(url);
-    const head = typeof row['headSha'] === 'string' && /^[0-9a-f]{40}$/.test(row['headSha']) ? row['headSha'] : undefined;
-    if (event !== null && (REOPEN.has(event) || event === 'publish')) {
-      result.delete(job);
-      finishes.delete(job);
-      published.delete(job);
-    }
-    if (event === 'publish' && isPr && head) published.set(job, { url, head });
-    if (event === 'finish') {
-      if (at !== null) finishes.set(job, at);
-      if (result.get(job)?.reason === 'empty') result.delete(job);
-      if (at !== null && row['empty'] === true && !result.has(job)) result.set(job, { reason: 'empty', at });
-    }
-    if (outcome !== null) {
-      result.delete(job);
-      const stamp = at ?? finishes.get(job);
-      const prior = published.get(job);
-      if (stamp !== undefined && TERMINAL.has(outcome)) {
-        result.set(job, { reason: outcome.toLowerCase(), at: stamp, prHead: isPr ? head ?? (prior?.url === url ? prior.head : undefined) : undefined });
+    const at = ledgerEventTs(row, phase) ?? parseLedgerTs(row['ended_ts']);
+    const group = groups.get(job) ?? { rows: [], latest: 0 };
+    group.rows.push({ row, at, order: at ?? group.latest });
+    group.latest = Math.max(group.latest, at ?? 0);
+    groups.set(job, group);
+  }
+  for (const [job, { rows }] of groups) {
+    let finish: JobState | undefined;
+    let published: { url: string; head?: string } | undefined;
+    let supervisorReview = false;
+    let current: JobState = { reason: 'state-unknown', at: 0, hold: true };
+    for (const { row, at } of rows.sort((a, b) => a.order - b.order)) {
+      const phase = ledgerPhase(row);
+      const event = ledgerLifecycleEvent(row, phase);
+      const outcome = ledgerOutcomeState(row, event, phase);
+      const url = ledgerPrUrl(row) ?? '';
+      const isPr = isPullUrl(url);
+      const head = isCommitId(row['headSha']) ? row['headSha'] : undefined;
+      const unknown = { reason: 'state-unknown', at: at ?? 0, hold: true };
+      if (event !== null && REOPEN.has(event)) {
+        current = unknown;
+        finish = undefined;
+        published = undefined;
+        supervisorReview = false;
       }
-    } else if (event === 'publish' && at !== null && job.startsWith('RQ-DEVINCLOUD-') && isPr) {
-      result.set(job, { reason: 'publisher-pushed', at, prHead: head });
+      if (event === 'finish') {
+        const failed = row['empty'] === true || (Number.isInteger(row['exit_code']) && row['exit_code'] !== 0);
+        finish = at === null ? undefined : failed
+          ? { reason: 'terminal-failed', at, failed: true }
+          : unknown;
+        current = finish ?? unknown;
+        published = undefined;
+      }
+      if (event === 'publish') {
+        if (row['class'] === 'abort_secret_shape') supervisorReview = true;
+        if (outcome === null || isPr) published = isPr ? { url, head: head ?? (published?.url === url ? published.head : undefined) } : undefined;
+        if (outcome === null) current = published
+          ? { reason: 'pr-state-unknown', at: at ?? 0, prUrl: published.url, hold: true }
+          : finish ?? unknown;
+      }
+      if (outcome !== null) {
+        const stamp = at ?? finish?.at;
+        current = stamp !== undefined && stamp > 0 && TERMINAL.has(outcome)
+          ? { reason: outcome.toLowerCase(), at: stamp, prHead: isPr ? head ?? (published?.url === url ? published.head : undefined) : undefined }
+          // An open PR is a live hold, not an unknown state: keep the reason
+          // distinct so cleanup never treats it as checkable state-unknown.
+          : outcome === 'OPEN' && stamp !== undefined && stamp > 0
+            ? { reason: 'pr-open', at: stamp, hold: true }
+            : unknown;
+      }
     }
+    result.set(job, supervisorReview ? { reason: 'supervisor-review', at: current.at, hold: true } : current);
+  }
+  return result;
+}
+
+export async function worktreeOutcomes(jobs: { state: Source; text: string }, names: ReadonlySet<string>,
+  roots: MaintRoots, deps: WorktreeEvidenceDeps): Promise<Map<string, JobState> | null> {
+  const result = ledgerWorktreeOutcomes(jobs, names);
+  if (!result) return null;
+  const bridgeNames = [...names].filter(name => name.startsWith('RQ-') && isWorktreeJobId(name) && !result.has(name));
+  const local = bridgeNames.length ? await (deps.readWorktreeBridgeCommits ?? readWorktreeBridgeCommits)(roots).catch(() => new Map()) : new Map();
+  const urls = [...new Set([
+    ...[...result.values()].flatMap(state => state.prUrl ?? []),
+    ...bridgeNames.flatMap(name => { const url = local.get(name)?.prUrl; return url && isPullUrl(url) ? [url] : []; }),
+  ])];
+  const remote = await readWorktreePulls(roots, urls, bridgeNames.length > 0, deps.lookupWorktreePulls, deps.worktreePullCacheOnly);
+  const pulls = new Map(remote.pulls.map(pull => [pull.url, pull]));
+  for (const [job, state] of result) {
+    if (!state.prUrl) continue;
+    const pull = pulls.get(state.prUrl);
+    if (pull?.state === 'OPEN') result.set(job, { reason: 'pr-open', at: pull.at, hold: true });
+    else if (pull && state.at > 0) result.set(job, {
+      reason: pull.state.toLowerCase(), at: Math.max(state.at, pull.at), prHead: pull.prHead,
+    });
+  }
+  for (const name of bridgeNames) {
+    const landed = local.get(name);
+    const merged = remote.bridges && Object.hasOwn(remote.bridges, name) ? remote.bridges[name] : undefined;
+    const linked = landed?.prUrl ? pulls.get(landed.prUrl) : undefined;
+    const linkedHead = linked?.state === 'MERGED' && linked.mergeSha && linked.mergeSha === landed?.mergeSha ? linked.prHead : undefined;
+    if (merged || landed) result.set(name, {
+      prHead: linkedHead ?? merged?.prHead, at: Math.max(merged?.at ?? 0, landed?.at ?? 0), reason: 'bridge-merged',
+    });
   }
   return result;
 }

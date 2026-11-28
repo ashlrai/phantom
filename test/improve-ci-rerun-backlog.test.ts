@@ -44,7 +44,7 @@ interface Row {
 
 let runSeq = 0;
 /** One probable-flake rerun lifecycle: attempt, the gh call result, then the resolved verdict. */
-const rerun = (repo: string, test: string, head: string, pr: number, verdict: 'pass' | 'fail' | 'inconclusive', days: number): Row[] => {
+const rerun = (repo: string, test: string, head: string, pr: number, verdict: 'pass' | 'fail' | 'inconclusive', days: number): [Row, Row, Row] => {
   const runId = 1000 + ++runSeq;
   const at = daysAgo(days);
   return [
@@ -79,8 +79,19 @@ const writeJournal = (rows: Row[] | string): string => {
 };
 
 describe('ciRerunBacklogItems', () => {
+  it.each([
+    ['malformed heads', [sha(1), 'abc123', 'z'.repeat(40)]],
+    ['too few valid verdicts', [sha(1), sha(2), 'unknown']],
+    ['case variants of one head', ['a'.repeat(40), 'A'.repeat(40), 'aA'.repeat(20)]],
+  ])('withholds recurring-failure briefs for %s', async (_label, heads) => {
+    const rows = heads.flatMap((head, index) => rerun(REPO, TEST_A, head, index + 1, 'fail', 1));
+    const items = await ciRerunBacklogItems({ repo: REPO, journalPath: writeJournal(rows), now: NOW });
+    expect(items).toEqual([]);
+  });
+
   it('turns recurring fail verdicts into a valid priority-3 backlog item', async () => {
-    const items = await ciRerunBacklogItems({ repo: REPO, journalPath: writeJournal(failingVerdicts()), now: NOW });
+    const rows = [...failingVerdicts(), ...rerun(REPO, TEST_A, 'unknown', 99, 'fail', 1)];
+    const items = await ciRerunBacklogItems({ repo: REPO, journalPath: writeJournal(rows), now: NOW });
     expect(items).toHaveLength(1);
     const item = items[0]!;
     expect(item.id).toMatch(/^ci-rerun-verdict-[0-9a-f]{16}$/);
@@ -206,6 +217,38 @@ describe('ciRerunBacklogItems', () => {
     expect(await discover([...rows, ...third, { ...replay, test: undefined }])).toEqual([]);
   });
 
+  it('omits disputed attempts and their verdicts from per-test backlog context', async () => {
+    const disputed = rerun(REPO, TEST_A, sha(6), 16, 'fail', 1);
+    const journalPath = writeJournal([
+      ...failingVerdicts(),
+      ...disputed,
+      { ...disputed[0]!, at: daysAgo(0.5), test: TEST_B },
+    ]);
+    const items = await ciRerunBacklogItems({ repo: REPO, journalPath, now: NOW });
+    expect(items).toHaveLength(1);
+    expect(items[0]?.prompt).toContain('5 distinct rerun attempts were recorded for the same test');
+    expect(items[0]?.prompt).toContain('3 recorded rerun verdicts concluded failure');
+  });
+
+  it.each([
+    ['missing', null],
+    ['different head', { head: sha(99) }],
+    ['different test', { test: TEST_B }],
+    ['shared', { tests: [TEST_A, TEST_B] }],
+    ['expired', { at: daysAgo(8) }],
+    ['later than the verdict', { at: daysAgo(0.5) }],
+  ] as const)('withholds a verdict with a %s attempt', async (_label, override) => {
+    const [attempt, call, verdict] = rerun(REPO, TEST_A, sha(3), 13, 'fail', 1);
+    const journalPath = writeJournal([
+      ...rerun(REPO, TEST_A, sha(1), 11, 'fail', 1),
+      ...rerun(REPO, TEST_A, sha(2), 12, 'fail', 2),
+      ...(override ? [{ ...attempt, ...override, tests: 'tests' in override ? [...override.tests] : undefined }] : []),
+      call,
+      verdict,
+    ]);
+    expect(await ciRerunBacklogItems({ repo: REPO, journalPath, now: NOW })).toEqual([]);
+  });
+
   it('ignores verdict rows without a test id and rows for other repositories', async () => {
     const untaged: Row[] = [
       { at: daysAgo(1), repo: REPO, head: sha(31), runId: 31, pr: 31, outcome: 'verdict', verdict: 'fail' },
@@ -252,13 +295,14 @@ describe('ciRerunBacklogItems', () => {
       at: daysAgo(1), repo: REPO, head: sha(runId), runId, pr: runId, outcome: 'failed',
     }));
     const [first, second, third, fourth] = failures;
-    const success: Row = { ...first!, head: sha(45), outcome: 'ok' };
+    const success: Row = { ...first!, runId: 45, head: sha(45), outcome: 'ok' };
     const replay = (row: Row): Row => ({ ...row, at: daysAgo(0.5), repo: 'AshlrAI/Phantom' });
     const discover = (rows: Row[]) => ciRerunBacklogItems({
       repo: REPO, now: NOW, journalPath: writeJournal(rows),
     });
 
     expect(await discover([first!, second!, replay(first!), replay(second!)])).toEqual([]);
+    expect(await discover([first!, second!, third!, { ...first!, head: sha(45) }])).toEqual([]);
     const items = await discover([
       ...failures, success, ...Array.from({ length: 4 }, () => replay(success)),
       { ...third!, outcome: 'ok' },

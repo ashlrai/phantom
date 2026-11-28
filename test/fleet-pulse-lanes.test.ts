@@ -15,7 +15,7 @@ const job = (n: number, lane: string, minutesAgo: number, toMerge: number, empty
   row('finish', minutesAgo, { job: `RQ-FAKE-${n}`, lane, empty }),
 ];
 const read = (ledger: string | null) => buildThroughput({ ledger, now: NOW, hours: 24, by: 'lane', metricsPath: 'jobs.jsonl' });
-const slots: LaneSlotRead[] = [{ lane: 'claude', running: 2, capacity: 4 }, { lane: 'zai', running: 0, capacity: 3 }, { lane: 'grok', running: 1, capacity: null }];
+const slots: LaneSlotRead[] = [{ lane: 'claude', running: 2, capacity: 4 }, { lane: 'zai', running: 0, capacity: 3 }, { lane: 'grok', running: 1, capacity: 0 }];
 
 describe('buildPulseLanes', () => {
   it('a busy window: per lane rates, medians, EMPTY and running of capacity, with totals and 24 hourly values', () => {
@@ -47,6 +47,25 @@ describe('buildPulseLanes', () => {
     const pulse = buildPulseLanes({ throughput: read(job(1, 'claude', 30, 10).join('\n')), slots }, NOW);
     expect(pulse.lanes.find(l => l.lane === 'zai')).toEqual({ lane: 'zai', state: 'no_data', running: 0, capacity: 3, merged_per_h: null, median_open_to_merge_s: null, empty_rate: null, merged: null, finished: null, line: 'no data yet' });
     expect(pulse.lanes.find(l => l.lane === 'claude')!.state).toBe('measured');
+  });
+
+  it('withholds each fleet slot total independently when a lane lacks that measurement', () => {
+    const throughput = read(job(1, 'claude', 30, 10).join('\n'));
+    const withoutCapacity = buildPulseLanes({ throughput, slots: [...slots.slice(0, 2), { lane: 'grok', running: 1, capacity: null }] }, NOW);
+    expect(withoutCapacity.totals).toMatchObject({ running: 3, capacity: null });
+    expect(withoutCapacity.headline).toMatch(/, 3 running\.$/);
+    expect(withoutCapacity.lanes.find(l => l.lane === 'claude')).toMatchObject({ running: 2, capacity: 4 });
+
+    const withoutRunning = buildPulseLanes({ throughput, slots: [...slots.slice(0, 2), { lane: 'grok', running: null, capacity: 0 }] }, NOW);
+    expect(withoutRunning.totals).toMatchObject({ running: null, capacity: 7 });
+    expect(withoutRunning.headline).toMatch(/EMPTY 0%\.$/);
+  });
+
+  it('keeps fleet slot totals unknown when a ledger lane has no slot row', () => {
+    const throughput = read(job(1, 'codex', 30, 10).join('\n'));
+    const pulse = buildPulseLanes({ throughput, slots }, NOW);
+    expect(pulse.totals).toMatchObject({ running: null, capacity: null, merged: 1 });
+    expect(pulse.lanes.find(l => l.lane === 'codex')).toMatchObject({ running: null, capacity: null, merged: 1 });
   });
 
   it('an unreadable ledger is unknown everywhere, never 0, and running still shows', () => {

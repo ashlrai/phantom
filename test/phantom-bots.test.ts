@@ -43,6 +43,19 @@ it('CLI refuses live create and dry-run writes nothing', async () => {
   expect(JSON.parse(output[1]).record.schema).toBe('phantom-bot.v1');
   expect(await readdir(dir)).toEqual([]);
 });
+it('prints usage and exits 0 for -h on every verb, and keeps -h as an option value', async () => {
+  const dir = await home(), output: string[] = [];
+  const emit = (line: string) => output.push(line);
+  for (const verb of ['list', 'seats', 'handoffs', 'handoff', 'show', 'explain', 'create', 'message']) {
+    output.length = 0;
+    expect(await runBotsCli([verb, '-h'], emit, dir)).toBe(0);
+    expect(output[0]).toContain('phm bots');
+  }
+  // `--text -h` is data, not help: the send runs and fails on the unknown seat.
+  output.length = 0;
+  expect(await runBotsCli(['message', '--from', 'a', '--to', 'b', '--text', '-h'], emit, dir)).toBe(1);
+  expect(output[0]).not.toContain('phm bots');
+});
 it('explains exhausted failover, reset preference, unknown evidence and no capable lanes read-only', async () => {
   const dir = await home(), now = Date.parse('2026-11-18T12:00:00Z');
   await mkdir(join(dir, 'queue'));

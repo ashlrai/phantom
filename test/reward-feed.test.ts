@@ -69,6 +69,25 @@ describe('foldJobsLedgerRewards', () => {
     expect(inputs[0]!.dispatchedAt).toBe('2026-10-28T13:30:00.000Z');
   });
 
+  it('requires dispatch evidence beyond a pre-spawn reservation', () => {
+    const job = 'RQ-A';
+    const reservation = line({
+      event: 'claim', job, lane: 'devin', launch_dedupe: true, ts: DISPATCH_ISO,
+    });
+    expect(foldJobsLedgerRewards([reservation, merged(job)].join('\n'), NOW_MS)).toEqual([]);
+  });
+
+  it.each(['2026-10-28T15:15:00.000Z', undefined])(
+    'preserves observed dispatch evidence after a reservation with timestamp %s', (ts) => {
+      const job = 'RQ-A';
+      const reservation = line({ event: 'claim', job, lane: 'devin', launch_dedupe: true, ts });
+      const rows = [launch(job), reservation, merged(job)];
+      expect(foldJobsLedgerRewards(rows.join('\n'), NOW_MS)).toMatchObject([
+        { jobId: job, pool: 'codex-cmp', dispatchedAt: DISPATCH_ISO, merged: true },
+      ]);
+    },
+  );
+
   it('keeps batch member rewards and excludes wrapper rewards for the same PR', () => {
     const batch = 'RQ-BATCH-17';
     const member = 'RQ-MEMBER17'; // Same length gives both verdict receipts the same PR URL.
@@ -102,6 +121,81 @@ describe('foldJobsLedgerRewards', () => {
     const inputs = foldJobsLedgerRewards(text, NOW_MS);
     expect(inputs).toHaveLength(1);
     expect(inputs[0]).toMatchObject({ pool: 'omlx', dispatchedAt: '2026-10-28T15:00:00.000Z' });
+  });
+
+  it.each(['MERGED', 'CLOSED', 'REVERTED'])('withholds a %s reward when the latest dispatch identifies another PR', (state) => {
+    const job = 'RQ-DISPATCH-PR';
+    const url = 'https://github.com/ashlrai/phantom/pull/101';
+    const matching = line({ event: 'claim', job, ts: DISPATCH_ISO, url, lane: 'codex-cmp' });
+    const other = line({
+      event: 'launch', job, ts: '2026-10-28T15:00:00Z',
+      pr_url: 'https://github.com/ashlrai/phantom/pull/102', lane: 'devin',
+    });
+    const verdict = line({ job, state, ts: MERGED_ISO, url });
+    expect(foldJobsLedgerRewards([matching, verdict].join('\n'), NOW_MS)).toMatchObject([
+      { jobId: job, pool: 'codex-cmp', merged: state === 'MERGED' },
+    ]);
+    expect(foldJobsLedgerRewards([matching, other, verdict].join('\n'), NOW_MS)).toEqual([]);
+  });
+
+  it.each(['MERGED', 'CLOSED', 'REVERTED'])('binds a repository-only %s verdict to the dispatch PR repository', (state) => {
+    const job = 'RQ-DISPATCH-PR-REPO';
+    const dispatch = line({
+      event: 'launch', job, ts: DISPATCH_ISO, lane: 'devin',
+      pr_url: 'https://github.com/ashlrai/lexicon/pull/101',
+    });
+    const verdict = { job, state, ts: MERGED_ISO };
+
+    expect(foldJobsLedgerRewards([dispatch, line({ ...verdict, repo: 'ashlrai/phantom' })].join('\n'), NOW_MS))
+      .toEqual([]);
+    expect(foldJobsLedgerRewards([dispatch, line({ ...verdict, repo: 'AshlrAI/Lexicon' })].join('\n'), NOW_MS))
+      .toMatchObject([{ jobId: job, pool: 'devin', repo: 'ashlrai/lexicon', merged: state === 'MERGED' }]);
+  });
+
+  it('withholds rewards when latest dispatch receipts disagree on the PR in either order', () => {
+    const job = 'RQ-DISPATCH-PR-TIE';
+    const dispatch = { event: 'launch', job, ts: DISPATCH_ISO, lane: 'codex-cmp' };
+    const first = line({ ...dispatch, url: 'https://github.com/ashlrai/phantom/pull/101' });
+    const second = line({ ...dispatch, prUrl: 'https://github.com/ashlrai/phantom/pull/102' });
+    const verdict = line({ job, state: 'MERGED', ts: MERGED_ISO, url: 'https://github.com/ashlrai/phantom/pull/101' });
+    for (const rows of [[first, second], [second, first]]) {
+      expect(foldJobsLedgerRewards([...rows, verdict].join('\n'), NOW_MS)).toEqual([]);
+    }
+  });
+
+  it.each(['MERGED', 'CLOSED', 'REVERTED'])('withholds a URL-free %s reward when the dispatch PR is disputed', (state) => {
+    const job = 'RQ-DISPATCH-PR-URL-FREE';
+    const dispatch = { event: 'launch', job, ts: DISPATCH_ISO, lane: 'codex-cmp' };
+    const url = 'https://github.com/ashlrai/phantom/pull/101';
+    const other = 'https://github.com/ashlrai/phantom/pull/102';
+    const matching = line({ ...dispatch, url, prUrl: 'https://github.com/AshlrAI/Phantom/pull/101/' });
+    const conflicting = line({ ...dispatch, url, prUrl: other });
+    const otherDispatch = line({ ...dispatch, url: other });
+    const verdict = line({ job, state, ts: MERGED_ISO, repo: 'ashlrai/phantom' });
+
+    expect(foldJobsLedgerRewards([matching, verdict].join('\n'), NOW_MS)).toMatchObject([
+      { jobId: job, pool: 'codex-cmp', merged: state === 'MERGED' },
+    ]);
+    for (const rows of [[conflicting], [matching, otherDispatch], [otherDispatch, matching]]) {
+      expect(foldJobsLedgerRewards([...rows, verdict].join('\n'), NOW_MS)).toEqual([]);
+    }
+  });
+
+  it('uses the dispatch PR to bind CI timing when the verdict omits its PR', () => {
+    const job = 'RQ-DISPATCH-CI-PR';
+    const dispatch = line({
+      event: 'launch', job, ts: DISPATCH_ISO, lane: 'codex-cmp',
+      url: 'https://github.com/AshlrAI/Phantom/pull/101/',
+    });
+    const verdict = line({ job, state: 'MERGED', ts: MERGED_ISO });
+    for (const pull of [101, 102]) {
+      const url = `https://github.com/ashlrai/phantom/pull/${pull}`;
+      const start = line({ job, event: 'ci_start', ts: '2026-10-28T14:30:00Z', url });
+      const complete = line({ job, event: 'ci_complete', ts: '2026-10-28T14:45:00Z', url });
+      const inputs = foldJobsLedgerRewards([dispatch, start, complete, verdict].join('\n'), NOW_MS);
+      expect(inputs).toMatchObject([{ jobId: job, pool: 'codex-cmp', merged: true }]);
+      expect(inputs[0]?.ciWallMs).toBe(pull === 101 ? 900_000 : undefined);
+    }
   });
 
   it.each([
@@ -159,8 +253,7 @@ describe('foldJobsLedgerRewards', () => {
     const job = 'RQ-TIED-DISPATCH-REPO';
     const conflict = line({
       job, event: 'claim', ts: DISPATCH_ISO, lane: 'codex-cmp',
-      url: 'https://github.com/ashlrai/phantom/pull/12',
-      pr_url: 'https://github.com/ashlrai/lexicon/pull/12',
+      repo: 'ashlrai/lexicon',
     });
     const verdict = line({ job, state, ts: MERGED_ISO });
     const matching = launch(job);
@@ -316,6 +409,22 @@ describe('foldJobsLedgerRewards', () => {
     ]);
   });
 
+  it.each(['ledger', 'standing set'])('keeps PR identity for a %s revert across a sparse replay', (source) => {
+    const job = 'RQ-SPARSE-REPLAY';
+    const url = 'https://github.com/ashlrai/phantom/pull/4';
+    const rows = [
+      launch(job),
+      line({ job, state: 'MERGED', mergedAt: MERGED_ISO, url }),
+      line({ job, state: 'MERGED', mergedAt: MERGED_ISO, ts: '2026-10-28T19:00:00.000Z' }),
+    ];
+    const standing = source === 'standing set' ? new Set(['ashlrai/phantom#4']) : undefined;
+    if (source === 'ledger') {
+      rows.push(line({ job, event: 'revert', url, ts: '2026-10-28T17:00:00.000Z' }));
+    }
+    expect(foldJobsLedgerRewards(rows.join('\n'), NOW_MS, undefined, standing))
+      .toMatchObject([{ jobId: job, merged: false, mergedAt: null, dispatchedAt: DISPATCH_ISO }]);
+  });
+
   it('credits the later merge even when receipts for the earlier merge and revert arrive last', () => {
     const job = 'RQ-LATE-RECEIPTS';
     const dispatchAt = '2026-10-28T17:00:00.000Z';
@@ -394,6 +503,33 @@ describe('foldJobsLedgerRewards', () => {
       .toMatchObject([{ jobId: job, merged: true }]);
   });
 
+  it.each([
+    { repo: 'ashlrai/companion', held: true },
+    { repo: 'AshlrAI/Phantom', held: false },
+    { repo: 'unknown', held: true },
+    { repo: 'phantom', held: true },
+    { repo: 42, held: true },
+    { repo: ' ', held: false },
+    { repo: null, held: false },
+    { repo: undefined, held: false },
+  ])('scopes URL-free reverts by repository (%o)', ({ repo, held }) => {
+    const job = 'RQ-REVERT-REPO';
+    const revert = line({ job, event: 'reverted', ts: '2026-10-28T18:00:00.000Z', repo });
+    for (const merge of [merged(job), line({ job, state: 'MERGED', mergedAt: MERGED_ISO })]) {
+      expect(foldJobsLedgerRewards([launch(job), merge, revert].join('\n'), NOW_MS))
+        .toMatchObject([{ jobId: job, repo: 'ashlrai/phantom', merged: held }]);
+    }
+  });
+
+  it('requires usable scope for a standalone revert unless it has no identity metadata', () => {
+    const job = 'RQ-STANDALONE-REVERT-SCOPE';
+    const revert = { job, event: 'reverted', ts: MERGED_ISO, repo: 'unknown' };
+    expect(foldJobsLedgerRewards([launch(job), line(revert)].join('\n'), NOW_MS)).toEqual([]);
+    const scoped = line({ ...revert, url: 'https://github.com/ashlrai/phantom/pull/101' });
+    expect(foldJobsLedgerRewards([launch(job), scoped].join('\n'), NOW_MS))
+      .toMatchObject([{ jobId: job, repo: 'ashlrai/phantom', merged: false }]);
+  });
+
   it.each(['MERGED', 'CLOSED'])('attributes %s rewards to the PR repository across URL aliases', (state) => {
     const job = 'RQ-PR-REPO';
     const rows = [
@@ -441,20 +577,24 @@ describe('foldJobsLedgerRewards', () => {
       .toMatchObject([{ jobId: job, merged: true }]);
   });
 
-  it.each(['MERGED', 'CLOSED'])('preserves conflicting PR claims across tied %s receipts and replays', (state) => {
+  it.each(['MERGED', 'CLOSED'])('preserves conflicting PR claims at the same effective %s time', (state) => {
     const job = 'RQ-TIED-RESOLUTION';
     const url = 'https://github.com/ashlrai/phantom/pull/101';
     const other = 'https://github.com/ashlrai/companion/pull/102';
     const receipt = { job, state, ts: MERGED_ISO };
     const left = line({ ...receipt, url });
     const right = line({ ...receipt, url: other });
+    const replay = line({
+      ...receipt, url, ts: '2026-10-28T19:00:00.000Z',
+      [state === 'MERGED' ? 'mergedAt' : 'closedAt']: MERGED_ISO,
+    });
     const standing = new Set(['ashlrai/phantom#101']);
     const ci = [
       line({ job, event: 'ci_start', ts: '2026-10-28T14:30:00.000Z', url }),
       line({ job, event: 'ci_complete', ts: '2026-10-28T14:45:00.000Z', url }),
     ];
 
-    for (const tied of [[left, right, left], [right, left, right]]) {
+    for (const tied of [[left, right, left], [right, left, right], [left, right, replay], [replay, right, left]]) {
       const inputs = foldJobsLedgerRewards([launch(job), ...ci, ...tied].join('\n'), NOW_MS, undefined, standing);
       expect(inputs).toEqual([
         expect.objectContaining({ jobId: job, repo: null, merged: state === 'MERGED' }),
@@ -596,6 +736,26 @@ describe('foldJobsLedgerRewards', () => {
     expect(foldJobsLedgerRewards(text, NOW_MS, undefined, keys))
       .toMatchObject([{ jobId: 'RQ-A', merged: false }]);
     expect(foldJobsLedgerRewards(text, resolution, undefined, keys))
+      .toMatchObject([{ jobId: 'RQ-A', merged: true }]);
+  });
+
+  it('excludes standalone future reverts from competing PR claims', () => {
+    const revertedAt = NOW_MS + 1;
+    const keys = new Set(['ashlrai/phantom#4']);
+    const rows = [launch('RQ-A'), merged('RQ-A')];
+    const receipt = {
+      job: 'RQ-B', url: 'https://github.com/ashlrai/phantom/pull/4',
+      ts: MERGED_ISO, revertedAt,
+    };
+    const text = [...rows, line({ ...receipt, event: 'reverted' })].join('\n');
+
+    expect(foldJobsLedgerRewards(text, NOW_MS, undefined, keys))
+      .toMatchObject([{ jobId: 'RQ-A', merged: false }]);
+    expect(foldJobsLedgerRewards(text, revertedAt, undefined, keys))
+      .toMatchObject([{ jobId: 'RQ-A', merged: true }]);
+
+    const mixed = [...rows, line({ ...receipt, state: 'MERGED' })].join('\n');
+    expect(foldJobsLedgerRewards(mixed, NOW_MS, undefined, keys))
       .toMatchObject([{ jobId: 'RQ-A', merged: true }]);
   });
 
@@ -791,6 +951,54 @@ describe('foldJobsLedgerRewards', () => {
     for (const input of inputs) expect(input).not.toHaveProperty('ciWallMs');
   });
 
+  it.each([
+    { reverts: [9], ciWallMs: 900_000 },
+    { reverts: [10], ciWallMs: undefined },
+    { reverts: [9, 10], ciWallMs: undefined },
+  ])('binds standalone revert CI timing to its PR evidence (%o)', ({ reverts, ciWallMs }) => {
+    const job = 'RQ-CI-REVERT';
+    const url = 'https://github.com/ashlrai/phantom/pull/9';
+    const rows = [
+      launch(job),
+      line({ event: 'ci_start', job, ts: '2026-10-28T15:10:00.000Z', url }),
+      line({ event: 'ci_complete', job, ts: '2026-10-28T15:25:00.000Z', url }),
+      ...reverts.map((pr) => line({
+        event: 'reverted', job, ts: MERGED_ISO, url: `https://github.com/ashlrai/phantom/pull/${pr}`,
+      })),
+    ];
+    const inputs = foldJobsLedgerRewards(rows.join('\n'), NOW_MS);
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]).toMatchObject({ jobId: job, merged: false });
+    expect(inputs[0]?.ciWallMs).toBe(ciWallMs);
+  });
+
+  it('attributes a standalone revert and its CI timing to the latest effective revert repository', () => {
+    const job = 'RQ-REVERT-REPO';
+    const url = 'https://github.com/ashlrai/companion/pull/101';
+    const rows = [
+      launch(job),
+      line({ event: 'ci_start', job, ts: '2026-10-28T15:10:00.000Z', url }),
+      line({ event: 'ci_complete', job, ts: '2026-10-28T15:25:00.000Z', url }),
+      line({ event: 'reverted', job, revertedAt: MERGED_ISO, url, repo: 'ashlrai/phantom' }),
+      line({
+        event: 'reverted', job, ts: '2026-10-28T19:00:00.000Z',
+        revertedAt: '2026-10-28T15:00:00.000Z', url: 'https://github.com/ashlrai/phantom/pull/102',
+      }),
+    ];
+    expect(foldJobsLedgerRewards(rows.join('\n'), NOW_MS)).toEqual([
+      expect.objectContaining({ jobId: job, repo: 'ashlrai/companion', merged: false, ciWallMs: 900_000 }),
+    ]);
+
+    rows.push(line({
+      event: 'reverted', job, revertedAt: MERGED_ISO, url: 'https://github.com/ashlrai/phantom/pull/102',
+    }));
+    const tied = foldJobsLedgerRewards(rows.join('\n'), NOW_MS);
+    expect(tied).toEqual([
+      expect.objectContaining({ jobId: job, repo: null, merged: false }),
+    ]);
+    expect(tied[0]).not.toHaveProperty('ciWallMs');
+  });
+
   it('keeps the reward verdict but withholds CI timing when a batch claim coincides with CI start', () => {
     const start = '2026-10-28T15:10:00.000Z';
     const complete = '2026-10-28T15:25:00.000Z';
@@ -811,6 +1019,31 @@ describe('foldJobsLedgerRewards', () => {
     expect(tied).not.toHaveProperty('ciWallMs');
     expect(inputs.find((input) => input.jobId === 'RQ-CI-LATER'))
       .toMatchObject({ pool: 'claude', merged: false, ciWallMs: 900_000 });
+  });
+
+  it.each([
+    ['2026-10-28T15:09:59.000Z', true, false],
+    ['2026-10-28T15:10:00.000Z', true, false],
+    ['2026-10-28T15:10:01.000Z', false, false],
+    ['2026-10-28T15:25:00.000Z', false, false],
+    ['2026-10-28T15:25:01.000Z', true, false],
+    ['invalid', false, false],
+    ['2026-10-28T15:10:01.000Z', true, true],
+  ] as const)('checks launch reservations at %s for CI timing (measured=%s, declined=%s)', (
+    timestamp, measured, declined,
+  ) => {
+    const job = 'RQ-CI-RESERVATION';
+    const rows = [
+      launch(job),
+      ciStart(job, '2026-10-28T15:10:00.000Z'),
+      ciComplete(job, '2026-10-28T15:25:00.000Z'),
+      merged(job),
+      line({ job, event: 'claim', lane: 'devin', launch_dedupe: true, ts: timestamp,
+        ...(declined ? { launched: false } : {}) }),
+    ];
+    const inputs = foldJobsLedgerRewards(rows.join('\n'), NOW_MS);
+    expect(inputs).toMatchObject([{ jobId: job, pool: 'codex-cmp', merged: true, dispatchedAt: DISPATCH_ISO }]);
+    expect(inputs[0]?.ciWallMs).toBe(measured ? 900_000 : undefined);
   });
 
   it('withholds CI timing when an undated boundary could fall inside the rewarded dispatch', () => {
@@ -891,6 +1124,32 @@ describe('foldJobsLedgerRewards', () => {
     expect(inputs).toHaveLength(1);
     expect(inputs[0]).toMatchObject({ jobId: job, merged: true, repo: 'ashlrai/phantom' });
     expect(inputs[0]?.ciWallMs).toBe(ciWallMs);
+  });
+
+  it.each(['MERGED', 'CLOSED'])('distinguishes missing and disputed repository evidence for %s CI timing', (state) => {
+    const job = 'RQ-CI-REPO-DISPUTED';
+    const dispatch = { job, event: 'launch', ts: DISPATCH_ISO, lane: 'codex-cmp' };
+    const resolution = { job, state, ts: MERGED_ISO };
+    const phantom = { repo: 'ashlrai/phantom' };
+    const lexicon = { repo: 'ashlrai/lexicon' };
+    const ci = [
+      ciStart(job, '2026-10-28T15:10:00.000Z'),
+      ciComplete(job, '2026-10-28T15:25:00.000Z'),
+    ];
+    const fold = (dispatches: Record<string, unknown>[], resolutions: Record<string, unknown>[]) =>
+      foldJobsLedgerRewards([...dispatches.map(line), ...ci, ...resolutions.map(line)].join('\n'), NOW_MS);
+    const conflictedDispatches = [{ ...dispatch, ...phantom }, { ...dispatch, ...lexicon }];
+
+    expect(fold([dispatch], [resolution])).toMatchObject([{ repo: null, ciWallMs: 900_000 }]);
+    expect(fold(conflictedDispatches, [{ ...resolution, ...phantom }]))
+      .toMatchObject([{ ...phantom, ciWallMs: 900_000 }]);
+    for (const inputs of [
+      fold(conflictedDispatches, [resolution]),
+      fold([{ ...dispatch, ...phantom }], [{ ...resolution, ...phantom }, { ...resolution, ...lexicon }]),
+    ]) {
+      expect(inputs).toMatchObject([{ jobId: job, repo: null, merged: state === 'MERGED' }]);
+      expect(inputs[0]).not.toHaveProperty('ciWallMs');
+    }
   });
 
   it('measures CI across equivalent PR URLs and ignores out-of-window claims', () => {
@@ -1018,7 +1277,7 @@ describe('syncRewardSignalsFromJobsLedger', () => {
   });
 
   it('records spend through the sync start before checking price coverage', async () => {
-    writeJobs([launch('RQ-A'), merged('RQ-A'), claim('RQ-C'), closed('RQ-C')].join('\n'));
+    writeJobs([launch('RQ-A'), merged('RQ-A'), claim('RQ-C'), closed('RQ-C'), launch('RQ-D'), merged('RQ-D')].join('\n'));
     const cutoff = NOW().toISOString();
     const future = new Date(NOW_MS + 1).toISOString();
     writeSpend([
@@ -1027,14 +1286,29 @@ describe('syncRewardSignalsFromJobsLedger', () => {
       line({ job: 'RQ-A', cost_usd: 10, at: future }),
       line({ job: 'RQ-A', timestamp: future }),
       line({ job: 'RQ-C', cost_usd: 4, ts: future }),
+      line({ job: 'RQ-D', cost_usd: 2, ts: cutoff }),
+      line({ job: 'RQ-D', cost_usd: 3, ts: 'invalid' }),
     ].join('\n'));
 
     const result = await syncRewardSignalsFromJobsLedger({ runsDir, home, now: NOW });
-    expect(result).toMatchObject({ state: 'read', recorded: 2 });
+    expect(result).toMatchObject({ state: 'read', recorded: 3 });
     expect(rewardRows().map((row) => [row.jobId, row.cost.costUsd])).toEqual([
       ['RQ-A', 3.5],
       ['RQ-C', null],
+      ['RQ-D', null],
     ]);
+  });
+
+  it('records a merge with unknown USD cost when one spend call straddles the sync cutoff', async () => {
+    writeJobs([launch('RQ-A'), merged('RQ-A')].join('\n'));
+    writeSpend([
+      line({ job: 'RQ-A', cost_usd: 2 }),
+      line({ job: 'RQ-A', cost_usd: 1, ts: new Date(NOW_MS + 1).toISOString(), at: NOW().toISOString() }),
+    ].join('\n'));
+
+    const result = await syncRewardSignalsFromJobsLedger({ runsDir, home, now: NOW });
+    expect(result).toMatchObject({ state: 'read', spendState: 'read', recorded: 1 });
+    expect(rewardRows()).toMatchObject([{ jobId: 'RQ-A', merged: true, cost: { costUsd: null } }]);
   });
 
   it('records a merge with unknown USD cost when earlier spend is outside the retained tail', async () => {
@@ -1055,6 +1329,15 @@ describe('syncRewardSignalsFromJobsLedger', () => {
       line({ job_id: 'RQ-A', model: 'unpriced' }),
       line({ job: 'RQ-A', cost_usd: 2.5 }),
     ].join('\n'));
+
+    const result = await syncRewardSignalsFromJobsLedger({ runsDir, home, now: NOW });
+    expect(result).toMatchObject({ state: 'read', spendState: 'read', recorded: 1 });
+    expect(rewardRows()).toMatchObject([{ jobId: 'RQ-A', merged: true, cost: { costUsd: null } }]);
+  });
+
+  it('records the merge without persisting a partial spend total from a malformed journal', async () => {
+    writeJobs([launch('RQ-A'), merged('RQ-A')].join('\n'));
+    writeSpend([line({ job: 'RQ-A', cost_usd: 2.5 }), '{"job":"RQ-A"'].join('\n'));
 
     const result = await syncRewardSignalsFromJobsLedger({ runsDir, home, now: NOW });
     expect(result).toMatchObject({ state: 'read', spendState: 'read', recorded: 1 });

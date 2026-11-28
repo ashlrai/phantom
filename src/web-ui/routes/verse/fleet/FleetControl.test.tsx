@@ -22,6 +22,7 @@ import { executeCatalogCommand } from '../shell/run-command.js';
 import { mockWideViewport, type ViewportMock } from '../shell/viewport.test-support.js';
 import { resetVerseUi } from '../verse-ui-store.js';
 import type { FleetControlActionResultV1, FleetControlStateV1 } from '../../../../core/fleet/fleet-control-types.js';
+import { STALE_STANDING_LANES } from './lane-runsdir-fallback.js';
 
 const TOKEN = 'c'.repeat(64);
 let vp: ViewportMock | null = null;
@@ -725,10 +726,9 @@ describe('steering', () => {
 describe('lane observations', () => {
   it('shows working producers without calling stale, unobserved capacity off', async () => {
     const now = Date.now();
-    const staleReason = 'No standing tick has reported lanes in the last 10 minutes.';
     const live = fleetLive('live', now);
     live.lanes = live.lanes.map((lane) => ({ ...lane, slots: 0,
-      busy: lane.lane === 'grok-cli' ? 1 : 0, capReason: staleReason }));
+      busy: lane.lane === 'grok-cli' ? 1 : 0, capReason: STALE_STANDING_LANES }));
     stubSurfaceFetch({ kind: 'live', now, routes: { '/api/verse/fleet/live': live } });
     render(<FleetSection />);
     const lanes = await screen.findByRole('list', { name: 'Lanes: busy of slots' });

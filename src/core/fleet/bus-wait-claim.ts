@@ -1,13 +1,14 @@
 /** Local coordination only; addresses and owner labels do not grant authority. */
 import { setTimeout as delay } from 'node:timers/promises';
 import { performance } from 'node:perf_hooks';
-import { claimNextBusWork, type BusNextRequest, type BusNextResult } from './bus-next-claim.js';
+import { claimNextBusWork, validBusNextFilters, type BusNextRequest, type BusNextResult } from './bus-next-claim.js';
 import { validBusClaimRequest } from './bus-work-claims.js';
 
 export interface BusWaitClaimRequest extends BusNextRequest { waitMs: number }
 export function validBusWaitClaimRequest(request: BusWaitClaimRequest): boolean {
   return Number.isSafeInteger(request.waitMs) && request.waitMs >= 1 && request.waitMs <= 300_000 &&
-    validBusClaimRequest({ action: 'acquire', id: request.to, owner: request.owner, leaseMs: request.leaseMs, root: request.root });
+    validBusClaimRequest({ action: 'acquire', id: request.to, owner: request.owner, leaseMs: request.leaseMs, root: request.root }) &&
+    validBusNextFilters(request);
 }
 
 export async function waitClaimBusWork(request: BusWaitClaimRequest, signal?: AbortSignal): Promise<BusNextResult> {

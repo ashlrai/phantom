@@ -13,7 +13,7 @@ import { COMMS_TRANSPORTS, decideSend, readKillState, type CommsTransport, type 
 import { COMMS_AGENT_ROLE } from '../src/core/comms-agent/role.js';
 import { selectCommsLane } from '../src/core/comms-agent/route.js';
 import { commsDrafts, commsStatus, envelopeExternal, executeSend, preservedIds, runCommsAgent } from '../src/core/comms-agent/run.js';
-import { appendSendLog, listDrafts, ownerApprovalsPath, privateOwnerFile, readApprovalsFile, readInbox, readOwnerApprovals, readSendLog, writeInbox } from '../src/core/comms-agent/store.js';
+import { appendRunRecord, appendSendLog, listDrafts, ownerApprovalsPath, privateOwnerFile, readApprovalsFile, readInbox, readOwnerApprovals, readRunJournal, readSendLog, writeInbox, type CommsRunRecord } from '../src/core/comms-agent/store.js';
 import { triageInbox, type InboxMessage } from '../src/core/comms-agent/triage.js';
 import { isPaused } from '../src/core/comms/pause.js';
 import { realHome, useAccountHomeForTest } from '../src/core/real-home.js';
@@ -177,6 +177,124 @@ describe('Comms role and triage', () => {
     const triage = triageInbox(messages, []);
     expect(preservedIds(messages, triage.kept, triage.archived)).toBe(true);
     expect(triage.deleted).toBe(0);
+  });
+
+  it('keeps the internal mail class out of the deliverable reply text', async () => {
+    const runsDir = temp();
+    const messages: InboxMessage[] = [
+      { id: 'person-1', transport: 'email', from: 'ada@example.com', subject: 'Question', body: 'Can you look?' },
+      { id: 'owner-1', transport: 'email', from: 'boss@example.com', subject: 'Directive', body: 'Do the thing' },
+    ];
+    await writeInbox(runsDir, messages);
+    const sentTexts: string[] = [];
+    const report = await runCommsAgent({
+      runsDir,
+      lanes: [],
+      teamIdentities: [],
+      ...quiet,
+      approvals: [
+        { transport: 'email', recipient: 'ada@example.com' },
+        { transport: 'email', recipient: 'boss@example.com' },
+      ],
+      owners: ['boss@example.com'],
+      deliver: async attempt => { sentTexts.push(attempt.text); return { status: 'sent', reason: 'ok' }; },
+    });
+    expect(report.sends.every(send => send.status === 'sent')).toBe(true);
+    expect(sentTexts).toHaveLength(2);
+    // The mail class is owner-facing triage metadata: it stays in `summaries`
+    // but must never reach the text a recipient is sent — the stub names the
+    // subject being answered, nothing else.
+    for (const text of sentTexts) {
+      expect(text).not.toMatch(/^(person|owner|bulk|bot|unknown):/m);
+      expect(text).not.toContain('person:');
+      expect(text).not.toContain('owner:');
+    }
+    expect(sentTexts.some(text => text.includes('Question'))).toBe(true);
+    expect(sentTexts.some(text => text.includes('Directive'))).toBe(true);
+    expect(report.summaries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ class: 'person', summary: 'person: Question' }),
+      expect.objectContaining({ class: 'owner', summary: 'owner: Directive' }),
+    ]));
+  });
+
+  it('reports and journals each inbox message\'s triage decision', async () => {
+    const runsDir = temp();
+    const messages: InboxMessage[] = [
+      { id: 'bulk-1', transport: 'email', from: 'news@lists.example', subject: 'Weekly digest', body: 'unsubscribe me', labels: ['bulk'] },
+      { id: 'person-1', transport: 'email', from: 'ada@example.com', subject: 'Question', body: 'Can you look?' },
+      { id: 'unknown-1', transport: 'imessage', from: '', subject: '', body: 'no sender' },
+    ];
+    await writeInbox(runsDir, messages);
+    const report = await runCommsAgent({
+      runsDir,
+      lanes: [],
+      teamIdentities: [],
+      deliver: async () => ({ status: 'drafted', reason: 'no approval' }),
+    });
+    // One decision per message the pass classified — which mail was kept,
+    // archived or drafted, not only the counts.
+    expect(report.summaries).toEqual([
+      { id: 'bulk-1', class: 'bulk', summary: 'bulk: Weekly digest' },
+      { id: 'person-1', class: 'person', summary: 'person: Question' },
+      { id: 'unknown-1', class: 'unknown', summary: 'unknown:' },
+    ]);
+    const journal = await readRunJournal(runsDir);
+    expect(journal.status).toBe('ok');
+    expect(journal.status === 'ok' && journal.record?.summaries).toEqual(report.summaries);
+  });
+
+  it('status surfaces the last pass\'s decisions and null for records that predate them', async () => {
+    const runsDir = temp();
+    await writeInbox(runsDir, [
+      { id: 'person-1', transport: 'email', from: 'ada@example.com', subject: 'Question', body: 'Can you look?' },
+    ]);
+    await runCommsAgent({
+      runsDir,
+      lanes: [],
+      teamIdentities: [],
+      deliver: async () => ({ status: 'drafted', reason: 'no approval' }),
+    });
+    const status = await commsStatus(runsDir);
+    expect(status.lastRun.source).toBe('available');
+    expect(status.lastRun.run?.summaries).toEqual([
+      { id: 'person-1', class: 'person', summary: 'person: Question' },
+    ]);
+
+    // A record written before the field existed recorded counts only: the
+    // per-message decisions are unknown, never reported as an empty pass.
+    const legacy: CommsRunRecord = {
+      at: '2026-01-03T00:00:00.000Z',
+      schema: 'comms-agent.run.v1',
+      lane: null,
+      laneReason: 'No candidate lane. The Comms role does not choose one.',
+      triage: { kept: 0, archived: 0, drafted: 0, deleted: 0 },
+      sends: [],
+    };
+    await appendRunRecord(runsDir, legacy);
+    const older = await commsStatus(runsDir);
+    expect(older.lastRun.source).toBe('available');
+    expect(older.lastRun.run?.summaries).toBeNull();
+  });
+
+  it('refuses a run record whose per-message decisions are malformed', async () => {
+    const runsDir = temp();
+    const base: CommsRunRecord = {
+      at: '2026-01-01T00:00:00.000Z',
+      schema: 'comms-agent.run.v1',
+      lane: null,
+      laneReason: 'No candidate lane. The Comms role does not choose one.',
+      triage: { kept: 0, archived: 0, drafted: 0, deleted: 0 },
+      sends: [],
+    };
+    await expect(appendRunRecord(runsDir, {
+      ...base,
+      summaries: [{ id: 'x', class: 'bogus' as never, summary: 's' }],
+    })).rejects.toThrow('Run record is not storable.');
+    await expect(appendRunRecord(runsDir, { ...base, summaries: 'nope' as never })).rejects.toThrow('Run record is not storable.');
+    // A well-formed record still appends beside the refused ones.
+    await appendRunRecord(runsDir, { ...base, summaries: [] });
+    const journal = await readRunJournal(runsDir);
+    expect(journal.status === 'ok' && journal.record?.summaries).toEqual([]);
   });
 
   it('resolves a delivered reply out of the pending inbox and never resends it', async () => {

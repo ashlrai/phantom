@@ -75,7 +75,7 @@ export async function readReadySupply(opts: { runsDir?: string; now?: () => Date
     // parseReadyTsv recognizes the dispatcher's job/repo/lane/tier/prompt
     // dialect natively, including its PARKED-<reason>[.<lane>] encodings, and
     // resolves a spec-less row's lane through its router-queue.md envelope.
-    const parsed = parseReadyTsv(source.text, router.state === 'healthy' ? router.text : null);
+    const parsed = parseReadyTsv(source.text, router.state === 'healthy' ? router.text : null, true);
     // Lane-open rows are real supply the market can place anywhere; the fleet
     // queue already counts them in `ready`. Classify them by the same RQ-PHX-
     // id rule the lane totals use — they have no lane to attribute.

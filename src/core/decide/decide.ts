@@ -33,6 +33,7 @@ import { cacheGet, cacheKey, cacheSet } from './cache.js';
 import {
   classifierKilledByEnv,
   costEstimate,
+  isValidThreshold,
   validTokenCount,
   jevKilledByEnv,
   paidCallsToday,
@@ -44,6 +45,7 @@ import { decideOption, type DecideDeps, type DecideInput, type DecideResult } fr
 import type {
   DecideOptions,
   Decision,
+  DecisionCallOptions,
   DecisionFallbackReason,
   DecisionKind,
   Interpretation,
@@ -90,19 +92,40 @@ export async function jevReady(kind?: DecisionKind, cfg?: AshlrConfig): Promise<
 
 /** The threshold a kind will actually use (explicit override, then config, then registry). */
 export function effectiveThreshold(kind: DecisionKind, override?: number): number {
-  if (typeof override === 'number' && Number.isFinite(override) && override > 0 && override <= 1) return override;
+  if (isValidThreshold(override)) return override;
   const fromConfig = readJevConfig().thresholds[kind];
   return fromConfig ?? DECISION_KINDS[kind].threshold;
+}
+
+// ---------------------------------------------------------------------------
+// Shared answer readers for custom decision interpreters
+// ---------------------------------------------------------------------------
+
+export function readChoiceAnswer<K extends string>(
+  answers: Readonly<Record<string, TypeSafeAnswer>>,
+  name: string,
+  allowed: readonly K[],
+): { choice: K; confidence: number } | undefined {
+  const answer = answers[name];
+  if (!answer || answer.type !== 'choice' || !(allowed as readonly string[]).includes(answer.choice)) return undefined;
+  return { choice: answer.choice as K, confidence: answer.confidence };
+}
+
+export function readNoulAnswer(
+  answers: Readonly<Record<string, TypeSafeAnswer>>,
+  name: string,
+): { yes: boolean; probability: number; confidence: number } | undefined {
+  const answer = answers[name];
+  if (!answer || answer.type !== 'noul') return undefined;
+  // A Noul is a probability, not a confidence: distance from 0.5 measures decisiveness.
+  return { yes: answer.noul >= 0.5, probability: answer.noul, confidence: Math.max(answer.noul, 1 - answer.noul) };
 }
 
 // ---------------------------------------------------------------------------
 // The shared transport step: kill switch, budget, cache, one call
 // ---------------------------------------------------------------------------
 
-type TransportOptions = Pick<
-  DecideOptions<unknown>,
-  'cfg' | 'model' | 'timeoutMs' | 'signal' | 'endpoint' | 'cache' | 'cacheSalt' | 'selectedOutcomeAdmission'
->;
+type TransportOptions = Omit<DecisionCallOptions, 'threshold'>;
 
 type Asked =
   | { readonly ok: true; readonly result: TypeSafeOk; readonly cached: boolean; readonly called: boolean }
@@ -354,7 +377,7 @@ export interface BatchItem<T> {
   readonly fallback: T | (() => T);
 }
 
-export interface DecideEachOptions<T> extends Omit<DecideOptions<T>, 'fallback' | 'interpret' | 'escalateOnly'> {
+export interface DecideEachOptions<T> extends DecisionCallOptions {
   /** Sentence placed above the numbered items (e.g. "Each item is a PR title."). */
   readonly preamble?: string;
   /** Per-item interpretation of that item's answer. Default: registry vocabulary. */

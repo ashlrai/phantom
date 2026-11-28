@@ -21,6 +21,7 @@ import {
   sendOwnerReply,
   type OwnerThreadMessage,
   type OwnerThreadOptions,
+  type OwnerThreadReceipts,
 } from './owner-thread.js';
 
 /** The fixed text every newly-live channel carries once. */
@@ -37,15 +38,13 @@ export interface OwnerLiveNoticePlan {
 /**
  * Pure plan over the recorded thread and adapter status. A channel earns one
  * notice when its adapter is enabled, the owner has written at least once on
- * it, and no outbound has landed there yet (an existing outbound means the
- * channel already proved itself live). "Landed" is the send paths' own
- * evidence — the message's declared `fanout` destinations — so a local-only
- * record filed under a channel without one never counts as proof the channel
- * carried an outbound. Desktop is never planned.
+ * it, and a receipt proves no outbound has landed there. Missing receipts
+ * are unknown, including when the caller omits the optional snapshot.
  */
 export function planOwnerLiveNotices(
   messages: readonly OwnerThreadMessage[],
   statusAdapters: readonly OwnerAdapterStatus[],
+  receipts: OwnerThreadReceipts = {},
 ): OwnerLiveNoticePlan[] {
   const plans: OwnerLiveNoticePlan[] = [];
   for (const adapter of statusAdapters) {
@@ -53,7 +52,7 @@ export function planOwnerLiveNotices(
     if (channel === 'desktop' || adapter.enabled !== true) continue;
     const inbound = messages.find(message => message.direction === 'inbound' && message.channel === channel);
     if (!inbound) continue;
-    if (messages.some(message => message.direction === 'outbound' && message.fanout?.includes(channel))) continue;
+    if (messages.some(message => message.direction === 'outbound' && receipts[message.id]?.[channel]?.state === 'delivered')) continue;
     plans.push({ channel, replyTo: inbound.idempotencyKey, idempotencyKey: `leader-live-${channel}` });
   }
   return plans;
@@ -75,7 +74,7 @@ export interface OwnerLiveNoticeReport {
   halted: boolean;
   /** Channels the planner selected this run (sent only under apply). */
   planned: OwnerChannel[];
-  /** Planned channels whose sendOwnerReply returned sent, duplicate or partial. */
+  /** Planned channels whose own delivery was sent or duplicate. */
   sent: OwnerChannel[];
   /** Planned channels whose sendOwnerReply refused, halted or went unavailable. */
   failed: OwnerLiveNoticeSkip[];
@@ -95,8 +94,9 @@ export async function sendOwnerLiveNotices(
   send: { apply: boolean; replies?: readonly LeaderReply[] },
 ): Promise<OwnerLiveNoticeReport> {
   const status = readOwnerCommsStatus(options);
-  const messages = readOwnerThread(options).messages;
-  const plans = planOwnerLiveNotices(messages, status.adapters);
+  const thread = readOwnerThread(options);
+  const messages = thread.messages;
+  const plans = planOwnerLiveNotices(messages, status.adapters, thread.receipts);
   const sent: OwnerChannel[] = [];
   const failed: OwnerLiveNoticeSkip[] = [];
   if (send.apply) {
@@ -106,10 +106,12 @@ export async function sendOwnerLiveNotices(
         replyTo: plan.replyTo,
         idempotencyKey: plan.idempotencyKey,
       }, options);
-      if (result.status === 'sent' || result.status === 'duplicate' || result.status === 'partial') {
+      const delivery = result.deliveries?.find(row => row.channel === plan.channel);
+      if (delivery?.status === 'sent' || delivery?.status === 'duplicate') {
         sent.push(plan.channel);
       } else {
-        failed.push({ channel: plan.channel, reason: result.status });
+        const reason = delivery?.status ?? (result.status === 'halted' || result.status === 'unavailable' ? result.status : 'refused');
+        failed.push({ channel: plan.channel, reason, ...(delivery?.reason || result.reason ? { detail: delivery?.reason ?? result.reason } : {}) });
       }
     }
   }
@@ -127,7 +129,7 @@ export async function sendOwnerLiveNotices(
     skipped.push({
       channel,
       ...(adapter?.enabled !== true && why ? { detail: why.nextStep ? `${why.reason} Next: ${why.nextStep}` : why.reason } : {}),
-      reason: adapter?.enabled !== true
+      reason: 'unavailable' in thread ? 'unavailable' : adapter?.enabled !== true
         ? (held ? 'halted' : 'disabled')
         : messages.some(message => message.direction === 'inbound' && message.channel === channel)
           ? 'already-replied'

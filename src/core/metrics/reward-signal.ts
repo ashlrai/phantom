@@ -44,16 +44,16 @@ import { scrubSecrets } from '../util/scrub.js';
 import { ensurePrivateDirectory, readPrivateFileCapped } from '../verse/preferences.js';
 import type { UsageReading } from '../fabric/usage-signal-writer.js';
 
-export const REWARD_SIGNAL_SCHEMA = 1;
+const REWARD_SIGNAL_SCHEMA = 1 as const;
 /** Ledger read/write cap; a larger file is an integrity failure, never truncated evidence. */
 export const REWARD_SIGNAL_MAX_BYTES = 16 * 1024 * 1024;
 /** Skew allowance for caller-supplied terminal timestamps. */
 const FUTURE_SKEW_MS = 60_000;
 /** 64-hex runs inside identifiers are hashes (rq-<sha256> job ids), not secrets. */
 const HASH_64 = /[0-9a-f]{64}/g;
-const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-const POOL = /^[a-z0-9][a-z0-9._:-]{0,63}$/;
-const REPO = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
+export const REWARD_JOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+export const REWARD_POOL_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,63}$/;
+export const REWARD_REPO_PATTERN = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
 
 /** Metered cost of one job, derived from the existing usage readers. */
 export interface RewardSignalCost {
@@ -87,7 +87,7 @@ export interface RewardSignalInput {
 }
 
 export interface RewardSignalV1 {
-  v: typeof REWARD_SIGNAL_SCHEMA;
+  v: 1;
   jobId: string;
   pool: string | null;
   repo: string | null;
@@ -166,7 +166,7 @@ function validCost(value: unknown): value is RewardSignalCost {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
   const c = value as Record<string, unknown>;
   return Object.keys(c).sort().join(',') === 'costUsd,pctUsedDelta,pctUsedEnd,pctUsedStart,pool' &&
-    (c['pool'] === null || (typeof c['pool'] === 'string' && POOL.test(c['pool']))) &&
+    (c['pool'] === null || (typeof c['pool'] === 'string' && REWARD_POOL_PATTERN.test(c['pool']))) &&
     (c['pctUsedStart'] === null || isPercent(c['pctUsedStart'])) &&
     (c['pctUsedEnd'] === null || isPercent(c['pctUsedEnd'])) &&
     (c['pctUsedDelta'] === null || isNonnegative(c['pctUsedDelta'])) &&
@@ -180,9 +180,9 @@ function validCost(value: unknown): value is RewardSignalCost {
 export function isRewardSignalV1(value: unknown): value is RewardSignalV1 {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
   const r = value as Record<string, unknown>;
-  if (r['v'] !== REWARD_SIGNAL_SCHEMA || typeof r['jobId'] !== 'string' || !JOB_ID.test(r['jobId']) ||
-    (r['pool'] !== null && (typeof r['pool'] !== 'string' || !POOL.test(r['pool']))) ||
-    (r['repo'] !== null && (typeof r['repo'] !== 'string' || !REPO.test(r['repo']))) ||
+  if (r['v'] !== REWARD_SIGNAL_SCHEMA || typeof r['jobId'] !== 'string' || !REWARD_JOB_ID_PATTERN.test(r['jobId']) ||
+    (r['pool'] !== null && (typeof r['pool'] !== 'string' || !REWARD_POOL_PATTERN.test(r['pool']))) ||
+    (r['repo'] !== null && (typeof r['repo'] !== 'string' || !REWARD_REPO_PATTERN.test(r['repo']))) ||
     typeof r['merged'] !== 'boolean' || !isTimestamp(r['dispatchedAt']) ||
     (r['mergedAt'] !== null && !isTimestamp(r['mergedAt'])) ||
     (r['timeToMergeMs'] !== null && !isNonnegative(r['timeToMergeMs'])) ||
@@ -195,32 +195,46 @@ export function isRewardSignalV1(value: unknown): value is RewardSignalV1 {
     'ciWallMs,cost,dispatchedAt,jobId,merged,mergedAt,pool,recordedAt,repo,timeToMergeMs,v';
 }
 
+interface UsageEndpoint {
+  at: number;
+  reading: { pctUsed: number | null; resetAt: string | null } | null;
+}
+
+function latestUsageEndpoint(current: UsageEndpoint | undefined, row: UsageReading, at: number): UsageEndpoint {
+  if (current && at < current.at) return current;
+  const pctUsed = isPercent(row.pctUsed) ? row.pctUsed : null;
+  const resetAt = canonicalTimestamp(row.resetAt);
+  if (!current || at > current.at) return { at, reading: { pctUsed, resetAt } };
+  if (current.reading?.pctUsed === pctUsed && current.reading.resetAt === resetAt) return current;
+  return { at, reading: null };
+}
+
 /**
  * Pool cost across [windowStartMs, windowEndMs] from usage-reader readings.
  * The baseline is the last reading at/before dispatch; the end is the last
  * reading after dispatch and at/before recording, so pctUsedDelta estimates pool consumption
  * over the job window (pool-level attribution, not per-job metering).
  * pctUsedDelta is null when the pool window reset inside the job (resetAt
- * moved or usage went backwards) or either bracketing reading is missing.
+ * moved or usage went backwards) or either bracketing reading is missing or disputed.
  */
 export function usageCostFromReadings(
   readings: readonly UsageReading[], pool: string,
   windowStartMs: number, windowEndMs: number, costUsd: number | null = null,
 ): RewardSignalCost {
-  const rows = readings
-    .filter((r) => r && r.pool === pool && isTimestamp(r.writtenAt))
-    .sort((a, b) => Date.parse(a.writtenAt) - Date.parse(b.writtenAt));
-  let start: UsageReading | undefined;
-  let end: UsageReading | undefined;
-  for (const row of rows) {
+  let startEndpoint: UsageEndpoint | undefined;
+  let endEndpoint: UsageEndpoint | undefined;
+  for (const row of readings) {
+    if (!row || row.pool !== pool || !isTimestamp(row.writtenAt)) continue;
     const at = Date.parse(row.writtenAt);
-    if (at <= windowStartMs) start = row;
-    if (at > windowStartMs && at <= windowEndMs) end = row;
+    if (at <= windowStartMs) startEndpoint = latestUsageEndpoint(startEndpoint, row, at);
+    else if (at <= windowEndMs) endEndpoint = latestUsageEndpoint(endEndpoint, row, at);
   }
+  const start = startEndpoint?.reading;
+  const end = endEndpoint?.reading;
   const pctUsedStart = start?.pctUsed ?? null;
   const pctUsedEnd = end?.pctUsed ?? null;
-  const delta = start !== undefined && end !== undefined && pctUsedStart !== null && pctUsedEnd !== null &&
-    start.resetAt !== null && start.resetAt === end.resetAt && pctUsedEnd >= pctUsedStart
+  const delta = pctUsedStart !== null && pctUsedEnd !== null &&
+    start?.resetAt != null && start.resetAt === end?.resetAt && pctUsedEnd >= pctUsedStart
     ? pctUsedEnd - pctUsedStart : null;
   return { pool, pctUsedStart, pctUsedEnd, pctUsedDelta: delta, costUsd };
 }
@@ -235,12 +249,16 @@ function parseLine(line: string): RewardSignalV1 | null {
   }
 }
 
-/** Strict read for the writer's dedupe check: a corrupt ledger fails closed. */
-function readLedgerStrict(path: string): RewardSignalV1[] {
+function readRewardLedgerLines(path: string): string[] {
   const file = readPrivateFileCapped(path, REWARD_SIGNAL_MAX_BYTES);
   if (!file) return [];
   if (file.truncated) throw new Error('Reward signal ledger exceeds the read bound');
-  return file.text.split('\n').flatMap((line, index) => {
+  return file.text.split('\n');
+}
+
+/** Strict read for the writer's dedupe check: a corrupt ledger fails closed. */
+function readLedgerStrict(path: string): RewardSignalV1[] {
+  return readRewardLedgerLines(path).flatMap((line, index) => {
     if (!line.trim()) return [];
     const row = parseLine(line);
     if (!row) throw new Error(`Invalid reward signal at line ${index + 1}`);
@@ -250,10 +268,7 @@ function readLedgerStrict(path: string): RewardSignalV1[] {
 
 /** All recorded rows in append order. Missing file reads as empty. */
 export function readRewardSignals(path: string = rewardSignalPath()): RewardSignalV1[] {
-  const file = readPrivateFileCapped(path, REWARD_SIGNAL_MAX_BYTES);
-  if (!file) return [];
-  if (file.truncated) throw new Error('Reward signal ledger exceeds the read bound');
-  return file.text.split('\n').flatMap((line) => line.trim() ? [parseLine(line)] : [])
+  return readRewardLedgerLines(path).flatMap((line) => line.trim() ? [parseLine(line)] : [])
     .filter((row): row is RewardSignalV1 => row !== null);
 }
 
@@ -292,8 +307,8 @@ function prepareRewardRow(
   const dispatchedAt = canonicalTimestamp(input.dispatchedAt);
   const mergedAt = input.mergedAt === undefined || input.mergedAt === null
     ? null : canonicalTimestamp(input.mergedAt);
-  if (typeof jobId !== 'string' || !JOB_ID.test(jobId) ||
-    (pool !== null && !POOL.test(pool)) || (repo !== null && !REPO.test(repo)) ||
+  if (typeof jobId !== 'string' || !REWARD_JOB_ID_PATTERN.test(jobId) ||
+    (pool !== null && !REWARD_POOL_PATTERN.test(pool)) || (repo !== null && !REWARD_REPO_PATTERN.test(repo)) ||
     dispatchedAt === null || Date.parse(dispatchedAt) > Date.parse(nowIso) + FUTURE_SKEW_MS ||
     (input.mergedAt !== undefined && input.mergedAt !== null && mergedAt === null) ||
     merged !== (mergedAt !== null) ||
@@ -306,7 +321,7 @@ function prepareRewardRow(
     if (value !== null) assertCleanToken(value, field);
   }
   const meterPool = options.usagePool === undefined ? pool : options.usagePool;
-  if (meterPool !== null && !POOL.test(meterPool)) throw new Error('Invalid reward signal');
+  if (meterPool !== null && !REWARD_POOL_PATTERN.test(meterPool)) throw new Error('Invalid reward signal');
   const cost = meterPool !== null && readings.length
     ? usageCostFromReadings(readings, meterPool, Date.parse(dispatchedAt), Date.parse(nowIso), costUsd)
     : { pool: meterPool, pctUsedStart: null, pctUsedEnd: null, pctUsedDelta: null, costUsd };

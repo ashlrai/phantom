@@ -273,6 +273,50 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['wakes', '--all', '--channel='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
   });
 
+  it('filters inbox and wakes by the topic segment of group:<room>:<topic> addresses', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'ops', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    // Deploy posts in two rooms, a general post and a DM — the topic match is
+    // room-agnostic; --channel narrows it into one room AND one topic.
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--topic', 'deploy',
+      '--text', 'rel deploy', '--priority', 'P0', '--id', 'wtp-rel'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    expect((await run(['channel', 'post', 'ops', '--from', 'atlas', '--topic', 'deploy',
+      '--text', 'ops deploy', '--priority', 'P0', '--id', 'wtp-ops'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas',
+      '--text', 'rel general', '--priority', 'P0', '--id', 'wtp-gen'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'hi',
+      '--priority', 'P0', '--id', 'wtp-dm'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+
+    // The inbox keeps only deploy-addressed mail across both rooms.
+    const inbox = await run(['inbox', 'nova', '--topic', 'deploy']);
+    expect(inbox.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id).sort())
+      .toEqual(['wtp-ops', 'wtp-rel']);
+    const scoped = await run(['inbox', 'nova', '--channel', 'release', '--topic', 'deploy']);
+    expect(scoped.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id))
+      .toEqual(['wtp-rel']);
+    expect((await run(['inbox', 'nova', '--topic', 'absent'])).json.messages).toEqual([]);
+    expect(await run(['inbox', 'nova', '--topic', 'Bad Topic'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+
+    // Wakes answer the same verdict on the hint's own to label.
+    const wakes = await run(['wakes', 'nova', '--topic', 'deploy']);
+    expect(wakes.json).toMatchObject({ matched: 2, truncated: false });
+    expect(wakes.json.wakes.map((w: { id: string; to: string }) => `${w.id}:${w.to}`).sort())
+      .toEqual(['wtp-ops:group:ops:deploy', 'wtp-rel:group:release:deploy']);
+    const allDeploy = await run(['wakes', '--all', '--topic', 'deploy']);
+    expect(allDeploy.json).toMatchObject({ status: 'ok', scope: 'fleet', matched: 2 });
+    expect((await run(['wakes', 'nova', '--topic', 'absent'])).json).toMatchObject({ matched: 0, wakes: [] });
+    expect(await run(['wakes', 'nova', '--topic='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['wakes', '--all', '--topic', 'deploy:extra'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
   it('filters wakes by the resolved referent thread label and reply citation', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
@@ -374,6 +418,55 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['channel', 'read', 'release', '--frame', 'gemini'])).toMatchObject({ code: 2 });
   });
 
+  it('frames the work-mine digest as untrusted data', async () => {
+    const env = { PHM_AGENT_ID: 'atlas' };
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'], env)).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'], env)).json).toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'nova', '--to', 'atlas', '--text', 'status ping', '--id', 'wm-dm'], env)).json)
+      .toMatchObject({ status: 'posted' });
+    // --frame prints the whole pending-work digest as one bounded block
+    // under its own markers; --json carries it on `framed` beside the
+    // full projection.
+    const framed = await run(['work', 'mine', '--frame', 'claude'], env);
+    expect(framed.code).toBe(0);
+    expect(framed.json.framed).toContain('BEGIN UNTRUSTED AGENT BUS WORK DIGEST');
+    expect(framed.json.framed).toContain('agent=atlas');
+    expect(framed.json.framed).toContain('ping');
+    expect(framed.json.framed).toContain('END UNTRUSTED AGENT BUS WORK DIGEST');
+    // Human (non-json) output is the bare frame, not a JSON envelope.
+    const framedText: string[] = [];
+    expect(await runAgentsBusUnified(['work', 'mine', '--frame', 'grok', '--root', root],
+      t => framedText.push(t), () => {}, env)).toBe(0);
+    expect(framedText.join('\n')).toContain('BEGIN UNTRUSTED AGENT BUS WORK DIGEST');
+    expect(framedText.join('\n')).toContain('END UNTRUSTED AGENT BUS WORK DIGEST');
+    expect(framedText.join('\n')).not.toContain('"status"');
+    expect(await run(['work', 'mine', '--frame', 'gemini'], env)).toMatchObject({ code: 2 });
+  });
+
+  it('frames the work feed as untrusted data', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-FRAME', '--title', 'Frame me',
+      '--repo', 'ashlrai/phantom', '--id', 'wf-post'])).json).toMatchObject({ status: 'posted' });
+    // --frame prints the whole feed — job rows and the jobs=/feed= summary —
+    // as one bounded block under its own markers; --json carries it on
+    // `framed` beside the full projection.
+    const framed = await run(['work', 'feed', '--frame', 'claude']);
+    expect(framed.code).toBe(0);
+    expect(framed.json.framed).toContain('BEGIN UNTRUSTED AGENT BUS WORK FEED');
+    expect(framed.json.framed).toContain('RQ-FRAME queued "Frame me"');
+    expect(framed.json.framed).toContain('feed=ok');
+    expect(framed.json.framed).toContain('END UNTRUSTED AGENT BUS WORK FEED');
+    expect(framed.json.framed).not.toContain('BEGIN UNTRUSTED AGENT BUS WORK DIGEST');
+    // Human (non-json) output is the bare frame, not a JSON envelope.
+    const framedText: string[] = [];
+    expect(await runAgentsBusUnified(['work', 'feed', '--frame', 'grok', '--root', root],
+      t => framedText.push(t), () => {}, {})).toBe(0);
+    expect(framedText.join('\n')).toContain('BEGIN UNTRUSTED AGENT BUS WORK FEED');
+    expect(framedText.join('\n')).toContain('RQ-FRAME');
+    expect(framedText.join('\n')).not.toContain('"status"');
+    expect(await run(['work', 'feed', '--frame', 'gemini'])).toMatchObject({ code: 2 });
+  });
+
   it('resolves one retained envelope by id without needing an identity', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
@@ -394,6 +487,37 @@ describe('phm agents bus (unified)', () => {
     expect(text.join('\n')).toContain('show-1');
     expect(text.join('\n')).toContain('agent:nova');
     expect(text.join('\n')).toContain('find me');
+  });
+
+  it('frames one resolved envelope as untrusted data', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'frame this receipt', '--id', 'sf-1'])).json)
+      .toMatchObject({ status: 'posted' });
+
+    // --frame prints the same resolution — receipt row, scrubbed summary and
+    // evidence — as one bounded block under its own markers; --json carries
+    // it on `framed` beside the full lookup.
+    const framed = await run(['show', 'sf-1', '--frame', 'claude']);
+    expect(framed.code).toBe(0);
+    expect(framed.json.framed).toContain('BEGIN UNTRUSTED AGENT BUS ENVELOPE');
+    expect(framed.json.framed).toContain('sf-1');
+    expect(framed.json.framed).toContain('frame this receipt');
+    expect(framed.json.framed).toContain('agent:nova');
+    expect(framed.json.framed).toContain('END UNTRUSTED AGENT BUS ENVELOPE');
+    expect(framed.json.framed).not.toContain('BEGIN UNTRUSTED AGENT BUS THREAD');
+    expect(framed.json.framed).not.toContain('BEGIN UNTRUSTED AGENT BUS MESSAGES');
+    // Human (non-json) output is the bare frame, not a JSON envelope.
+    const framedText: string[] = [];
+    expect(await runAgentsBusUnified(['show', 'sf-1', '--frame', 'grok', '--root', root],
+      t => framedText.push(t), () => {}, {})).toBe(0);
+    expect(framedText.join('\n')).toContain('BEGIN UNTRUSTED AGENT BUS ENVELOPE');
+    expect(framedText.join('\n')).toContain('frame this receipt');
+    expect(framedText.join('\n')).not.toContain('"status"');
+    // A bad cli name is a usage error; a proven miss answers its own
+    // not-found status rather than an invented envelope frame.
+    expect(await run(['show', 'sf-1', '--frame', 'gemini'])).toMatchObject({ code: 2 });
+    expect(await run(['show', 'sf-404', '--frame', 'claude'])).toMatchObject({ code: 1, json: { status: 'not-found', id: 'sf-404' } });
   });
 
   it('reads the reply chain rooted at one envelope id', async () => {
@@ -447,6 +571,49 @@ describe('phm agents bus (unified)', () => {
     expect(human).toContain('kindless follow-up');
   });
 
+  it('frames the reply chain as untrusted data', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'root question', '--id', 'tf-1'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'nova', '--to', 'atlas', '--text', 'classified answer',
+      '--reply-to', 'tf-1', '--id', 'tf-2'])).json).toMatchObject({ status: 'posted' });
+    expect(appendBusInbox({ id: 'tf-3', from: 'agent:atlas', to: 'agent:nova', priority: 'P3', ttl: 60_000,
+      body: { inReplyTo: 'tf-2', text: 'kindless follow-up' } }, { root }).status).toBe('posted');
+
+    // --frame prints the whole chain — verdict header and every receipt's
+    // summary and evidence — as one bounded block under its own markers;
+    // --json carries it on `framed` beside the full projection.
+    const framed = await run(['thread', 'tf-1', '--frame', 'claude']);
+    expect(framed.code).toBe(0);
+    expect(framed.json.framed).toContain('BEGIN UNTRUSTED AGENT BUS THREAD');
+    expect(framed.json.framed).toContain('thread tf-1: 3 message(s)');
+    expect(framed.json.framed).toContain('tf-1');
+    expect(framed.json.framed).toContain('tf-2');
+    expect(framed.json.framed).toContain('tf-3');
+    expect(framed.json.framed).toContain('root question');
+    expect(framed.json.framed).toContain('classified answer');
+    expect(framed.json.framed).toContain('kindless follow-up');
+    expect(framed.json.framed).toContain('END UNTRUSTED AGENT BUS THREAD');
+    // A thread block can never pass for an inbox page, a digest or a feed.
+    expect(framed.json.framed).not.toContain('BEGIN UNTRUSTED AGENT BUS MESSAGES');
+    expect(framed.json.framed).not.toContain('WORK DIGEST');
+    expect(framed.json.framed).not.toContain('WORK FEED');
+    // Human (non-json) output is the bare frame, not a JSON envelope.
+    const framedText: string[] = [];
+    expect(await runAgentsBusUnified(['thread', 'tf-1', '--frame', 'grok', '--root', root],
+      t => framedText.push(t), () => {}, {})).toBe(0);
+    expect(framedText.join('\n')).toContain('BEGIN UNTRUSTED AGENT BUS THREAD');
+    expect(framedText.join('\n')).toContain('kindless follow-up');
+    expect(framedText.join('\n')).not.toContain('"status"');
+    // A proven miss frames its own not-found verdict, never an invented chain.
+    const missing = await run(['thread', 'tf-404', '--frame', 'claude']);
+    expect(missing.code).toBe(1);
+    expect(missing.json.framed).toContain('not-found');
+    expect(missing.json.framed).toContain('BEGIN UNTRUSTED AGENT BUS THREAD');
+    expect(await run(['thread', 'tf-1', '--frame', 'gemini'])).toMatchObject({ code: 2 });
+  });
+
   it('filters the reply chain members through the shared bus-read flags', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
@@ -456,6 +623,10 @@ describe('phm agents bus (unified)', () => {
       '--reply-to', 'f-1', '--id', 'f-2'])).json).toMatchObject({ status: 'posted' });
     expect(appendBusInbox({ id: 'f-3', from: 'agent:atlas', to: 'agent:nova', priority: 'P3', ttl: 60_000,
       body: { inReplyTo: 'f-2', kind: 'context', text: 'kindless follow-up', thread: 'rq-7' } }, { root }).status).toBe('posted');
+    expect(appendBusInbox({ id: 'f-4', from: 'agent:atlas', to: 'group:ops:general', priority: 'P2', ttl: 60_000,
+      body: { inReplyTo: 'f-1', kind: 'note', text: 'channel reply' } }, { root }).status).toBe('posted');
+    expect(appendBusInbox({ id: 'f-5', from: 'agent:atlas', to: 'group:ops:alerts', priority: 'P2', ttl: 60_000,
+      body: { inReplyTo: 'f-1', text: 'alerts reply' } }, { root }).status).toBe('posted');
 
     const ids = (json: { messages: Array<{ envelope: { id: string } }> }) => json.messages.map(m => m.envelope.id);
     // The shared filters narrow members; the chain and its honesty fields stay whole.
@@ -464,11 +635,21 @@ describe('phm agents bus (unified)', () => {
     expect(ids((await run(['thread', 'f-1', '--to', 'atlas'])).json)).toEqual(['f-2']);
     expect(ids((await run(['thread', 'f-1', '--priority', 'P3'])).json)).toEqual(['f-3']);
     expect(ids((await run(['thread', 'f-1', '--contains', 'ALPHA'])).json)).toEqual(['f-2']);
-    expect(ids((await run(['thread', 'f-1', '--in-reply-to', 'f-1'])).json)).toEqual(['f-2']);
+    expect(ids((await run(['thread', 'f-1', '--in-reply-to', 'f-1'])).json)).toEqual(['f-2', 'f-4', 'f-5']);
     expect(ids((await run(['thread', 'f-1', '--in-reply-to', 'f-2'])).json)).toEqual(['f-3']);
     expect(ids((await run(['thread', 'f-1', '--thread', 'rq-7'])).json)).toEqual(['f-3']);
-    expect(ids((await run(['thread', 'f-1', '--body-kind', 'note'])).json)).toEqual(['f-1', 'f-2']);
+    expect(ids((await run(['thread', 'f-1', '--body-kind', 'note'])).json)).toEqual(['f-1', 'f-2', 'f-4']);
     expect(ids((await run(['thread', 'f-1', '--body-kind', 'context'])).json)).toEqual(['f-3']);
+    // --channel keeps the room's whole traffic; --topic narrows to members
+    // whose to parses to that exact topic component, composing into one room
+    // AND one topic — the same groupAddressTopicOf match every bus read's
+    // --topic applies.
+    expect(ids((await run(['thread', 'f-1', '--channel', 'ops'])).json)).toEqual(['f-4', 'f-5']);
+    expect(ids((await run(['thread', 'f-1', '--topic', 'general'])).json)).toEqual(['f-4']);
+    expect(ids((await run(['thread', 'f-1', '--topic', 'alerts'])).json)).toEqual(['f-5']);
+    expect(ids((await run(['thread', 'f-1', '--channel', 'ops', '--topic', 'general'])).json)).toEqual(['f-4']);
+    expect(ids((await run(['thread', 'f-1', '--channel', 'ops', '--topic', 'alerts'])).json)).toEqual(['f-5']);
+    expect(ids((await run(['thread', 'f-1', '--channel', 'dev', '--topic', 'general'])).json)).toEqual([]);
     expect(ids((await run(['thread', 'f-1', '--from', 'nova', '--priority', 'P2'])).json)).toEqual(['f-2']);
     // A filter excluding every member keeps rootFound — never a proven miss.
     const none = await run(['thread', 'f-1', '--priority', 'P0']);
@@ -479,6 +660,7 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['thread', 'f-1', '--priority', 'P9'])).toMatchObject({ code: 2 });
     expect(await run(['thread', 'f-1', '--since', 'whenever'])).toMatchObject({ code: 2 });
     expect(await run(['thread', 'f-1', '--channel', 'Bad Name'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['thread', 'f-1', '--topic', 'Bad Name'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
     expect(await run(['thread', 'f-1', '--from', 'has space'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
     expect(await run(['thread', 'f-1', '--contains', ''])).toMatchObject({ code: 1, json: { status: 'invalid' } });
   });
@@ -1329,6 +1511,61 @@ describe('phm agents bus (unified)', () => {
     expect(await runAgentsBusUnified(['claim', 'list', '--jobs', '--root', root], t => claimJobsText.push(t), () => {}, {})).toBe(0);
     expect(claimJobsText.join('\n')).toContain('jobs=RQ-FEED(running) "Read me" detail="picked up the feed" post=cli-feed status=cli-feed-s');
     expect(claimJobsText.join('\n')).toContain('feed=ok');
+
+    // --frame prints the same claim table as one bounded untrusted block;
+    // --json carries it as `framed` beside the full projection.
+    const framedClaims = await run(['claim', 'list', '--jobs', '--frame', 'claude']);
+    expect(framedClaims.code).toBe(0);
+    expect(framedClaims.json.framed).toContain('BEGIN UNTRUSTED AGENT BUS CLAIMS');
+    expect(framedClaims.json.framed).toContain('repo:ashlrai/phantom owner=atlas origin=resource');
+    expect(framedClaims.json.framed).toContain('jobs=RQ-FEED(running)');
+    expect(framedClaims.json.framed).toContain('claims=1 source=available');
+    expect(framedClaims.json.framed).toContain('END UNTRUSTED AGENT BUS CLAIMS');
+    // Human (non-json) output is the bare frame, not a JSON envelope.
+    const claimFrameText: string[] = [];
+    expect(await runAgentsBusUnified(['claim', 'list', '--frame', 'grok', '--root', root],
+      t => claimFrameText.push(t), () => {}, {})).toBe(0);
+    expect(claimFrameText.join('\n')).toContain('BEGIN UNTRUSTED AGENT BUS CLAIMS');
+    expect(claimFrameText.join('\n')).not.toContain('"status"');
+    expect(await run(['claim', 'list', '--frame', 'gemini'])).toMatchObject({ code: 2 });
+  });
+
+  it('filters claim list to the live claims blocking one feed job', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-SCOPED', '--title', 'Scoped work',
+      '--repo', 'ashlrai/phantom', '--claim', 'queue:RQ-SCOPED', '--claim', 'path:ashlrai/phantom:src/**',
+      '--id', 'cj-post'])).json).toMatchObject({ status: 'posted' });
+    expect((await run(['claim', 'acquire', '--key', 'queue:RQ-SCOPED', '--lease-ms', '600000',
+      '--owner', 'atlas', '--id', 'cj-1'])).json).toMatchObject({ status: 'acquired' });
+    expect((await run(['claim', 'acquire', '--key', 'path:ashlrai/phantom:src/**', '--lease-ms', '600000',
+      '--owner', 'worker', '--id', 'cj-2'])).json).toMatchObject({ status: 'acquired' });
+    expect((await run(['claim', 'acquire', '--key', 'repo:other/repo', '--lease-ms', '600000',
+      '--owner', 'atlas', '--id', 'cj-3'])).json).toMatchObject({ status: 'acquired' });
+
+    // --job keeps only the claims overlapping the job's declared keys and
+    // reports how the id resolved; the unrelated repo claim stays out.
+    const scoped = await run(['claim', 'list', '--job', 'RQ-SCOPED']);
+    expect(scoped.code).toBe(0);
+    expect(scoped.json).toMatchObject({ status: 'ok', source: 'available', feed: 'ok',
+      job: { id: 'RQ-SCOPED', announced: true, claimKeys: 2 } });
+    expect(scoped.json.claims.map((row: { key: string }) => row.key).sort())
+      .toEqual(['path:ashlrai/phantom:src/**', 'queue:RQ-SCOPED']);
+    // --job composes with --jobs: the filtered claims still carry the join.
+    const joined = await run(['claim', 'list', '--job', 'RQ-SCOPED', '--jobs']);
+    expect(joined.json.claims.every((row: { jobs?: { id: string }[] }) =>
+      row.jobs?.length === 1 && row.jobs[0]!.id === 'RQ-SCOPED')).toBe(true);
+    // An unannounced id is a proven-empty list, and a malformed one is usage.
+    expect((await run(['claim', 'list', '--job', 'RQ-MISSING'])).json)
+      .toMatchObject({ status: 'ok', claims: [], job: { id: 'RQ-MISSING', announced: false, claimKeys: 0 } });
+    expect(await run(['claim', 'list', '--job', 'bad job'])).toMatchObject({ code: 2 });
+
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['claim', 'list', '--job', 'RQ-SCOPED', '--root', root],
+      t => text.push(t), () => {}, {})).toBe(0);
+    expect(text.join('\n')).toContain('job=RQ-SCOPED announced=true keys=2');
+    expect(text.join('\n')).toContain('claims=2 source=available feed=ok');
+    // Without --jobs the per-claim jobs suffix stays off even though --job read the feed.
+    expect(text.join('\n')).not.toContain('jobs=');
   });
 
   it('filters the work feed by --since on last activity', async () => {
@@ -1534,6 +1771,7 @@ describe('phm agents bus (unified)', () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-CLI-CLAIM', '--title', 'Claim me',
       '--repo', 'ashlrai/phantom', '--claim', 'queue:RQ-CLI-CLAIM', '--claim', 'repo:ashlrai/phantom',
+      '--tier', 'work', '--scope', 'src/core/**', '--acceptance', 'tests green',
       '--id', 'cli-wc'])).json).toMatchObject({ status: 'posted' });
 
     // The default resolves the declared queue:<jobId> key; --owner defaults to PHM_AGENT_ID.
@@ -1542,7 +1780,9 @@ describe('phm agents bus (unified)', () => {
     expect(claimed.code).toBe(0);
     expect(claimed.json).toMatchObject({ status: 'acquired',
       job: { id: 'RQ-CLI-CLAIM', owner: 'agent:atlas', status: 'queued', repo: 'ashlrai/phantom',
-        postId: 'cli-wc', statusId: null },
+        postId: 'cli-wc', statusId: null, to: 'leaders', provider: expect.any(String),
+        claimKeys: ['queue:RQ-CLI-CLAIM', 'repo:ashlrai/phantom'], updatedAt: expect.any(Number),
+        dispatch: { tier: 'work', scope: 'src/core/**', acceptance: 'tests green' } },
       claim: { claimKey: 'queue:RQ-CLI-CLAIM', owner: 'worker-1', leaseMs: 600000 } });
     expect(claimed.json.claim.token).toMatch(/^[a-f0-9]{64}$/);
     // The new hold joins the job on the feed read, owner label and all.
@@ -1576,6 +1816,9 @@ describe('phm agents bus (unified)', () => {
       '--lease-ms', '600000', '--owner', 'worker-3', '--root', root], t => text.push(t), () => {}, {})).toBe(1);
     expect(text.join('\n')).toContain('conflict repo:ashlrai/phantom');
     expect(text.join('\n')).toContain('RQ-CLI-CLAIM(queued)');
+    // The echoed job line carries the announcement's dispatch spec, so the
+    // work order is visible without a separate `work feed --job` read.
+    expect(text.join('\n')).toContain('tier=work scope="src/core/**" acceptance="tests green"');
   });
 
   it('claims the next claimable work-feed job in one step', async () => {
@@ -2115,10 +2358,25 @@ describe('phm agents bus (unified)', () => {
     expect((await run(['work', 'feed', '--job', 'RQ-J-1', '--owner', 'atlas', '--claims'])).json)
       .toMatchObject({ status: 'ok', claims: { source: 'missing', holds: [] } });
     expect((await run(['work', 'feed', '--job', 'RQ-J-1', '--owner', 'nova'])).json.jobs).toEqual([]);
+    // --exclude-owner drops jobs announced by that agent under the same
+    // identity-label rule, inverted.
+    for (const ref of ['atlas', 'agent:atlas']) {
+      expect((await run(['work', 'feed', '--exclude-owner', ref])).json.jobs)
+        .toEqual([expect.objectContaining({ id: 'RQ-J-2', owner: 'agent:nova' })]);
+    }
+    expect((await run(['work', 'feed', '--exclude-owner', 'nova'])).json.jobs)
+      .toEqual([expect.objectContaining({ id: 'RQ-J-1', owner: 'agent:atlas' })]);
+    // The pair composes include-then-exclude: atlas's own jobs match --owner
+    // and drop under --exclude-owner, so nothing lists.
+    expect((await run(['work', 'feed', '--owner', 'atlas', '--exclude-owner', 'atlas'])).json.jobs).toEqual([]);
+    expect((await run(['work', 'feed', '--owner', 'atlas', '--exclude-owner', 'nova'])).json.jobs)
+      .toEqual([expect.objectContaining({ id: 'RQ-J-1' })]);
     // Unresolvable owner refs keep exact-label matching — never widen.
     expect((await run(['work', 'feed', '--owner', 'ghost'])).json.jobs).toEqual([]);
+    expect((await run(['work', 'feed', '--exclude-owner', 'ghost'])).json.jobs).toHaveLength(2);
     expect(await run(['work', 'feed', '--job', 'bad job'])).toMatchObject({ code: 2 });
     expect(await run(['work', 'feed', '--owner', 'bad owner'])).toMatchObject({ code: 2 });
+    expect(await run(['work', 'feed', '--exclude-owner', 'bad owner'])).toMatchObject({ code: 2 });
   });
 
   it('filters the work feed by cited envelope id', async () => {
@@ -2389,5 +2647,19 @@ describe('phm agents bus (unified)', () => {
     expect(help).toMatch(/ashlr agents conversations [^\n]*--contains <text>/);
     expect(help).toMatch(/ashlr agents chat [^\n]*--after <cursor>/);
     expect(help).toMatch(/ashlr agents chat [^\n]*--limit <1-100>/);
+    // The reference must carry the whole filter set each delegated read
+    // accepts — a flag the dispatcher runs but the help omits is a read an
+    // agent never discovers.
+    for (const flag of ['--topic <topic>', '--priority <P0|P1|P2|P3>']) {
+      expect(help).toMatch(new RegExp(`ashlr agents chat [^\\n]*${flag.replace(/[|<>]/g, '\\$&')}`));
+    }
+    for (const flag of ['--topic <topic>', '--id <id>', '--result <reserved|admitted|complete|failed>']) {
+      expect(help).toMatch(new RegExp(`ashlr agents messages [^\\n]*${flag.replace(/[|<>]/g, '\\$&')}`));
+    }
+    for (const flag of ['--with <name>', '--in-reply-to <id>', '--id <envelope-id>', '--channel <name>',
+      '--topic <topic>', '--priority <P0|P1|P2|P3>', '--from <name>', '--exclude-from <name>', '--to <name>', '--thread <label>',
+      '--body-kind <kind>', '--result <reserved|admitted|complete|failed>', '--kind <ask|reply|handoff|status|blocker>']) {
+      expect(help).toMatch(new RegExp(`ashlr agents conversations [^\\n]*${flag.replace(/[|<>]/g, '\\$&')}`));
+    }
   });
 });

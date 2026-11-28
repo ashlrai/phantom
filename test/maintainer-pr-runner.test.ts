@@ -2,12 +2,13 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AshlrConfig } from '../src/core/types.js';
 import { runVerifyCommandAsync, runVerifySubprocessAsync } from '../src/core/run/verify-commands.js';
 import { safeGitCommand } from '../src/core/sandbox/safe-git.js';
 import { prepareMaintainerRun, runMaintainerPr, type MaintainerRunContext } from '../src/core/fleet/maintainer-pr-runner.js';
+import { prepareMaintainerNodeDependencies } from '../src/core/fleet/maintainer-node-dependencies.js';
 
 vi.mock('../src/core/sandbox/audit.js', () => ({ audit: vi.fn() }));
 // Synthetic admission only; the real launcher/profile/child process are not mocked.
@@ -42,6 +43,22 @@ function fixture(changeContract = false): MaintainerRunContext {
     cfg: {} as AshlrConfig, assertAuthorized: vi.fn(),
   };
 }
+function packageManagerFixture(manager: 'pnpm' | 'bun' | 'npm'): MaintainerRunContext {
+  const context = fixture();
+  const verifier = JSON.parse(contract()) as { commands: { cmd: string[] }[] };
+  verifier.commands[0]!.cmd = [manager, 'run', 'test'];
+  writeFileSync(join(context.mirrorPath, 'ashlr.verify.json'), JSON.stringify(verifier));
+  writeFileSync(join(context.mirrorPath, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { test: 'node -e "true"' } }));
+  if (manager === 'pnpm') writeFileSync(join(context.mirrorPath, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\nimporters:\n  .: {}\npackages: {}\n");
+  if (manager === 'bun') writeFileSync(join(context.mirrorPath, 'bun.lock'), '{"lockfileVersion":1,"workspaces":{"":{}},"packages":{}}');
+  if (manager === 'npm') writeFileSync(join(context.mirrorPath, 'package-lock.json'), JSON.stringify({ lockfileVersion: 3, packages: { '': { name: 'fixture' } } }));
+  git(context.mirrorPath, 'add', '.'); git(context.mirrorPath, 'commit', '-m', 'package-manager base');
+  context.baseSha = git(context.mirrorPath, 'rev-parse', 'HEAD'); context.mergeBaseSha = context.baseSha;
+  writeFileSync(join(context.mirrorPath, 'code.txt'), 'package-manager head\n');
+  git(context.mirrorPath, 'add', '.'); git(context.mirrorPath, 'commit', '-m', 'package-manager head');
+  context.headSha = git(context.mirrorPath, 'rev-parse', 'HEAD'); context.treeSha = git(context.mirrorPath, 'rev-parse', 'HEAD^{tree}');
+  return context;
+}
 const deps = {
   lease: async <T>(_repo: string, fn: () => Promise<T>): Promise<T> => fn(),
   slot: async <T>(_repo: string, fn: () => Promise<T>): Promise<T> => fn(),
@@ -63,7 +80,9 @@ describe('host exact-tree maintainer runner', () => {
     const prepared = await prepareMaintainerRun(context, deps);
     expect(Object.isFrozen(prepared.expectedCommands)).toBe(true);
     expect(Object.isFrozen(prepared.expectedCommands[0]!.cmd)).toBe(true);
-    const result = await runMaintainerPr(prepared, deps);
+    const prepareNode = vi.fn();
+    const result = await runMaintainerPr(prepared, { ...deps, prepareNode });
+    expect(prepareNode).not.toHaveBeenCalled();
     expect(result).toMatchObject({ ok: true, sourceUnchanged: true, worktreeRemoved: true, confinement: 'required', headSha: context.headSha });
     expect(result.commands).toHaveLength(1);
     expect(result.commands[0]!.result).toMatchObject({ ok: true, exitCode: 0, timedOut: false });
@@ -194,6 +213,31 @@ describe('host exact-tree maintainer runner', () => {
     expect(result).toMatchObject({ ok: false, commands: [], worktreeRemoved: true, dependenciesRemoved: true });
     expect(result.reason).toContain('cancelled'); expect(close).toHaveBeenCalledOnce();
     expect(openConfinement).not.toHaveBeenCalled(); expect(runCommand).not.toHaveBeenCalled();
+  });
+  it('prepares Node dependencies once, passes the attachment to confinement, asserts around commands and cleans it up', async () => {
+    const context = packageManagerFixture('pnpm');
+    const prepared = await prepareMaintainerRun(context, deps);
+    const attachment = {
+      receipts: [{ v: 1, recipe: 'node-locked-v1', manager: 'pnpm', sourceTree: context.treeSha,
+        lockSha256: 'a'.repeat(64), packageCount: 0, nodeModulesSha256: 'b'.repeat(64) }],
+      toolBins: [dirname(process.execPath)],
+      assertCurrent: vi.fn(),
+      close: vi.fn(),
+    };
+    const prepareNode = vi.fn(async (_input: Parameters<typeof prepareMaintainerNodeDependencies>[0]) => attachment as never);
+    const openConfinement = vi.fn(async (_worktree: string, options?: { nodeAttachment?: unknown }) => {
+      expect(options?.nodeAttachment).toBe(attachment);
+      return { runSubprocess: runVerifySubprocessAsync, close: vi.fn() };
+    });
+    const runCommand = vi.fn(async () => ({ ok: true, command: 'pnpm run test', exitCode: 0, output: '', timedOut: false }));
+    const result = await runMaintainerPr(prepared, { ...deps, prepareNode, openConfinement, runCommand });
+    expect(result).toMatchObject({ ok: true, nodeDependencies: attachment.receipts, dependenciesRemoved: true, worktreeRemoved: true });
+    expect(prepareNode).toHaveBeenCalledOnce();
+    expect(prepareNode.mock.calls[0]![0]).toMatchObject({ worktree: expect.any(String), sourceTree: context.treeSha });
+    expect(attachment.assertCurrent).toHaveBeenCalledTimes(2);
+    expect(attachment.close).toHaveBeenCalledOnce();
+    expect(openConfinement).toHaveBeenCalledOnce();
+    expect(runCommand).toHaveBeenCalledOnce();
   });
   it('keeps cleanup running even if closing confinement fails', async () => {
     const prepared = await prepareMaintainerRun(fixture(), deps);

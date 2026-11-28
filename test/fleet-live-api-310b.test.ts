@@ -30,6 +30,7 @@ import {
 import { isNeedsYouItem } from '../src/core/verse/workbench-types.js';
 import type { DaemonLivenessV1 } from '../src/core/daemon/liveness.js';
 import type { EffectivePolicy, LedgerEntry, LedgerReadResult } from '../src/core/authority/types.js';
+import { STALE_STANDING_TICK_REASON } from '../src/core/fleet/fleet-types.js';
 import type { FleetLiveSnapshotV1, LandingRecord, RepoHold, RepoHoldChange, SetRepoHoldRequest } from '../src/core/fleet/fleet-types.js';
 import type { FleetJournalRecord, FleetTickStateV1 } from '../src/core/fleet/fleet-runtime-journal.js';
 import type { AshlrConfig } from '../src/core/types.js';
@@ -338,11 +339,11 @@ describe('GET /api/verse/fleet/live — states', () => {
     })]);
     expect(body.repos[0]!.greenTrend).toHaveLength(14);
     tick.at = iso(45 * MIN);
-    expect((await buildFleetLiveSnapshot()).snapshot.lanes.every(lane => lane.slots === 0)).toBe(true);
+    expect((await buildFleetLiveSnapshot()).snapshot.lanes.every(lane => lane.slots === 0 && lane.capReason === STALE_STANDING_TICK_REASON)).toBe(true);
     tick.at = iso(0); // A new observation while the old tick is still preparing mirrors.
     expect((await buildFleetLiveSnapshot()).snapshot.lanes.find(lane => lane.lane === 'local')?.slots).toBe(2);
     tick.at = iso(-MIN);
-    expect((await buildFleetLiveSnapshot()).snapshot.lanes.every(lane => lane.slots === 0)).toBe(true);
+    expect((await buildFleetLiveSnapshot()).snapshot.lanes.every(lane => lane.slots === 0 && lane.capReason === STALE_STANDING_TICK_REASON)).toBe(true);
   });
 });
 

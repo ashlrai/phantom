@@ -6,7 +6,9 @@
  * from disk here. Split out of empties.ts so evidence-only consumers do not
  * pull the reason-classification subtree.
  */
+import { canonicalJson } from '../authority/canonical-json.js';
 import { ledgerEventName, ledgerRows, ledgerStateTokens, type LedgerRow } from './empty-cause.js';
+import { isNodePoolLedgerRow } from './jobs-ledger-dialect.js';
 
 /** One job's newest finish in the window. `skipped` means the dispatcher never launched it. */
 export interface EmptiesFinish {
@@ -62,12 +64,22 @@ export function currentAttemptFinishes(text: string, nowMs: number, hours: numbe
   receipts.sort((a, b) => a.at - b.at);
   const seen = new Set<string>();
   let timestamp: number | undefined;
-  const rows = receipts.filter(({ row, at }) => {
+  const rows = receipts.filter(({ row, id, at }) => {
+    // Local job logs belong to individual jobs, not batch wrappers or node attempts.
+    if (id.startsWith('RQ-BATCH-') || isNodePoolLedgerRow(row)) return false;
+    // Keep explicit gate skips for the separate skip tally.
+    if (row.launched === false && !SKIP_EVENTS.has(ledgerEventName(row) ?? '')) return false;
     if (at !== timestamp) {
       seen.clear();
       timestamp = at;
     }
-    const receipt = JSON.stringify(row);
+    let receipt: string;
+    try {
+      receipt = canonicalJson(row);
+    } catch {
+      // Keep the reader usable for noncanonical values, such as overflowed JSON numbers.
+      receipt = JSON.stringify(row);
+    }
     if (seen.has(receipt)) return false;
     seen.add(receipt);
     return true;
@@ -75,7 +87,8 @@ export function currentAttemptFinishes(text: string, nowMs: number, hours: numbe
   const latestDispatch = new Map<string, number>();
   for (const [index, { id, row }] of rows.entries()) {
     const event = ledgerEventName(row);
-    if (event === 'launch' || event === 'batch_claim') latestDispatch.set(id, index);
+    const reserved = event === 'claim' && row.launch_dedupe === true;
+    if (event === 'launch' || event === 'batch_claim' || reserved) latestDispatch.set(id, index);
   }
   return finishesIn(rows.filter(({ id }, index) => index >= (latestDispatch.get(id) ?? 0)));
 }

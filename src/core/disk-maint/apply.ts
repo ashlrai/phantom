@@ -22,7 +22,7 @@
 import { execFile } from 'node:child_process';
 import {
   closeSync, constants, fsyncSync, lstatSync, openSync,
-  realpathSync, renameSync, rmSync, unlinkSync,
+  renameSync, rmSync, unlinkSync,
   createReadStream, createWriteStream,
 } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -31,13 +31,16 @@ import { pipeline } from 'node:stream/promises';
 import { createGunzip, createGzip } from 'node:zlib';
 import { promisify } from 'node:util';
 import {
-  artifactJobInactive, artifactJobName, candidateStillSafe, completedArtifactJobs, defaultFreeBytes,
+  artifactJobInactive, artifactJobName, candidateStillSafe, completedArtifactJobs, DEFAULT_POLICY,
+  DISK_MAX_JOBS_BYTES, probeFreeBytes,
   type DiskMaintPlan, type MaintCandidate, type MaintClassId,
 } from './plan.js';
 import { readSource, type Source } from '../fleet/runs-parked-queue.js';
-import { protectedReason, protectedRoots, resolveMaintRoots, type MaintRoots } from './protect.js';
+import { isInsideRoot, protectedReason, protectedRoots, realPathOrNull, resolveMaintRoots, type MaintRoots } from './protect.js';
+import { bytesToGb } from './removal-plan.js';
 import { isKeptWorktree, readKeptWorktrees } from '../worktree-retention.js';
 import { FILTER_LISTING_ARGS, filterDriverOverrides, repoScopedFilterDrivers, withDaemonGitHardening } from '../sandbox/safe-git.js';
+import { sanitizedGitProcessEnv } from './worktree-evidence.js';
 import { worktreeActivity, worktreeHasUnpushed, worktreeHold, worktreeOutcomes, worktreePayloadHold, type WorktreeDeps } from './worktrees.js';
 
 const execFileAsync = promisify(execFile);
@@ -71,13 +74,14 @@ export interface ApplyDeps extends WorktreeDeps {
   /** Extra containment roots are never needed; managed roots are derived. */
   runner?: (file: string, args: string[]) => Promise<string>;
   now?: number;
+  worktreeFailedAgeHours?: number;
   readJobs?: (path: string) => Promise<{ state: Source; text: string }>;
   freeBytes?: (path: string) => number | null | Promise<number | null>;
 }
 
 const defaultRunner = async (file: string, args: string[]): Promise<string> => {
   const options = { timeout: 60_000, maxBuffer: 4 * 1024 * 1024 };
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
+  const env = sanitizedGitProcessEnv();
   const hardening = withDaemonGitHardening(env);
   if (args.includes('remove')) {
     const config = await execFileAsync(file, [...args.slice(0, 2), ...FILTER_LISTING_ARGS], { ...options, env: hardening })
@@ -87,25 +91,16 @@ const defaultRunner = async (file: string, args: string[]): Promise<string> => {
   return (await execFileAsync(file, args, { ...options, env: hardening })).stdout;
 };
 
-const real = (path: string): string | null => {
-  try { return realpathSync.native(path); } catch { return null; }
-};
-
 /** Managed roots a directory removal must physically resolve inside. */
 function managedRoots(roots: MaintRoots): string[] {
   const out: string[] = [];
   for (const path of [roots.ashlrDir, roots.runsDir, roots.wtDir, roots.sideProjectsDir, roots.hubDir]) {
     if (!path) continue;
-    const physical = real(path);
+    const physical = realPathOrNull(path);
     out.push(physical ?? resolve(path));
   }
   return out;
 }
-
-const inside = (root: string, path: string): boolean => {
-  const rel = path.slice(root.length);
-  return (path === root || (path.startsWith(root) && rel.startsWith(sep)));
-};
 
 function sha256(path: string, gunzip = false): Promise<string> {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -162,16 +157,16 @@ async function applyOne(candidate: MaintCandidate, roots: MaintRoots, protectedR
         }
       }
       case 'delete-dir': {
-        const physical = real(candidate.path);
-        if (!physical || !managedRoots(roots).some(root => inside(root, physical!))) {
+        const physical = realPathOrNull(candidate.path);
+        if (!physical || !managedRoots(roots).some(root => isInsideRoot(root, physical))) {
           return { ...base, status: 'refused', freedBytes: 0, detail: 'escaped managed roots' };
         }
         rmSync(candidate.path, { recursive: true });
         return { ...base, status: 'done', freedBytes: candidate.bytes };
       }
       case 'worktree-remove': {
-        const physical = real(candidate.path);
-        const wtRoots = [real(join(roots.runsDir, 'wt')) ?? join(roots.runsDir, 'wt'), real(roots.wtDir) ?? roots.wtDir];
+        const physical = realPathOrNull(candidate.path);
+        const wtRoots = [realPathOrNull(join(roots.runsDir, 'wt')) ?? join(roots.runsDir, 'wt'), realPathOrNull(roots.wtDir) ?? roots.wtDir];
         if (!physical || !wtRoots.some(root => join(root, basename(candidate.path)) === physical)) {
           return { ...base, status: 'refused', freedBytes: 0, detail: 'escaped worktree roots' };
         }
@@ -195,9 +190,12 @@ export async function applyDiskMaint(plan: DiskMaintPlan, deps: ApplyDeps = {}):
   const roots = deps.roots ?? plan.roots ?? resolveMaintRoots();
   const rootsList = protectedRoots(roots);
   const runner = deps.runner ?? defaultRunner;
-  const readJobs = deps.readJobs ?? ((path: string) => readSource(path, 8 * 1024 * 1024, true));
+  const readJobs = deps.readJobs ?? ((path: string) => readSource(path, DISK_MAX_JOBS_BYTES, true));
   let activity: Awaited<ReturnType<typeof worktreeActivity>> = null;
-  let outcomes: ReturnType<typeof worktreeOutcomes> = null;
+  let outcomes: Awaited<ReturnType<typeof worktreeOutcomes>> = null;
+  const jobsToRecheck = new Set(plan.classes.flatMap(cls => cls.candidates.flatMap(
+    candidate => candidate.action === 'worktree-remove' ? [basename(candidate.path)] : [],
+  )));
   let refreshAt = 0;
   const classes: ApplyClassResult[] = [];
   for (const cls of plan.classes) {
@@ -211,13 +209,16 @@ export async function applyDiskMaint(plan: DiskMaintPlan, deps: ApplyDeps = {}):
           if (Date.now() >= refreshAt) {
             [activity, outcomes] = await Promise.all([
               worktreeActivity(roots, deps),
-              readJobs(join(roots.runsDir, 'metrics', 'jobs.jsonl')).then(worktreeOutcomes),
+              readJobs(join(roots.runsDir, 'metrics', 'jobs.jsonl')).then(jobs =>
+                worktreeOutcomes(jobs, jobsToRecheck, roots, { ...deps, worktreePullCacheOnly: true })),
             ]);
             refreshAt = Date.now() + 5_000;
           }
           const name = basename(candidate.path);
           const fresh = outcomes?.get(name);
-          eligible = fresh !== undefined && fresh.at === candidate.mtimeMs &&
+          eligible = fresh !== undefined && !fresh.hold && fresh.at === candidate.mtimeMs &&
+            (!fresh.failed || (deps.now ?? Date.now()) - fresh.at >
+              (deps.worktreeFailedAgeHours ?? DEFAULT_POLICY.worktreeFailedAgeHours) * 3_600_000) &&
             worktreeHold(roots, name, activity) === null &&
             !isKeptWorktree(candidate.path, await readKeptWorktrees()) &&
             await (deps.worktreeHasUnpushed ?? worktreeHasUnpushed)(candidate.path, fresh.prHead) === false;
@@ -240,11 +241,8 @@ export async function applyDiskMaint(plan: DiskMaintPlan, deps: ApplyDeps = {}):
     }
     classes.push(item);
   }
-  let freeGb: number | null = null;
-  try {
-    const bytes = await (deps.freeBytes ?? defaultFreeBytes)(roots.runsDir);
-    if (typeof bytes === 'number' && Number.isFinite(bytes) && bytes >= 0) freeGb = Math.round(bytes / 1e8) / 10;
-  } catch { /* free space unavailable */ }
+  const freeBytes = await probeFreeBytes(roots.runsDir, deps.freeBytes);
+  const freeGb = freeBytes === null ? null : bytesToGb(freeBytes);
   return {
     schema: 'disk-maint-apply.v1',
     generatedAt: new Date(deps.now ?? Date.now()).toISOString(),

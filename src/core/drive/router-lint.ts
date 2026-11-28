@@ -228,8 +228,9 @@ function declaredEstimate(fields: Map<string, string[]>): { estLines: number | n
   let est: number | null = null;
   for (const key of ['est-lines', 'est_lines'] as const) {
     for (const value of fields.get(key) ?? []) {
-      if (!/^\d{1,7}$/.test(value.replace(/,+$/, ''))) return { estLines: null, malformed: true };
-      const n = Number(value.replace(/,+$/, ''));
+      const raw = value.replace(/,+$/, '');
+      if (!/^\d{1,7}$/.test(raw)) return { estLines: null, malformed: true };
+      const n = Number(raw);
       if (!Number.isSafeInteger(n) || n < 1 || n > ROUTER_LINT_LIMITS.maxEstValue) {
         return { estLines: null, malformed: true };
       }

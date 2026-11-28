@@ -1,4 +1,4 @@
-import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -17,7 +17,20 @@ function setup(classification = 'probable-flake') {
 }
 
 describe('resident CI reruns', () => {
-  it('journals before rerunning, deduplicates repeated ticks, permits a new head', async () => {
+  it.each([true, false])('preserves rerun deduplication only for a complete receipt at the tail cutoff (complete: %s)', async (complete) => {
+    const { opts, gh } = setup();
+    const attempt = { at: new Date(opts.now!()).toISOString(), repo: 'org/repo', head: 'a'.repeat(40), runId: 123, pr: 1, outcome: 'attempt' };
+    const tail = `${JSON.stringify(attempt)}\n`;
+    const padding = ' '.repeat(4 * 1024 * 1024 - Buffer.byteLength(tail));
+    writeFileSync(opts.journalPath!, `\n${complete ? '\n' : 'x'}${tail}${padding}`);
+
+    expect(readCiReruns(opts.journalPath!, opts.now!()).counts.attempted).toBe(complete ? 1 : 0);
+    const status = await runCiRerunMaintenance(opts);
+    expect(status.repos['org/repo']?.skippedDuplicate).toBe(complete ? 1 : 0);
+    expect(gh).toHaveBeenCalledTimes(complete ? 0 : 1);
+  });
+
+  it('journals before rerunning and deduplicates by workflow run even when the reported head changes', async () => {
     const { opts, gh, report } = setup();
     gh.mockImplementation(async () => {
       expect(readCiReruns(opts.journalPath, opts.now!()).recent.at(-1)?.outcome).toBe('attempt');
@@ -29,8 +42,26 @@ describe('resident CI reruns', () => {
     expect(second.repos['org/repo']?.skippedDuplicate).toBe(1);
     expect(gh).toHaveBeenCalledTimes(1);
     report.groups[0]!.runs[0]!.head = 'c'.repeat(40);
+    const conflicting = await runCiRerunMaintenance(opts);
+    expect(conflicting.repos['org/repo']?.skippedDuplicate).toBe(1);
+    expect(gh).toHaveBeenCalledTimes(1);
+
+    report.groups[0]!.runs[0]!.runId = 124;
     await runCiRerunMaintenance(opts);
     expect(gh).toHaveBeenCalledTimes(2);
+  });
+
+  it('withholds dispatch when the report assigns two heads to a run', async () => {
+    const { opts, gh, report } = setup();
+    const group = report.groups[0]!;
+    const run = group.runs[0]!;
+    group.runs.push({ ...run, head: 'c'.repeat(40) }, { ...run, runId: 124 });
+
+    const status = await runCiRerunMaintenance(opts);
+
+    expect(status.repos['org/repo']?.errors).toEqual(['conflicting heads for workflow run 123']);
+    expect(gh.mock.calls).toEqual([[['run', 'rerun', '124', '--failed', '--repo', 'org/repo']]]);
+    expect(readCiReruns(opts.journalPath, opts.now!()).recent.map(entry => entry.runId)).toEqual([124, 124]);
   });
   it('enforces a global hourly cap across repos and expires old attempts', async () => {
     const { opts, gh } = setup();
@@ -103,6 +134,80 @@ describe('resident CI reruns', () => {
     expect(status.repos[report.repo]).toMatchObject({ attempted: 1, skippedDuplicate: 1, skippedCap: 0 });
     expect(gh.mock.calls).toEqual([[['run', 'rerun', '126', '--failed', '--repo', report.repo]]]);
   });
+  it.each([
+    ['triggering tests', { tests: ['test/b.test.ts > b'] }],
+    ['head SHA', { head: 'd'.repeat(40) }],
+  ])('withholds stabilization evidence when attempt receipts disagree on %s', async (_field, conflict) => {
+    const { opts, report } = setup();
+    const test = report.groups[0]!.testId;
+    const other = 'test/b.test.ts > b';
+    const attempts = ['a', 'b', 'c'].map((head, i) => ({
+      at: '2026-01-01T11:30:00Z', repo: report.repo, head: head.repeat(40),
+      runId: 123 + i, pr: i + 1, outcome: 'attempt', tests: [test, other],
+    }));
+    const rows = [
+      ...attempts,
+      { ...attempts[0]!, tests: [other, test, test] },
+      { ...attempts[0]!, ...conflict, at: '2026-01-01T12:01:00Z' },
+    ];
+    appendFileSync(opts.journalPath!, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+    expect(readCiReruns(opts.journalPath!, opts.now!()).recurringFlakes).toHaveLength(2);
+
+    opts.now = () => Date.parse('2026-01-01T12:01:00Z');
+    const read = readCiReruns(opts.journalPath!, opts.now());
+    expect(read.counts.attempted).toBe(3);
+    expect(read.lastHour).toBe(3);
+    expect(read.recurringFlakes).toEqual([]);
+    report.groups[0]!.runs = [];
+    const status = await runCiRerunMaintenance(opts);
+    expect(status.repos[report.repo]).toMatchObject({ recurringFlakes: 0, flakeFixesQueued: 0 });
+  });
+
+  it.each([
+    ['matching singleton aliases', ['test/a.test.ts > a'], 1],
+    ['conflicting singleton aliases', ['test/b.test.ts > b'], 0],
+    ['singleton and multiple tests', ['test/a.test.ts > a', 'test/b.test.ts > b'], 0],
+    ['partially invalid array', ['test/a.test.ts > a', null], 0],
+    ['malformed array field', 'test/a.test.ts > a', 0],
+  ] as const)('attributes recurrence with %s only when the test identity agrees', async (_case, tests, expected) => {
+    const { opts, report } = setup();
+    const test = 'test/a.test.ts > a';
+    const rows = ['a', 'b', 'c'].map((head, i) => ({
+      at: '2026-01-01T11:30:00Z', repo: report.repo, head: head.repeat(40),
+      runId: 123 + i, pr: i + 1, outcome: 'attempt', test,
+      ...(i === 0 ? { tests } : {}),
+    }));
+    appendFileSync(opts.journalPath!, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+    const read = readCiReruns(opts.journalPath!, opts.now!());
+    expect(read.counts.attempted).toBe(3);
+    expect(read.recurringFlakes.map(flake => flake.test)).toEqual(expected ? [test] : []);
+    report.groups[0]!.runs = [];
+    const status = await runCiRerunMaintenance(opts);
+    expect(status.repos[report.repo]).toMatchObject({ recurringFlakes: expected, flakeFixesQueued: expected });
+  });
+
+  it('records a workflow-only verdict when the attempt belongs to a different head', async () => {
+    const { opts, gh } = setup();
+    await runCiRerunMaintenance(opts);
+    const [attempt, call] = readCiReruns(opts.journalPath, opts.now!()).entries;
+    writeFileSync(opts.journalPath!, [
+      JSON.stringify({ ...attempt, head: 'b'.repeat(40) }),
+      JSON.stringify(call),
+    ].join('\n') + '\n');
+    opts.now = () => Date.parse('2026-01-01T12:10:00Z');
+    gh.mockResolvedValue({ ok: true, stdout: JSON.stringify({
+      id: 123, head_sha: 'a'.repeat(40), status: 'completed', conclusion: 'success',
+      run_attempt: 2, run_started_at: '2026-01-01T12:01:00Z', updated_at: '2026-01-01T12:08:00Z',
+    }), stderr: '' });
+
+    await runCiRerunMaintenance(opts);
+
+    const read = readCiReruns(opts.journalPath, opts.now());
+    expect(read.verdicts).toMatchObject({ pass: 1, pending: 0 });
+    expect(read.entries.at(-1)).toMatchObject({ outcome: 'verdict', verdict: 'pass' });
+    expect(read.entries.at(-1)).not.toHaveProperty('test');
+  });
+
   it('excludes future attempts from the hourly cap while preserving deduplication', async () => {
     const { opts, gh, report } = setup();
     opts.maxPerHour = 1;
@@ -144,6 +249,35 @@ describe('resident CI reruns', () => {
     expect(read.recent.at(-1)?.test).toBe(conflict ? undefined : report.groups[0]!.testId);
   });
 
+  it.each(['different test', 'multiple tests', 'conflicting replay'])(
+    'records a workflow-only verdict when the attempt has %s', async evidence => {
+      const { opts, gh } = setup();
+      await runCiRerunMaintenance(opts);
+      const attempt = readCiReruns(opts.journalPath!, opts.now!()).recent.find(row => row.outcome === 'attempt')!;
+      const otherTest = 'test/b.test.ts > b';
+      const changed = evidence === 'multiple tests'
+        ? { ...attempt, test: undefined, tests: [attempt.test!, otherTest] }
+        : { ...attempt, test: otherTest };
+      const rows = readCiReruns(opts.journalPath!, opts.now!()).recent;
+      const journal = evidence === 'conflicting replay'
+        ? [...rows, changed]
+        : rows.map(row => row.outcome === 'attempt' ? changed : row);
+      writeFileSync(opts.journalPath!, journal.map(row => JSON.stringify(row)).join('\n') + '\n');
+      opts.now = () => Date.parse('2026-01-01T12:10:00Z');
+      gh.mockResolvedValue({ ok: true, stdout: JSON.stringify({
+        id: attempt.runId, head_sha: attempt.head, status: 'completed', conclusion: 'failure',
+        run_attempt: 2, run_started_at: '2026-01-01T12:01:00Z', updated_at: '2026-01-01T12:08:00Z',
+      }), stderr: '' });
+
+      await runCiRerunMaintenance(opts);
+
+      const read = readCiReruns(opts.journalPath!, opts.now!());
+      expect(read.verdicts).toMatchObject({ fail: 1, pending: 0 });
+      expect(read.recent.at(-1)).toMatchObject({ outcome: 'verdict', verdict: 'fail' });
+      expect(read.recent.at(-1)).not.toHaveProperty('test');
+    },
+  );
+
   it('does not reopen the pending window when an expired successful call is replayed', async () => {
     const { opts, gh } = setup();
     await runCiRerunMaintenance(opts);
@@ -167,9 +301,11 @@ describe('resident CI reruns', () => {
     };
     const failed = { ...first, runId: 124, outcome: 'failed' };
     const conflict = { ...first, runId: 125 };
+    const headConflict = { ...first, runId: 126 };
     const rows = [
       first, { ...first, at: '2026-01-01T11:59:00Z' },
       failed, failed, conflict, { ...conflict, outcome: 'failed' },
+      headConflict, { ...headConflict, repo: 'Org/Repo', head: 'b'.repeat(40) },
       { ...first, outcome: 'failed', at: '2026-01-01T12:01:00Z' },
     ];
     appendFileSync(opts.journalPath!, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
@@ -185,11 +321,12 @@ describe('resident CI reruns', () => {
     expect(readCiReruns(opts.journalPath!, Date.parse('2026-01-01T12:01:00Z')).verdicts.pending).toBe(0);
   });
 
-  it('keeps a future verdict out of the report until its timestamp without polling again', async () => {
+  it.each([false, true])('withholds duplicate polling for a future verdict (different head: %s)', async differentHead => {
     const { opts, gh, report } = setup();
     await runCiRerunMaintenance(opts);
     appendFileSync(opts.journalPath!, JSON.stringify({
       ...report.groups[0]!.runs[0]!, repo: 'org/repo', at: '2026-01-01T12:11:00Z',
+      ...(differentHead ? { head: 'b'.repeat(40) } : {}),
       outcome: 'verdict', verdict: 'pass',
     }) + '\n');
     opts.now = () => Date.parse('2026-01-01T12:10:00Z');
@@ -237,6 +374,38 @@ describe('resident CI reruns', () => {
     expect(gh).not.toHaveBeenCalled();
     expect(readFileSync(opts.queueFile!, 'utf8')).toContain('1 passed, 0 failed, 0 inconclusive');
   });
+  it('attributes recurring-flake verdicts only to matching recent attempts', async () => {
+    const { opts, report } = setup();
+    const test = report.groups[0]!.testId;
+    const attempts = ['a', 'b', 'c'].map((letter, index) => ({
+      at: '2026-01-01T11:00:00Z', repo: report.repo, test, outcome: 'attempt',
+      head: letter.repeat(40), runId: 123 + index, pr: index + 1,
+    }));
+    const first = attempts[0]!;
+    const other = 'test/b.test.ts > b';
+    const rows = [
+      ...attempts,
+      { ...first, runId: 126, at: '2025-12-24T11:00:00Z' },
+      { ...first, runId: 127, tests: [test, other] },
+      { ...first, runId: 128 },
+      { ...first, runId: 128, test: other },
+      { ...first, runId: 129, at: '2026-01-01T11:45:00Z' },
+      ...[123, 126, 127, 128, 129, 130].map(runId => ({
+        ...first, runId, at: '2026-01-01T11:30:00Z', outcome: 'verdict',
+        verdict: runId === 123 ? 'pass' : 'fail',
+      })),
+    ];
+    appendFileSync(opts.journalPath!, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+
+    const read = readCiReruns(opts.journalPath!, opts.now!());
+    expect(read.verdicts).toMatchObject({ pass: 1, fail: 5 });
+    expect(read.recurringFlakes.find(flake => flake.test === test)?.verdicts)
+      .toEqual({ pass: 1, fail: 0, inconclusive: 0 });
+
+    await runCiRerunMaintenance(opts);
+    expect(readFileSync(opts.queueFile!, 'utf8')).toContain('1 passed, 0 failed, 0 inconclusive');
+  });
+
   it.each(['pr-caused', 'shared-baseline', 'unknown'])('never reruns %s', async kind => {
     const { opts, gh } = setup(kind);
     await runCiRerunMaintenance(opts);

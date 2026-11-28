@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { reservePace } from '../src/core/usage/reserve-pace.js';
 import { buildFleetPace, readFleetPace } from '../src/core/fleet/pace-verdict.js';
+import { readPoolSources } from '../src/core/fleet/pool-evidence.js';
 import { paceStops } from '../src/core/fleet/pace-stops.js';
 import { cmdPoolWhy } from '../src/cli/pool-why.js';
 import { cmdPool } from '../src/cli/pool.js';
@@ -24,12 +25,34 @@ it('reads every budget pool, prefers the last pair and falls back to reported bu
   root = await mkdtemp(join(tmpdir(), 'pace-'));
   await mkdir(join(root, 'queue')); await mkdir(join(root, 'metrics'));
   await writeFile(join(root, 'queue/status.json'), JSON.stringify({ last_tick: at(0), budget: {
-    claude: { use_it_all: { known: true, stale: false, used_pct: 75, hours_to_reset: 150, reset_at: at(150), burn_pct_per_hour: 1 } },
-    gemini: { use_it_all: { used_pct: 20, hours_to_reset: 10, burn_pct_per_hour: 1 } }, grok: {},
+    claude: { use_it_all: { known: true, stale: false, used_pct: 75, observed_at: at(0), hours_to_reset: 150, reset_at: at(150), burn_pct_per_hour: 1 } },
+    gemini: { use_it_all: { used_pct: 20, observed_at: at(0), hours_to_reset: 10, burn_pct_per_hour: 1 } }, grok: {},
   } }));
   await writeFile(join(root, 'metrics/usage-history.json'), JSON.stringify({ schema: 'fleet.usage-history.v1', v: 1, rows: [-1, 0].map(h => ({ pool: 'claude', used_pct: 75 + 1.7 * h, observed_at: at(h), reset_at: at(150), source: null })) }));
   const data = await readFleetPace({ runsDir: root, now: () => now });
   expect(data.pools.filter(p => ['claude', 'gemini', 'grok'].includes(p.pool))).toMatchObject([{ pool: 'claude', verdict: 'over', recentPerHour: 1.7 }, { pool: 'gemini', verdict: 'ok' }, { pool: 'grok', verdict: 'unknown' }]);
+});
+
+it('ages quota from its capture time even when the dispatcher republishes it on a fresh tick', async () => {
+  root = await mkdtemp(join(tmpdir(), 'pace-capture-'));
+  await mkdir(join(root, 'queue'));
+  await writeFile(join(root, 'queue/status.json'), JSON.stringify({ last_tick: at(0), budget: {
+    claude: { weekly_used_pct: 100, as_of: Date.parse(at(-25)) / 1000, reset_at: at(12) },
+    gemini: { weekly_used_pct: 100, reset_at: at(12) },
+    grok: { weekly_used_pct: 100, observed_at: at(1), reset_at: at(12) },
+    zai: { observed_at: at(0), use_it_all: { used_pct: 100, reset_at: at(12) } },
+    cursor: { weekly_used_pct: 100, as_of: at(-2), reset_at: at(12) },
+  } }));
+  await writeFile(join(root, 'queue/cursor-reading.json'), JSON.stringify({
+    pct: 20, ts: at(-1), reset_at: at(12),
+  }));
+  const data = await readFleetPace({ runsDir: root, now: () => now });
+  const rows = Object.fromEntries(data.pools.map(p => [p.pool, p]));
+  expect(rows.claude).toMatchObject({ verdict: 'stale', ageHours: 25, usedPct: null });
+  for (const pool of ['gemini', 'grok', 'zai']) {
+    expect(rows[pool]).toMatchObject({ state: 'unknown', usedPct: null });
+  }
+  expect(rows.cursor).toMatchObject({ usedPct: 20, source: 'queue/cursor-reading.json' });
 });
 it('plans by default, applies and clears owned stops, preserving foreign files and links', async () => {
   root = await mkdtemp(join(tmpdir(), 'pace-'));
@@ -75,4 +98,29 @@ it('explains free slots, stale provider records, history and exhausted pools wit
   expect(await cmdPool(['why', '../bad'])).toBe(2);
   expect(await cmdPoolWhy(['absent'], read)).toBe(1);
   expect(error).toHaveBeenCalledTimes(2);
+});
+
+it('leaves codex-local CPU headroom unknown on win32, where os.loadavg() is a [0,0,0] stub', async () => {
+  root = await mkdtemp(join(tmpdir(), 'pool-'));
+  const lanes = { 'codex-local': { running: 1, target: 3 } };
+  const win = await readPoolSources(root, {}, lanes, [], now, null, () => 'win32');
+  expect(win['codex-local']!.headroom).toMatchObject({ slots: 2 });
+  expect(win['codex-local']!.headroom!.ramBytes).toBeGreaterThan(0);
+  expect(win['codex-local']!.headroom!.cpuCores).toBeUndefined();
+  const posix = await readPoolSources(root, {}, lanes, [], now, null, () => 'linux');
+  expect(typeof posix['codex-local']!.headroom!.cpuCores).toBe('number');
+});
+
+it('omits the CPU claim from a pace line whose cpu headroom was never measured', () => {
+  const data = buildFleetPace({ generatedAt: at(0), pools: [
+    { id: 'codex-local', usedPct: null, hoursLeft: null, burnPctPerHour: null, resetAt: null,
+      headroom: { slots: 2, ramBytes: 8 * 1024 ** 3 } },
+    { id: 'devin-flash', usedPct: null, hoursLeft: null, burnPctPerHour: null, resetAt: null,
+      headroom: { slots: 1, ramBytes: 4 * 1024 ** 3, cpuCores: 4 } },
+  ] }, now);
+  const rows = Object.fromEntries(data.pools.map(p => [p.pool, p]));
+  expect(rows['codex-local']!.line).toContain('RAM bytes');
+  expect(rows['codex-local']!.line).not.toContain('CPU cores');
+  expect(rows['codex-local']!.line).not.toContain('undefined');
+  expect(rows['devin-flash']!.line).toContain('4.0 CPU cores available');
 });

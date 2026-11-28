@@ -7,7 +7,7 @@ import { queueDeadHeads } from '../core/fleet/queue-dead-heads.js';
 import { parseReadyTsv } from '../core/fleet/lane-console.js';
 
 const usage = `ashlr fleet dead-heads [--json] [--root PATH] [--cap N]
-Read-only skip evidence; positions are one-based per lane. Default cap: 4 launchable lines.`;
+Read-only skip evidence; positions are one-based per lane. Default cap: 4 launchable lines. Default root: ASHLR_RUNS_DIR or ~/.ashlr-runs.`;
 
 /** router-queue.md is append-mostly Markdown history; same 32 MiB bound the other market readers use. */
 const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
@@ -29,7 +29,7 @@ export async function cmdFleetDeadHeads(args: string[]): Promise<number> {
     console.log(usage);
     return 0;
   }
-  let root = join(homedir(), '.ashlr-runs');
+  let root = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   let cap = 4;
   let json = false;
   for (let i = 0; i < args.length; i++) {

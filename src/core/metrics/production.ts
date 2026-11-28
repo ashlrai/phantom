@@ -3,6 +3,8 @@ import { promisify } from 'node:util';
 import { parse as parseToml } from 'smol-toml';
 
 const exec = promisify(execFile);
+const PRODUCTION_REPO_RE = /^[A-Za-z0-9_][A-Za-z0-9_.-]*\/[A-Za-z0-9_][A-Za-z0-9_.-]*$/;
+export function isProductionRepo(repo: string): boolean { return PRODUCTION_REPO_RE.test(repo); }
 export type Evidence = 'yes' | 'no' | 'unknown';
 export interface ProductionReads {
   github(path: string, paginate?: boolean): Promise<unknown>;
@@ -81,7 +83,7 @@ async function publication(repo: string, tag: string, reads: ProductionReads): P
 
 export async function collectProduction(repo: string, reads: ProductionReads = productionReads,
   bridgeLabel = 'bridge', laneFilter?: string) {
-  if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]*\/[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(repo)) throw new Error('Expected owner/repo');
+  if (!isProductionRepo(repo)) throw new Error('Expected owner/repo');
   const pulls = pages(await reads.github(`repos/${repo}/pulls?state=all&per_page=100`, true));
   let releases: ObjectValue[] = [];
   let releaseUnavailable = false;

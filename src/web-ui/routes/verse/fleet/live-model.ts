@@ -13,7 +13,7 @@
  *
  * Framework-free; tested directly.
  */
-import type { FleetEngine, FleetGateFunnel, FleetLaneState, FleetLiveRun, FleetLiveSnapshotV1 } from '../../../../core/fleet/fleet-types.js';
+import type { FleetEngine, FleetGateFunnel, FleetLiveLaneState, FleetLiveRun, FleetLiveSnapshotV1 } from '../../../../core/fleet/fleet-types.js';
 import type { SeatDecision } from '../../../../core/routing/types.js';
 import type { ChartEngine, ChartTone } from '../../../components/charts/colors.js';
 import { CHART_NEUTRAL, seriesColor } from '../../../components/charts/colors.js';
@@ -39,8 +39,8 @@ export const LANE_LABEL: Readonly<Record<FleetEngine, string>> = {
 };
 
 /** A lane chip's words: "Local · off", "Grok · 1/2". The why is a separate line (`laneNotes`). */
-export function laneChipText(lane: FleetLaneState): { name: string; slots: string } {
-  return { name: LANE_LABEL[lane.lane], slots: lane.slots === 0 ? 'off' : `${lane.busy}/${lane.slots}` };
+export function laneChipText(lane: FleetLiveLaneState): { name: string; slots: string } {
+  return { name: LANE_LABEL[lane.lane], slots: lane.slots === null ? 'capacity unknown' : lane.slots === 0 ? 'off' : `${lane.busy ?? 'unknown'}/${lane.slots}` };
 }
 
 export interface LaneNote {
@@ -52,7 +52,7 @@ export interface LaneNote {
 }
 
 /** A lane's cap reason as the operator reads it (`laneReasonText`); null when it has none. */
-export function laneReason(lane: FleetLaneState): string | null {
+export function laneReason(lane: FleetLiveLaneState): string | null {
   const reason = lane.capReason?.trim();
   return reason ? laneReasonText(reason) : null;
 }
@@ -62,7 +62,7 @@ export function laneReason(lane: FleetLaneState): string | null {
  * words the server already wrote. A dark fleet gives every lane the same sentence; 3.10.0
  * repeated it inside every chip and truncated it there.
  */
-export function laneNotes(lanes: readonly FleetLaneState[]): LaneNote[] {
+export function laneNotes(lanes: readonly FleetLiveLaneState[]): LaneNote[] {
   const byReason = new Map<string, FleetEngine[]>();
   for (const lane of lanes) {
     const reason = laneReason(lane);

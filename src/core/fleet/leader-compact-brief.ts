@@ -23,11 +23,13 @@ import { mergeLatencyLine } from './git-merge-latency.js';
 import { activeFamilyStops, type BriefFamily } from './family-auto-stop.js';
 import { whyIdle } from './why-idle.js';
 import { fleetGhosts } from './ghosts.js';
+import { laneLaunchTarget } from './lane-launch-target.js';
 
 export const LEADER_COMPACT_FILE = 'queue/leader-brief.json';
 /** router-queue.md is append-mostly Markdown history; same bound the unfed read uses. */
 const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 const clean = (s: string) => scrubSecrets(s).replace(/\s+/g, ' ').slice(0, 80);
+const count = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
 
 /** The brief's two-hour family rollup, shared with self-tick before display truncation. */
 export function briefFamilyYield(text: string, now: number): BriefFamily[] {
@@ -83,7 +85,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     return cache.get(file)!;
   };
   const quiet = async <T>(p: Promise<T>): Promise<T | null> => p.catch(() => null);
-  const [snapshot, tail, pace, guardian, liveText, stopText, ready, hostLoad, log, slotsText, prsText, familyStopText, routerQueue] = await Promise.all([
+  const [snapshot, tail, pace, guardian, liveText, stopText, ready, hostLoad, log, slotsText, prsText, familyStopText, routerQueue, statusText] = await Promise.all([
     quiet(readChiefOfStaffSnapshot('auto', { runsDir, now: () => new Date(now), read })),
     readTail(join(runsDir, 'metrics/jobs.jsonl'), 8 * 1024 * 1024),
     quiet(readFleetPace({ runsDir, now: () => now })), quiet(readGuardianGlance(runsDir, now)),
@@ -94,6 +96,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     quiet(read(join(runsDir, 'queue/slots.json'))), quiet(read(join(runsDir, 'fleet/open-prs.json'))),
     quiet(read(join(runsDir, 'queue/family-stop.tsv'))),
     quiet(read(join(runsDir, 'queue/router-queue.md'), ROUTER_QUEUE_MAX_BYTES)),
+    quiet(read(join(runsDir, 'queue/status.json'))),
   ]);
   for (const [name, state] of Object.entries(snapshot?.sources ?? {})) if (state !== 'unavailable') sourceState(name, state,
     state === 'healthy' ? 'parsed local snapshot' : name === 'queue/status.json' ? 'last_tick missing, invalid or older than 60s'
@@ -148,6 +151,8 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     }
   }
   const ghosts = await fleetGhosts({ runsDir, now: () => now });
+  const status = objectRow(json(statusText, 'queue/status.json'));
+  const statusLaneRows = objectRow(status.lanes);
   const lanes = (snapshot?.snapshot.lanes ?? []).map(l => {
     const finished = [...new Map(rows.filter(r => r.lane === l.lane && ledgerEventName(r.row) === 'finish').map(r => [`${r.id}:${r.at}`, r])).values()].slice(-20);
     const slot = objectRow(slots[l.lane]), pause = slot.pause_new_until;
@@ -155,15 +160,22 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     const held = slot.held === true || (pause_new_until !== null && pause_new_until > now / 1000) ? true
       : slot.held === false || slot.held === undefined && Object.keys(slot).length ? false : l.held;
     const queuedReady = marketReady === null ? null : (queuedByLane.get(l.lane) ?? 0);
+    // Capacity judgments count the launch target — the configured target
+    // tightened by the controller's effective_target shed — so a shed lane
+    // has no phantom room in the supply-starved and free-spots verdicts.
+    const statusLane = objectRow(statusLaneRows[l.lane]);
+    const statusTarget = count(statusLane.target) ? statusLane.target : null;
+    const effective = count(statusLane.effective_target) ? statusLane.effective_target : null;
+    const tickTarget = statusTarget === null ? null : laneLaunchTarget(statusTarget, effective);
+    const target = tickTarget === null ? l.target : laneLaunchTarget(tickTarget, l.target);
     return { lane: clean(l.lane), ghosts: ghosts.known ? ghosts.jobs.filter(j => j.lane === l.lane && j.state === 'ghost').length : null, running: tick.running[l.lane] ?? l.running, queued: queuedReady, queuedReady,
-      target: l.target, held, pause_new_until, emptyRate: finished.length ? finished.filter(r => r.row.empty === true).length / finished.length : null };
+      target, held, pause_new_until, emptyRate: finished.length ? finished.filter(r => r.row.empty === true).length / finished.length : null };
   });
   // Lane-open rows are shared supply any lane may take, so a lane is
   // supply-starved only when even all of them could not fill its free slots.
   const hungry = lanes.filter(l => l.held === false && l.running !== null && l.target !== null && l.queuedReady !== null && openRows !== null
     && l.running < l.target / 2 && l.queuedReady + openRows < l.target - l.running).sort((a, b) => (b.target! - b.running!) - (a.target! - a.running!))[0];
   const headline = hungry ? `${hungry.lane} ${hungry.running}/${hungry.target} running, ${hungry.queuedReady} queued${openRows ? ` +${openRows} lane-open` : ''}: supply-starved` : 'No measured supply-starved lane';
-  const status = objectRow(json(await quiet(read(join(runsDir, 'queue/status.json'))), 'queue/status.json'));
   const admission = objectRow(status.admission), load = admission.load1, limit = admission.load_max;
   const fleetLoad = typeof load === 'number' && hostLoad.totalCpuPercent > 0 ? load * hostLoad.fleetCpuPercent / hostLoad.totalCpuPercent : null;
   const busy = hostLoad.families.filter(r => r.job === null && r.family !== 'leftover from finished jobs' && r.cpuPercent > 0).slice(0, 2).map(r => r.family).join(' and ');

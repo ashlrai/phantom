@@ -34,12 +34,44 @@ every command then uses that home, and symlinks in the path are fine.
 
 ## Pick a role
 
-Roles are expressed as capabilities, not a `--role` flag. Advertise only what
-this computer can actually do: use `--caps build` for build jobs, `--caps gh`
-for GitHub jobs, or `--caps build,gh` for both. Jobs select nodes that advertise
-all their required capabilities and share their owner scope. For `gh` jobs,
-sign in locally with `gh auth login` and report that login with `--probe-auth`;
-credentials stay on this computer.
+Roles are expressed as capabilities, not a `--role` flag. A bare join — no
+`--caps` — auto-detects the lanes this computer's own sign-ins support: it
+probes the `codex` and `claude` CLIs' login status and the `gh` login exactly
+the way a pool worker does (exit codes only; no credential is read or sent),
+then advertises those lanes plus any local-model caps. The join reply names
+the detected set under `autoCaps` in `--json` and in a plain-words line in
+text mode; a probe that finds no sign-ins reports `autoCaps: []` and says so,
+since the node then advertises no sign-in lanes. Sign in to a provider CLI
+or `gh` and join again, or pass `--caps` to choose the advertisement
+yourself — an explicit list replaces the sign-in detection entirely
+(local-model and version caps still merge in), and a `--caps` that names no
+capability is refused: omit the flag to auto-detect or name at least one.
+The bare join also reports `installedClis` in `--json` (and names them in
+text mode): the community agent CLIs whose binaries are installed on this
+computer — `aider`, `gemini`, `copilot`, `goose`, `droid` and the other
+measured harnesses — found by file presence at the usual install locations
+only. No CLI is executed, no sign-in is checked and no credential is read,
+so the list is `--caps` candidates, not advertised lanes: pass the names to
+keep (plus the sign-in lanes, since `--caps` replaces the whole set) to
+advertise them.
+Capability names are open, not a fixed list: a job's `--requires` is matched
+against the caps a node advertises, so name the agent CLIs this computer can
+run — `codex`, `claude`, `aider`, `gemini`, `copilot`, `goose`, `droid` and the
+other measured harnesses — and a job that requires one routes here.
+`phm node capacity` measures this machine per harness and reports how many
+agent sessions each can start right now (unmeasured stays unknown).
+Either way, advertise only
+what this computer
+can actually do: jobs select nodes that advertise all their required
+capabilities and share their owner scope. For `gh` jobs, sign in locally
+with `gh auth login`; the keep-alive beat's `--probe-auth` reports that login
+so GitHub jobs can route here. Whenever the join advertises `gh` — detected
+or passed explicitly — the reply also names this machine's login state under
+`ghAuth` (`ok`, `missing` or `unknown`, the same exit-code-only check
+`--probe-auth` runs, paid once at join): anything but `ok` means gh jobs
+cannot route here until `gh auth login` runs and a `--probe-auth` beat
+reports ok, and text mode says so at join instead of letting the first
+unrouted plan discover it.
 
 A computer serving a local model through oMLX needs no `--caps` entry: opt in
 with `~/.ashlr/local-lanes.json` (`{"schemaVersion":1,"enabled":true}`), check
@@ -124,11 +156,47 @@ phm node result --job hello-1 --owner acme --json
 phm node status --owner acme --json
 ```
 
+Job ids are single-use: a repeat `enqueue` under an existing id changes
+nothing, and its `--json` reply names the stored job's state and which spec
+fields differ — pick a new id for different work.
+
+A bare `enqueue` is a connectivity ping: the job carries no instructions.
+To hand the node real work, embed the task text — the prompt `pull` prints
+under `Task:` for the operator (or their agent) to run. `--task-part` carries
+the text (repeat the flag, in order, for long prompts; 16 KiB joined at
+most) and `--task-sha256` proves it arrived intact: `sha256:` plus the
+lowercase hex digest of the exact joined text (`shasum -a 256` on macOS,
+`sha256sum` on Linux). An embedded task requires `--pack codex-file`, and
+`codex-file` requires the embedded task — enqueue refuses the pair split
+either way:
+
+```sh
+TASK='Reply with exactly: phantom-node-ok'
+DIGEST="$(printf %s "$TASK" | shasum -a 256 | cut -d' ' -f1)"
+phm node enqueue --job demo-1 --owner acme --pack codex-file --task-part "$TASK" --task-sha256 "sha256:$DIGEST" --json
+phm node pull --node <nodeId> --session 1
+```
+
 Every command above runs on this computer: the standalone registry is local,
 so producer and node are the same machine and a job enqueued elsewhere never
 reaches this node. To share one queue across computers you control — or to
 join a team's pool — set up the SSH pool: [NODES.md](NODES.md) covers the
 design and [AGENT-NETWORK.md](AGENT-NETWORK.md) the join commands.
+
+## Read the same fleet as the leader
+
+On an enrolled worker, use the existing approved SSH alias for your fleet
+leader (replace `leader-mac` with that alias):
+
+```sh
+phm node replica sync --leader leader-mac --json
+phm org --text
+phm fleet lane-slots --json
+```
+
+Look for the leader's machine and observation time, and for "Governed by
+leader grant #…" in the lane slots. This is a read-only view, not authority to
+run the leader's lanes locally. See [One fleet across enrolled Macs](NODE-ROUTER.md#one-fleet-across-enrolled-macs) for automatic refresh and the offline behavior.
 
 ## Leave
 

@@ -10,12 +10,13 @@
  * Pure and framework-free; a null result keeps the chip's existing
  * unknown-capacity text.
  */
-import type { FleetEngine, FleetLaneState } from '../../../../core/fleet/fleet-types.js';
+import { STALE_STANDING_TICK_REASON } from '../../../../core/fleet/fleet-types.js';
+import type { FleetEngine, FleetLiveLaneState } from '../../../../core/fleet/fleet-types.js';
 import type { FleetRunsLane } from '../../../../core/fleet/runs-dir-state.js';
 import { formatRelative } from '../autonomy/format.js';
 
 /** The capReason the live API stamps on every lane when the standing tick is older than 10 minutes. */
-export const STALE_STANDING_LANES = 'No standing tick has reported lanes in the last 10 minutes.';
+export const STALE_STANDING_LANES = STALE_STANDING_TICK_REASON;
 
 /** A runs read older than this cannot stand in for the missing standing tick. */
 export const RUNS_READ_MAX_AGE_MS = 15 * 60_000;
@@ -46,7 +47,7 @@ export type FallbackRunsLane = Pick<FleetRunsLane, 'lane' | 'running' | 'target'
  * older than 15 minutes (`readAt` is dispatchd's last tick — the figures' own
  * instant, so a dead dispatcher keeps answering "unknown" rather than a lie).
  */
-export function laneFallback(lane: FleetLaneState, runs: readonly FallbackRunsLane[] | null, readAt: string | null, now: number): { slots: string; note: string } | null {
+export function laneFallback(lane: FleetLiveLaneState, runs: readonly FallbackRunsLane[] | null, readAt: string | null, now: number): { slots: string; note: string } | null {
   if (lane.slots !== 0 || lane.capReason !== STALE_STANDING_LANES) return null;
   const match = runs?.find((r) => r.lane === DISPATCHD_LANE[lane.lane]);
   if (!match) return null;

@@ -25,7 +25,6 @@ import type { NativeRoleEngine, RoleCompletionMetrics } from '../run/role-comple
 import type { AgentActionEvent } from '../fleet/agent-action-ledger.js';
 import type { LocalLeaderCompletionMetrics, LocalLeaderBinding } from './local-leader-transport.js';
 import { subscriptionOnlyCurrent } from '../routing/subscription-only.js';
-import { learnedSeatRouteEvidence } from '../routing/learned-seat-evidence.js';
 import { devinCliIdentityCurrent, peekDevinCliExecutionBinding, refreshDevinCliExecutionBindings, type DevinCliExecutionBinding } from '../devin/cli-admission.js';
 import type { EffectivePolicy } from '../authority/types.js';
 import type { VerseSeat } from '../verse/types.js';
@@ -815,12 +814,13 @@ export async function loadJudgeCredentialHook(cfg: AshlrConfig): Promise<LeaderC
 
 /** Production deps (heavy modules imported lazily so strategist.ts can import this file cheaply). */
 export async function loadDefaultLeaderSeatDeps(cfg: AshlrConfig): Promise<LeaderSeatDeps> {
-  const [seats, budgetStore, router, headroom, effective] = await Promise.all([
+  const [seats, budgetStore, router, headroom, effective, { learnedSeatRouteEvidence }] = await Promise.all([
     import('../verse/seats.js'),
     import('../routing/budget-store.js'),
     import('../routing/router.js'),
     import('../routing/headroom.js'),
     import('../authority/effective-config.js'),
+    import('../routing/learned-seat-evidence.js'),
   ]);
   return {
     cfg,

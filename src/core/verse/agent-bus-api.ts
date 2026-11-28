@@ -1,6 +1,13 @@
 /**
  * Durable local bus, shared with `phm comms bus`:
- * GET /api/verse/agent-bus[?after=0&limit=50] reads a cursor page (limit 1..100).
+ * GET /api/verse/agent-bus[?after=0&limit=50&to=…&from=…&excludeFrom=…&id=…&inReplyTo=…&priority=P1&kind=task&topic=eng.*&thread=t-1&job=RQ-1&channel=eng&bodyKind=work.post&result=complete&since=15m&before=2h&contains=text]
+ * reads a cursor page (limit 1..100) narrowed by the shared bus page filter
+ * set — the same predicates `phm comms bus read|watch`, `fleet bus-follow`
+ * and the fleet MCP `fleet_bus_inbox` apply, resolved through
+ * `parseBusPageQuery`/`filterBusInboxPage`/`busPageAddressMatchers` so an
+ * HTTP read, a CLI read and an MCP read can never disagree about what a
+ * filter keeps; the limit still counts scanned records before filtering, so
+ * an unmatched page advances `nextCursor` without replay.
  * POST /api/verse/agent-bus appends exactly one BusEnvelope, with the normal
  * dispatch/token gate. GET /api/verse/agent-bus/status inspects retained capacity.
  * GET /api/verse/agent-bus/work-feed is the v2 work projection (`phm fleet
@@ -35,6 +42,20 @@
  * `result` keeps only `work.result` bodies whose own `outcome` strictly
  * equals one `WORK_RESULT_OUTCOMES` code — the same outcome vocabulary the
  * work feed's `--result` filter validates.
+ * GET /api/verse/agent-bus/edges[?windowMinutes=60&from=claude&to=devin&channel=eng&topic=deploy&since=2h&priority=P1&kind=handoff&job=RQ-1&contains=deploy]
+ * is the same `fleet.edges.v1` link projection `phm fleet edges` and the
+ * `fleet_agent_edges` MCP tool serve: `windowMinutes` keeps only links whose
+ * receipts fall inside the trailing 1..1440-minute window, `from`/`to` keep
+ * only links the named agent's identity sent or was addressed to under the
+ * shared identity-label rule, `channel`/`topic` keep only links whose
+ * receipts are addressed to `group:<channel>:*` or parse to that topic
+ * component, and `since`/`before`/`priority`/`kind`/`job`/`contains` apply
+ * the shared row-slice vocabulary every other bus read enforces before its
+ * projection — the `[since, before)` receipt-time window, one P0–P3 band,
+ * one classified message kind, one job citation and one summary needle —
+ * every value validated by the shared `parseFleetEdgesQuery`
+ * rules, so an HTTP read, a CLI read and an MCP read can never disagree
+ * about what a filter keeps; any other parameter or malformed value is a 400.
  * GETs require a current read session. Responses wrap store outcomes with v: 1;
  * missing storage reads as an empty page, while status reports source: missing.
  * Unavailable storage returns 503. Expired rows advance nextCursor but are omitted.
@@ -49,9 +70,10 @@
  * Passing the mutation gate is the verified-Mason check here, exactly as for asks.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { readFleetEdges } from '../fleet/fleet-edges.js';
+import { FLEET_EDGES_QUERY_PARAMS, parseFleetEdgesQuery, readFleetEdges, type FleetEdgesQueryInput } from '../fleet/fleet-edges.js';
 import { parseBusEnvelope } from '../fleet/bus-envelope.js';
-import { appendBusInbox, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter } from '../fleet/bus-inbox.js';
+import { appendBusInbox, inspectBusInbox, listBusInboxAfter } from '../fleet/bus-inbox.js';
+import { busPageAddressMatchers, BUS_PAGE_QUERY_PARAMS, filterBusInboxPage, parseBusPageQuery, type BusPageQueryInput } from '../fleet/bus-page-filters.js';
 import { projectBusWorkFeedView, readBusWorkFeed, sliceBusWorkFeedView } from '../agents/bus-work-feed-read.js';
 import { parseBusWorkFeedQuery, type BusWorkFeedQueryInput } from '../agents/bus-work-feed-query.js';
 import { parseAgentMessagesQuery, readAgentMessages } from '../fleet/agent-messages.js';
@@ -75,7 +97,7 @@ const WORK_FEED = `${PATH}/work-feed`;
 /** The query keys the work-feed read accepts — the `claims` hold join, the
  * filter set `parseBusWorkFeedQuery` validates into `projectBusWorkFeedView`,
  * and the `limit` page bound `sliceBusWorkFeedView` applies after it. */
-const WORK_FEED_PARAMS = ['claims', 'status', 'job', 'repo', 'provider', 'tier', 'to', 'owner', 'since', 'before', 'contains', 'channel', 'topic', 'result', 'id', 'open', 'claimable', 'limit'] as const;
+const WORK_FEED_PARAMS = ['claims', 'status', 'job', 'repo', 'provider', 'tier', 'to', 'owner', 'excludeOwner', 'since', 'before', 'contains', 'channel', 'topic', 'result', 'id', 'open', 'claimable', 'limit'] as const;
 const NEEDS_MASON_RESOLVE = `${NEEDS_MASON}/resolve`;
 const ASKS = `${NEEDS_MASON}/asks`;
 const ASKS_ANSWER = `${ASKS}/answer`;
@@ -89,6 +111,7 @@ export interface AgentBusApiDeps {
   inspect?: typeof inspectBusInbox;
   messages?: typeof readAgentMessages;
   workFeed?: typeof readBusWorkFeed;
+  edges?: typeof readFleetEdges;
   mirrorToInbox?: typeof mirrorLeaderPostToInbox;
   startMirror?: () => void;
   needsMason?: {
@@ -143,15 +166,23 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
     let params: URLSearchParams;
     try { params = new URL(req.url ?? path, 'http://localhost').searchParams; }
     catch { sendJson(res, 400, { error: 'Invalid query.' }); return true; }
-    const allowed = method === 'GET' && path === PATH ? ['after', 'limit']
+    const allowed = method === 'GET' && path === PATH ? [...BUS_PAGE_QUERY_PARAMS]
       : method === 'GET' && path === MESSAGES ? ['since', 'before', 'agent', 'with', 'kind', 'priority', 'job', 'thread', 'channel', 'topic', 'contains', 'from', 'excludeFrom', 'inReplyTo', 'id', 'bodyKind', 'to', 'result', 'limit']
-      : method === 'GET' && path === WORK_FEED ? [...WORK_FEED_PARAMS] : [];
+      : method === 'GET' && path === WORK_FEED ? [...WORK_FEED_PARAMS]
+      : method === 'GET' && path === `${PATH}/edges` ? [...FLEET_EDGES_QUERY_PARAMS] : [];
     if ([...params.keys()].some(key => !allowed.includes(key) || params.getAll(key).length !== 1)) {
       sendJson(res, 400, { error: 'Invalid query.' }); return true;
     }
     try {
       if (path === `${PATH}/edges`) {
-        const result = readFleetEdges();
+        const query: FleetEdgesQueryInput = {};
+        for (const key of FLEET_EDGES_QUERY_PARAMS) {
+          const value = params.get(key);
+          if (value !== null) query[key] = value;
+        }
+        const parsed = parseFleetEdgesQuery(query);
+        if (!parsed.ok) { sendJson(res, 400, { error: parsed.error }); return true; }
+        const result = (deps.edges ?? readFleetEdges)(parsed.options);
         sendJson(res, result.source === 'unavailable' ? 503 : 200, result);
       } else if (path === WORK_FEED) {
         const query: BusWorkFeedQueryInput = {};
@@ -236,12 +267,17 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
         sendJson(res, result.source === 'unavailable' ? 503 : 200,
           { v: 1, ...result, mirror: getBusMirrorState() });
       } else if (method === 'GET') {
-        const after = params.get('after') ?? '0', limit = params.get('limit') ?? '50';
-        if (![after, limit].every(value => /^(0|[1-9][0-9]*)$/.test(value) && Number.isSafeInteger(Number(value))) ||
-          Number(limit) < 1 || Number(limit) > BUS_INBOX_MAX_READ) {
-          sendJson(res, 400, { error: 'Invalid cursor or limit.' }); return true;
+        const query: BusPageQueryInput = {};
+        for (const key of BUS_PAGE_QUERY_PARAMS) {
+          const value = params.get(key);
+          if (value !== null) query[key] = value;
         }
-        const result = (deps.list ?? listBusInboxAfter)(Number(after), Number(limit));
+        const parsed = parseBusPageQuery(query);
+        if (!parsed.ok) { sendJson(res, 400, { error: parsed.error }); return true; }
+        const page = (deps.list ?? listBusInboxAfter)(parsed.after, parsed.limit);
+        const result = page.status === 'ok'
+          ? filterBusInboxPage(page, parsed.filters, busPageAddressMatchers(parsed.refs))
+          : page;
         sendJson(res, result.status === 'ok' ? 200 : result.status === 'invalid' ? 400 : 503, { v: 1, ...result });
       } else {
         let raw: string;

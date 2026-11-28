@@ -16,11 +16,11 @@ beforeEach(async () => { runsDir = await mkdtemp(join(tmpdir(), 'inbox-receipt-'
 afterEach(async () => { await rm(runsDir, { recursive: true, force: true }); });
 
 describe('primary inbox receipt', () => {
-  it('returns only a generic failure when the primary append fails', async () => {
+  it('reports a non-writable inbox path without logging a dispatch event', async () => {
     await mkdir(join(runsDir, 'leader'));
     await mkdir(inboxPath());
     const result = await appendInboxEntry('fake message', { runsDir, now: () => when });
-    expect(result).toEqual({ ok: false, reason: 'write-failed' });
+    expect(result).toEqual({ ok: false, reason: 'inbox-permission-denied' });
     await expect(readFile(join(runsDir, 'dispatch-events.log'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 

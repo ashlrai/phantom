@@ -603,6 +603,29 @@ describe('outcome-quality evidence', () => {
     expect(out).toContain('publish_wait_s=315(20)');
   });
 
+  it('withholds publish timing when a boundary has conflicting timestamp aliases', async () => {
+    const finish = '2026-11-20T00:00:00Z';
+    const publish = '2026-11-20T00:02:00Z';
+    const conflict = '2026-11-20T00:01:00Z';
+    const cases = [
+      { job: 'agree', finishAlias: finish, publishAlias: publish },
+      { job: 'finish-conflict', finishAlias: conflict, publishAlias: publish },
+      { job: 'publish-conflict', finishAlias: finish, publishAlias: conflict },
+    ];
+    writeLedger(cases.flatMap(({ job, finishAlias, publishAlias }) => [
+      { job, event: 'finish', ts: finish, timestamp: finishAlias },
+      { job, outcome: 'PUBLISHED', ts: publish, at: publishAlias },
+      event(job, 'alpha', 'code', 'MERGED'),
+    ]));
+
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report.proposals[0]).toMatchObject({
+      known_n: 3,
+      evidence: { publish_wait_known: 1, publish_wait_s_mean: 120 },
+    });
+  });
+
   it('withholds CI and publish timings across batch claims, including reward fallback', async () => {
     const cases = [
       { job: 'claim-before', ts: '2026-11-19T23:59:00Z' },

@@ -60,6 +60,8 @@ export interface RouterInput {
   costs: HarnessModelCost[];
   /** Keyed by provider (lane). */
   outcomes: Record<string, LaneOutcomes>;
+  /** Explicit provider tallies. Only usable evidence overrides the base tally. */
+  outcomeOverrides?: Record<string, unknown>;
   jobs: RouteJob[];
   nowMs: number;
   /** Providers out of included usage; never routed (no spend). */
@@ -74,6 +76,7 @@ export interface Placement {
   provider: string | null;
   model: string | null;
   score: number | null;
+  /** Smoothed estimate supported by recorded attempts, or null without usable outcomes. */
   mergeRate: number | null;
   mergesPerMTok: number | null;
   mergesPerHour: number | null;
@@ -117,12 +120,21 @@ export function mergeRate(o: LaneOutcomes | undefined): number {
   return (merged + 1) / (attempts + 2);
 }
 
+function observedMergeRate(value: unknown): number | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const { attempts, merged } = value as Partial<LaneOutcomes>;
+  return attempts !== undefined && Number.isSafeInteger(attempts) && attempts > 0 &&
+    merged !== undefined && Number.isSafeInteger(merged) && merged >= 0 && merged <= attempts
+    ? mergeRate({ attempts, merged }) : null;
+}
+
 type FootprintCost = Pick<HarnessFootprint, 'mem_bytes_max' | 'cpu_cores_per_session'>;
 
 function footprintExpired(fp: HarnessFootprint | undefined, measuredAt: number, nowMs: number): boolean {
   if (fp?.source !== 'learned') return false;
   const learnedAt = typeof fp.learned_at === 'string' ? Date.parse(fp.learned_at) : NaN;
-  return !finite(learnedAt) || learnedAt > measuredAt || nowMs - learnedAt > CAPACITY_POLICY.learnedFootprintTtlMs;
+  return !finite(learnedAt) || learnedAt > Math.min(measuredAt, nowMs) ||
+    nowMs - learnedAt > CAPACITY_POLICY.learnedFootprintTtlMs;
 }
 
 /** Per-resource maxima for each harness, used on nodes that have not run it yet. */
@@ -146,6 +158,7 @@ interface NodeState {
   node: RouteNode;
   /** Provider/model/harness combinations loaded by earlier placements in this plan. */
   loaded: Set<string>;
+  placements: number;
   bytes: number;
   cores: number | null;
   /** Allow for binary roundoff relative to the original CPU budget. */
@@ -177,7 +190,7 @@ function nodeStates(input: RouterInput): NodeState[] {
       const footprints = Object.entries(node.doc.per_harness_footprint)
         .filter(([, fp]) => !footprintExpired(fp, at, input.nowMs));
       const currentNode = { ...node, doc: { ...node.doc, per_harness_footprint: Object.fromEntries(footprints) } };
-      return { node: currentNode, loaded: new Set(), bytes: node.doc.mem_free.headroom_bytes ?? 0,
+      return { node: currentNode, loaded: new Set(), placements: 0, bytes: node.doc.mem_free.headroom_bytes ?? 0,
         cores, cpuRoundoff: (cores ?? 0) * Number.EPSILON, blocked };
     });
 }
@@ -197,12 +210,15 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
   for (const job of input.jobs) {
     const rejected: Record<string, number> = {};
     const reject = (why: string) => { rejected[why] = (rejected[why] ?? 0) + 1; };
-    type Cand = { state: NodeState; cost: HarnessModelCost; fp: FootprintCost; fpSource: 'node' | 'fleet'; load: number; localModelKey: string | null; p: number; perMTok: number; perHour: number };
+    type Cand = { state: NodeState; cost: HarnessModelCost; fp: FootprintCost; fpSource: 'node' | 'fleet'; load: number; localModelKey: string | null; mergeEstimate: number | null; perMTok: number; perHour: number };
     const cands: Cand[] = [];
     for (const cost of costs) {
       if (job.providers && !job.providers.includes(cost.provider)) { reject('provider-not-in-job'); continue; }
       if (job.models && !job.models.includes(cost.model)) { reject('model-not-in-job'); continue; }
       if (exhausted.has(cost.provider)) { reject('provider-exhausted'); continue; }
+      const mergeEstimate = observedMergeRate(input.outcomeOverrides?.[cost.provider]) ??
+        observedMergeRate(input.outcomes[cost.provider]);
+      const p = mergeEstimate ?? mergeRate(undefined);
       const localModelKey = cost.local ? JSON.stringify([cost.provider, cost.model, cost.harness]) : null;
       for (const state of states) {
         if (state.blocked) { reject(`node-${state.blocked}`); continue; }
@@ -222,8 +238,7 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
         if (fp.mem_bytes_max + load > state.bytes) { reject('memory'); continue; }
         if (state.cores === 0 || (state.cores !== null && fp.cpu_cores_per_session !== null &&
           fp.cpu_cores_per_session - state.cores > state.cpuRoundoff)) { reject('cpu'); continue; }
-        const p = mergeRate(input.outcomes[cost.provider]);
-        cands.push({ state, cost, fp, fpSource: own ? 'node' : 'fleet', load, localModelKey, p,
+        cands.push({ state, cost, fp, fpSource: own ? 'node' : 'fleet', load, localModelKey, mergeEstimate,
           perMTok: p / cost.tokensPerJob * 1e6, perHour: p / (cost.minutesPerJob + Math.max(0, state.node.overheadMinutes ?? 0)) * 60 });
       }
     }
@@ -245,12 +260,19 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
     }));
     const highestScore = scored.reduce((highest, { score }) => score > highest ? score : highest, -1);
     // Compare against the true maximum so successive ties cannot move the cutoff.
-    // Equal loads keep the first candidate in (provider, model, node) order.
+    // Preserve provider/model order for equal loads. Within that choice,
+    // spread placements across nodes before falling back to node ID order.
     const selected = scored.reduce<typeof scored[number] | undefined>((best, entry) => {
       if (!(entry.score >= highestScore - 1e-12)) return best;
-      return !best || entry.candidate.load < best.candidate.load ? entry : best;
+      if (!best || entry.candidate.load < best.candidate.load) return entry;
+      const candidate = entry.candidate;
+      const incumbent = best.candidate;
+      if (candidate.load === incumbent.load && candidate.cost.provider === incumbent.cost.provider &&
+          candidate.cost.model === incumbent.cost.model && candidate.state.placements < incumbent.state.placements) return entry;
+      return best;
     }, undefined);
     const { candidate: best, score: bestScore } = selected ?? scored[0]!;
+    best.state.placements++;
     best.state.bytes -= best.fp.mem_bytes_max + best.load;
     if (best.localModelKey !== null) best.state.loaded.add(best.localModelKey);
     if (best.state.cores !== null && best.fp.cpu_cores_per_session !== null) {
@@ -259,7 +281,9 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
     }
     const r = (n: number) => Math.round(n * 1e4) / 1e4;
     plan.push({ jobId: job.id, nodeId: best.state.node.doc.node, provider: best.cost.provider, model: best.cost.model,
-      score: r(bestScore), mergeRate: r(best.p), mergesPerMTok: r(best.perMTok), mergesPerHour: r(best.perHour), footprint: best.fpSource });
+      score: r(bestScore), mergeRate: best.mergeEstimate === null ? null : r(best.mergeEstimate),
+      mergesPerMTok: best.mergeEstimate === null ? null : r(best.perMTok),
+      mergesPerHour: best.mergeEstimate === null ? null : r(best.perHour), footprint: best.fpSource });
   }
   return plan;
 }
@@ -273,12 +297,15 @@ export function fleetRunnable(docs: NodeCapacityDoc[], nowMs: number, maxAgeMs =
   const current = latestByNode(docs, doc => doc, nowMs).filter(({ at, conflict }) => {
     const age = nowMs - at;
     return !conflict && finite(age) && age <= maxAgeMs;
-  }).map(({ item: doc, at }) => ({ doc, at, stopped: capacityHold(doc) !== null || doc.cpu.headroom_cores === 0 }));
+  }).map(({ item: doc, at }) => ({
+    doc, at, stopped: capacityHold(doc) !== null || doc.cpu.headroom_cores === 0 || doc.mem_free.headroom_bytes === 0,
+  }));
   const out: Record<string, number | null> = {};
   for (const adapter of HARNESS_ADAPTERS) {
     let sum: number | null = null;
     for (const { doc, at, stopped } of current) {
-      if (!stopped && (!hasMeasuredMemory(doc) || footprintExpired(doc.per_harness_footprint[adapter.id], at, nowMs))) continue;
+      const footprint = doc.per_harness_footprint[adapter.id];
+      if (!stopped && (!hasMeasuredMemory(doc) || !footprint || footprintExpired(footprint, at, nowMs))) continue;
       const n = doc.agents_runnable_now[adapter.id];
       if (Number.isSafeInteger(n)) sum = (sum ?? 0) + (stopped ? 0 : (n as number));
     }

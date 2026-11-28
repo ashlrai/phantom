@@ -53,7 +53,7 @@ it('bounds 500 jobs, ranks zero PRs in six launches first, and reads status and 
   }
   await writeFile(join(dir, 'metrics/jobs.jsonl'), rows.map(r => JSON.stringify(r)).join('\n'));
   await writeFile(join(dir, 'queue/slots.json'), JSON.stringify({ local: { target: 4 } }));
-  await writeFile(join(dir, 'queue/status.json'), JSON.stringify({ last_tick: at, paused: false, lanes: { local: { running: 2, held: false } }, budget: { local: { used_pct: 40, hours_to_reset: 10, burn_pct_per_hour: 2 } } }));
+  await writeFile(join(dir, 'queue/status.json'), JSON.stringify({ last_tick: at, paused: false, lanes: { local: { running: 2, held: false } }, budget: { local: { observed_at: at, used_pct: 40, hours_to_reset: 10, burn_pct_per_hour: 2 } } }));
   await writeFile(join(dir, 'queue/ready.tsv'), 'waiting\tphantom\tlocal\twork\tplain\n');
   await writeFile(join(dir, 'stops.tsv'), `^empty.*$\t${now / 1000 + 60}\tquiet\n`);
   const host = groupHostFamilies(Array.from({ length: 8 }, (_, i) => `${100 + i} 1 5 1024 00:01 worker /repo/wt/RQ-WORK-${i}`).join('\n'));
@@ -122,6 +122,29 @@ it('counts queued supply by the market-resolved lane hint and reports lane-open 
   expect(dry.openRows).toBe(0);
   expect(dry.headline).toBe('personal 1/20 running, 2 queued: supply-starved');
   expect(dry.whyIdle).toContain('Local models: 2 free spots, 0 ready jobs');
+});
+it('counts the launch target, not the configured target, for starvation and idle spots', async () => {
+  const stamp = localIso(new Date(now)).slice(0, 19).replace('T', ' ');
+  await writeFile(join(dir, 'dispatchd.log'), `${stamp} tick run={"personal":1} q=0 launched=0 reap=0 pause=False wall=1s\n`);
+  await writeFile(join(dir, 'queue/slots.json'), JSON.stringify({ personal: { target: 20, held: false } }));
+  await writeFile(join(dir, 'queue/ready.tsv'), '# no runnable rows\n');
+  await writeFile(join(dir, 'queue/status.json'), JSON.stringify({
+    last_tick: at, paused: false,
+    lanes: { personal: { running: 1, target: 20, effective_target: 1, held: false } },
+  }));
+  const shed = await readCompactBrief(dir, now);
+  // Shed to one slot and already running it: no phantom room, no starvation.
+  expect(shed.lanes[0]).toMatchObject({ lane: 'personal', running: 1, target: 1 });
+  expect(shed.headline).toBe('No measured supply-starved lane');
+  expect(shed.whyIdle).toEqual([]);
+  // Without the shed reading the configured target stands and the lane starves.
+  await writeFile(join(dir, 'queue/status.json'), JSON.stringify({
+    last_tick: at, paused: false, lanes: { personal: { running: 1, target: 20, held: false } },
+  }));
+  const full = await readCompactBrief(dir, now);
+  expect(full.lanes[0]).toMatchObject({ lane: 'personal', running: 1, target: 20 });
+  expect(full.headline).toBe('personal 1/20 running, 0 queued: supply-starved');
+  expect(full.whyIdle).toContain('Codex: 19 free spots, 0 ready jobs');
 });
 it('reports starvation when duplicate ready rows would otherwise fill the lane', async () => {
   await writeFile(join(dir, 'queue/slots.json'), JSON.stringify({ personal: { target: 4 } }));

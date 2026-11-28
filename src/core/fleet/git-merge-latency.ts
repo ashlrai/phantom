@@ -1,6 +1,7 @@
 import { lstat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ledgerEventName, ledgerPhase, ledgerPrUrl, ledgerRows } from './empty-cause.js';
+import { isNodePoolLedgerRow } from './jobs-ledger-dialect.js';
 import { readMergedPrFeed } from './merged-pr-feed.js';
 import { readSource } from './runs-parked-queue.js';
 
@@ -41,8 +42,12 @@ export async function readGitMergeLatency(root: string, ledger: string, now: num
     const match = url?.match(/^https:\/\/github\.com\/ashlrai\/phantom\/pull\/([1-9]\d*)\/?$/);
     if (match) publishes.push({ number: Number(match[1]), publishedAt: at / 1000 });
   };
-  for (const r of ledgerRows(ledger, now, 24 * 8, true).rows)
-    if ((ledgerEventName(r.row) === 'publish' || ledgerPhase(r.row) === 'PUBLISHED') && !['MERGED', 'CLOSED'].includes(ledgerPhase(r.row) ?? '')) add(ledgerPrUrl(r.row), r.at);
+  for (const { row, id, at } of ledgerRows(ledger, now, 24 * 8, true).rows) {
+    if (row['launched'] === false || id.startsWith('RQ-BATCH-') || isNodePoolLedgerRow(row)) continue;
+    const phase = ledgerPhase(row);
+    if (phase === 'MERGED' || phase === 'CLOSED') continue;
+    if (phase === 'PUBLISHED' || ledgerEventName(row) === 'publish') add(ledgerPrUrl(row), at);
+  }
   const files = (await readdir(root).catch(() => [])).filter(f => /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.publish$/.test(f)).slice(-200);
   for (const name of files) {
     const file = join(root, name), source = await readSource(file, 4096, true);

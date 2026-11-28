@@ -216,6 +216,8 @@ export interface TrajectorySkillOutcomeRow {
   /** Bounded opaque skill identifier; never card content. */
   skillId: string;
   skillRevision: number;
+  /** Recorded digest when all contributing observations identify the same content. */
+  skillContentHash?: string;
   /** Distinct trajectories where this skill revision was observed in use. */
   selections: number;
   /** Terminal outcomes of those trajectories (sparse: observed keys only). */
@@ -439,10 +441,14 @@ interface SkillObservationCounts {
   stageCounts: Record<SkillUseStage, number>;
 }
 
-/** A skill revision observed in use on one trajectory, with its resolved outcome. */
-interface TrajectorySkillSelectionOutcome {
+interface TrajectorySkillSelection {
   skillId: string;
   skillRevision: number;
+  contentHash?: string;
+}
+
+/** A skill revision observed in use on one trajectory, with its resolved outcome. */
+interface TrajectorySkillSelectionOutcome extends TrajectorySkillSelection {
   terminalOutcome: TrajectoryTerminalOutcome;
   realizedOutcome?: TrajectoryRealizedOutcome;
 }
@@ -1172,10 +1178,10 @@ function fillRecordMetadata(
   if (!record.learningEpoch && meta.learningEpoch) record.learningEpoch = bounded(meta.learningEpoch, 120);
 }
 
-function evidenceEvent(evidence: OutcomeRecordEvidence, proposalId: string, tsFallback: string): TrajectoryTimelineEvent {
+function evidenceEvent(evidence: OutcomeRecordEvidence, proposalId: string): TrajectoryTimelineEvent {
   const verification = evidence.verification;
   return {
-    ts: evidence.generatedAt || tsFallback,
+    ts: evidence.generatedAt,
     kind: 'evidence',
     outcome: verification.passed ? 'passed' : 'failed',
     proposalId,
@@ -1282,11 +1288,13 @@ function listTrajectoryRecordsAt(
     const read = deps.readAgentActions
       ? deps.readAgentActions({
         sinceMs,
+        asOfMs,
         limit: Math.max(limit * 4, 200),
         maxFiles,
       })
       : readAgentActions({
         sinceMs,
+        asOfMs,
         limit: Math.max(limit * 4, 200),
         maxFiles,
         requireComplete: true,
@@ -1466,6 +1474,7 @@ function listTrajectoryRecordsAt(
     });
 
     for (const evidence of outcome.evidencePacks) {
+      if (!evidencePackObserved(evidence, asOfMs)) continue;
       record.coverage.evidence = true;
       fillRecordMetadata(record, {
         trajectoryId: evidence.trajectoryId,
@@ -1477,10 +1486,11 @@ function listTrajectoryRecordsAt(
         routerPolicyVersion: evidence.routerPolicyVersion,
         learningEpoch: evidence.learningEpoch,
       });
-      noteTimeline(record, evidenceEvent(evidence, proposal.id, proposal.createdAt));
+      noteTimeline(record, evidenceEvent(evidence, proposal.id));
     }
 
     for (const decision of outcome.decisions) {
+      if (!(Date.parse(decision.ts) <= asOfMs)) continue;
       record.coverage.decision = true;
       fillRecordMetadata(record, {
         itemId: decision.workItemId,
@@ -1644,7 +1654,7 @@ function listTrajectoryRecordsAt(
       rank: 1,
       apply: () => processOutcome(outcome),
     })),
-    ...actions.map((action) => ({ ts: action.ts, rank: 2, apply: () => processAction(action) })),
+    ...actions.filter((action) => Date.parse(action.ts) <= asOfMs).map((action) => ({ ts: action.ts, rank: 2, apply: () => processAction(action) })),
   ].sort((a, b) => eventMs(a.ts) - eventMs(b.ts) || a.rank - b.rank);
   for (const event of causalEvents) event.apply();
 
@@ -1663,7 +1673,7 @@ function listTrajectoryRecordsAt(
   const skillObservation = emptySkillObservationCounts();
   const selectionKeysByRecord = new Map<string, Set<string>>();
   const skillObservationByRecordId = new Map<string, SkillObservationCounts>();
-  const skillSelectionsByRecordId = new Map<string, Map<string, { skillId: string; skillRevision: number }>>();
+  const skillSelectionsByRecordId = new Map<string, Map<string, TrajectorySkillSelection>>();
   for (const event of skillUses) {
     const observedMs = Date.parse(event.ts);
     if (!Number.isFinite(observedMs) || observedMs < sinceMs || observedMs > asOfMs) continue;
@@ -1691,6 +1701,17 @@ function listTrajectoryRecordsAt(
       skillObservation.unjoined++;
       continue;
     }
+    // An unmatched alias is compatible only if the trajectory has no
+    // recorded identity in that namespace.
+    const contradictsRecord = aliases.some((candidate) => {
+      if (record.aliases.has(candidate)) return false;
+      const namespace = candidate.slice(0, candidate.indexOf(':') + 1);
+      return [...record.aliases].some((known) => known.startsWith(namespace));
+    });
+    if (contradictsRecord) {
+      skillObservation.conflicting++;
+      continue;
+    }
     const selectionIdentity = skillSelectionIdentity(event);
     const selectionKeys = selectionKeysByRecord.get(record.id) ?? new Set<string>();
     if (selectionKeys.has(selectionIdentity)) continue;
@@ -1705,12 +1726,13 @@ function listTrajectoryRecordsAt(
     recordObservation.modeCounts[event.mode]++;
     recordObservation.stageCounts[event.stage]++;
     skillObservationByRecordId.set(record.id, recordObservation);
-    // One selection observation per trajectory per skill revision: lifecycle
-    // stages (selected/injected/applied/outcome) of the same use collapse.
-    const selectionKey = JSON.stringify([event.skillId, event.skillRevision]);
-    const selections = skillSelectionsByRecordId.get(record.id) ?? new Map<string, { skillId: string; skillRevision: number }>();
+    // Collapse lifecycle stages, but retain distinct hashes so the outcome
+    // summary can detect a revision linked to different card contents.
+    const { skillId, skillRevision, contentHash } = event;
+    const selectionKey = JSON.stringify([skillId, skillRevision, contentHash]);
+    const selections = skillSelectionsByRecordId.get(record.id) ?? new Map<string, TrajectorySkillSelection>();
     if (!selections.has(selectionKey)) {
-      selections.set(selectionKey, { skillId: event.skillId, skillRevision: event.skillRevision });
+      selections.set(selectionKey, { skillId, skillRevision, contentHash });
       skillSelectionsByRecordId.set(record.id, selections);
     }
   }
@@ -1909,10 +1931,35 @@ function aliasMatches(index: Map<string, Set<number>>, aliases: string[]): Set<n
   return matches;
 }
 
-function verificationStates(outcome: OutcomeRecord): Set<boolean> {
+function evidencePackObserved(evidence: OutcomeRecordEvidence, asOfMs: number): boolean {
+  return Date.parse(evidence.generatedAt) <= asOfMs;
+}
+
+function outcomeActiveInWindow(outcome: OutcomeRecord, sinceMs: number, asOfMs: number): boolean {
+  const createdMs = Date.parse(outcome.proposal.createdAt);
+  if (!(createdMs <= asOfMs)) return false;
+  const latestMs = eventMs(outcome.lastActivityAt);
+  if (latestMs <= asOfMs) return latestMs >= sinceMs;
+
+  // A future maximum can hide earlier, in-window activity in the same record.
+  const inWindow = (ts: string | undefined) => {
+    const ms = ts === undefined ? NaN : Date.parse(ts);
+    return ms >= sinceMs && ms <= asOfMs;
+  };
+  return createdMs >= sinceMs || inWindow(outcome.proposal.decidedAt)
+    || outcome.decisions.some((row) => inWindow(row.ts))
+    || outcome.judgeTraces.some((row) => inWindow(row.ts) || inWindow(row.outcomeAt))
+    || outcome.evidencePacks.some((row) => inWindow(row.generatedAt))
+    || outcome.workedEvents.some((row) => inWindow(row.ts))
+    || (outcome.postMergeObservations ?? []).some((row) => inWindow(row.observedAt));
+}
+
+function verificationStates(outcome: OutcomeRecord, asOfMs: number): Set<boolean> {
   const states = new Set<boolean>();
   if (outcome.proposal.verifyResult) states.add(outcome.proposal.verifyResult.passed);
-  for (const evidence of outcome.evidencePacks) states.add(evidence.verification.passed);
+  for (const evidence of outcome.evidencePacks) {
+    if (evidencePackObserved(evidence, asOfMs)) states.add(evidence.verification.passed);
+  }
   return states;
 }
 
@@ -1962,6 +2009,7 @@ export function listTrajectoryJoinQuality(
   try {
     actionRead = (deps.readAgentActionsDetailed ?? readAgentActionsDetailed)({
       sinceMs,
+      asOfMs,
       limit: Math.max(limit * 4, 200),
       maxFiles,
       inspectionOnly: true,
@@ -1973,14 +2021,17 @@ export function listTrajectoryJoinQuality(
   const dispatchQuality = (({ events: _events, ...quality }) => quality)(dispatchRead);
   const actionQuality = (({ events: _events, ...quality }) => quality)(actionRead);
   const outcomesInWindow = outcomeRead.records.filter(
-    (outcome) => Date.parse(outcome.proposal.createdAt) <= asOfMs && eventMs(outcome.lastActivityAt) >= sinceMs,
+    (outcome) => outcomeActiveInWindow(outcome, sinceMs, asOfMs),
   );
   const dispatches = attachReadQuality(
     dispatchRead.events.filter((event) => Date.parse(event.ts) <= asOfMs),
     dispatchQuality,
   );
   const outcomes = attachReadQuality(outcomesInWindow, outcomeRead.sourceQuality);
-  const actions = attachReadQuality(actionRead.events, actionQuality);
+  const actions = attachReadQuality(
+    actionRead.events.filter((action) => Date.parse(action.ts) <= asOfMs),
+    actionQuality,
+  );
   const records = listTrajectoryRecordsAt({
     windowHours,
     limit,
@@ -2019,7 +2070,7 @@ export function listTrajectoryJoinQuality(
   const proposalToVerification = emptyJoinEdge();
   const verifiedOutcomes: OutcomeRecord[] = [];
   for (const outcome of outcomesInWindow) {
-    const states = verificationStates(outcome);
+    const states = verificationStates(outcome, asOfMs);
     noteJoin(
       proposalToVerification,
       states.size,
@@ -2070,7 +2121,7 @@ export function listTrajectoryJoinQuality(
 
   const agentActions = emptyJoinEdge();
   let excludedIdentityFree = 0;
-  for (const action of actionRead.events) {
+  for (const action of actions) {
     const aliases = joinAliases(action);
     if (aliases.length === 0) {
       excludedIdentityFree++;
@@ -2256,6 +2307,8 @@ export function summarizeTrajectoryLearning(
       ? 'insufficient-sample'
       : 'observed';
   const publishSkillMetrics = sampleState === 'observed';
+  const publishSkillOutcomes = productionRecords.filter((record) => record.coverage.skillUse).length
+    >= MIN_SKILL_OBSERVED_TRAJECTORIES;
   const { skillUse: _privateSkillCoverage, ...publishedCoverage } = coverage;
   const diagnosticRecords = records.filter(isActionOnlyPreclaimRoute);
   const routeReasonCounts = emptyRouteReasonCounts();
@@ -2263,24 +2316,40 @@ export function summarizeTrajectoryLearning(
     routeReasonCounts[generatedRepairRouteReason(record.routeSnapshot?.reason)]++;
   }
 
-  const skillOutcomeRows = new Map<string, {
-    skillId: string;
-    skillRevision: number;
-    selections: number;
-    outcomes: Partial<Record<TrajectoryTerminalOutcome, number>>;
+  const skillOutcomeRows = new Map<string, Omit<TrajectorySkillOutcomeRow, 'realized'> & {
     realized: Partial<Record<TrajectoryRealizedOutcome, number>>;
   }>();
   const skillOutcomeSkillIds = new Set<string>();
   let skillOutcomeSelections = 0;
-  if (publishSkillMetrics) {
-    for (const record of productionRecords) {
+  if (publishSkillOutcomes) {
+    const hashesByRevision = new Map<string, string>();
+    const unidentifiedRevisions = new Set<string>();
+    const disputedRevisions = new Set<string>();
+    for (const record of observedProductionRecords) {
       for (const selection of skillSelectionOutcomesByRecord.get(record) ?? []) {
         const key = JSON.stringify([selection.skillId, selection.skillRevision]);
+        if (!selection.contentHash) {
+          unidentifiedRevisions.add(key);
+          continue;
+        }
+        const previousHash = hashesByRevision.get(key);
+        if (previousHash && previousHash !== selection.contentHash) disputedRevisions.add(key);
+        hashesByRevision.set(key, selection.contentHash);
+      }
+    }
+    for (const record of productionRecords) {
+      const countedRevisions = new Set<string>();
+      for (const selection of skillSelectionOutcomesByRecord.get(record) ?? []) {
+        const key = JSON.stringify([selection.skillId, selection.skillRevision]);
+        if (disputedRevisions.has(key) || countedRevisions.has(key)) continue;
+        countedRevisions.add(key);
         let row = skillOutcomeRows.get(key);
         if (!row) {
+          const skillContentHash = hashesByRevision.get(key);
           row = {
             skillId: selection.skillId,
             skillRevision: selection.skillRevision,
+            ...(skillContentHash && !unidentifiedRevisions.has(key) ? { skillContentHash } : {}),
             selections: 0,
             outcomes: {},
             realized: {},
@@ -2331,19 +2400,16 @@ export function summarizeTrajectoryLearning(
           sampleState,
         }
       : { eventState, sampleState },
-    ...(publishSkillMetrics ? {
+    ...(publishSkillOutcomes ? {
       skillOutcomes: {
         skills: skillOutcomeSkillIds.size,
         selections: skillOutcomeSelections,
         perSkill: [...skillOutcomeRows.values()]
           .sort((a, b) => b.selections - a.selections || a.skillId.localeCompare(b.skillId) || a.skillRevision - b.skillRevision)
           .slice(0, MAX_SKILL_OUTCOME_ROWS)
-          .map((row) => ({
-            skillId: row.skillId,
-            skillRevision: row.skillRevision,
-            selections: row.selections,
-            outcomes: { ...row.outcomes },
-            ...(Object.keys(row.realized).length > 0 ? { realized: { ...row.realized } } : {}),
+          .map(({ realized, ...row }) => ({
+            ...row,
+            ...(Object.keys(realized).length > 0 ? { realized } : {}),
           })),
       },
     } : {}),

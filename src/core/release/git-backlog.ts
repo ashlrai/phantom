@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { asReleaseRecord, gitReleaseState, parseReleaseIso, parseWholeNumber } from './cadence.js';
 
 export interface GitReleaseRow {
   repo: string; latestTag: string | null; tagDate: string | null; commitsSinceTag: number | null;
@@ -14,9 +15,9 @@ export interface GitReleaseRow {
 export function releaseClonePaths(repo: string): string[] {
   if (process.env.PHANTOM_RELEASE_CLONES !== undefined) {
     try {
-      const config: unknown = JSON.parse(process.env.PHANTOM_RELEASE_CLONES);
-      if (!config || typeof config !== 'object' || Array.isArray(config)) return [];
-      const path: unknown = (config as Record<string, unknown>)[repo];
+      const config = asReleaseRecord(JSON.parse(process.env.PHANTOM_RELEASE_CLONES));
+      if (!config) return [];
+      const path: unknown = config[repo];
       return typeof path === 'string' && path ? [path] : [];
     } catch { return []; }
   }
@@ -45,15 +46,15 @@ export async function readGitRelease(repo: string, path: string | undefined, now
     row.latestTag = await git('describe', '--tags', '--abbrev=0', head);
     row.reason = 'tag date or commit count unavailable';
     const tag = `refs/tags/${row.latestTag}`;
-    const date = await git('for-each-ref', '--format=%(creatordate:iso-strict)', tag);
-    if (!Number.isFinite(Date.parse(date))) return row;
-    row.tagDate = new Date(date).toISOString();
+    const tagDate = parseReleaseIso(await git('for-each-ref', '--format=%(creatordate:iso-strict)', tag));
+    if (!tagDate) return row;
+    row.tagDate = tagDate;
     // Shallow history can silently undercount: leave it unknown rather than claim a fresh release.
     if (await git('rev-parse', '--is-shallow-repository') !== 'false') return { ...row, reason: 'shallow local clone' };
-    const count = await git('rev-list', '--count', `${tag}..${head}`);
-    if (!/^\d+$/.test(count) || !Number.isSafeInteger(Number(count))) return row;
-    row.commitsSinceTag = Number(count);
-    return { ...row, state: row.commitsSinceTag > 20 || now - Date.parse(row.tagDate) > 7 * 86_400_000 ? 'due' : 'ok', reason: null };
+    const commits = parseWholeNumber(await git('rev-list', '--count', `${tag}..${head}`));
+    if (commits === null) return row;
+    row.commitsSinceTag = commits;
+    return { ...row, state: gitReleaseState(row.commitsSinceTag, row.tagDate, now), reason: null };
   } catch { return row; } finally { clearTimeout(timer); }
 }
 

@@ -106,6 +106,11 @@ async function guarded<T extends { dropped: number }>(path: string, parse: (text
   } catch (e) { return { state: record(e)?.code === 'ENOENT' ? 'missing' : 'degraded', parsed: null }; }
 }
 
+export async function readLaneModelConfig(runsDir: string): Promise<ReadonlyMap<string, string>> {
+  if (!isAbsolute(runsDir)) return new Map();
+  return (await guarded(join(runsDir, 'models.json'), parseModelsJson)).parsed?.map ?? new Map();
+}
+
 export async function getLaneModelSnapshot(opts: LaneModelViewOptions = {}): Promise<LaneModelSnapshot> {
   const runsDir = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   const snapshot: LaneModelSnapshot = {
@@ -136,9 +141,11 @@ export async function getLaneModelSnapshot(opts: LaneModelViewOptions = {}): Pro
   snapshot.lanes = [...laneIds].sort().map(lane => {
     const lastLaunch = latest.get(lane) ?? null;
     const rows = tiers.map(tier => ({ tier, ...(resolveLaneModel(map, lane, tier) ?? { model: null, via: null }) }));
+    const matches = (configured: string | null) => configured === 'auto'
+      ? lastLaunch?.model !== 'auto' : configured === lastLaunch?.model && lastLaunch?.model !== 'auto';
     const mismatch = !lastLaunch ? false : lastLaunch.tier
-      ? (resolveLaneModel(map, lane, lastLaunch.tier)?.model ?? null) !== lastLaunch.model
-      : !rows.some(r => r.model === lastLaunch.model);
+      ? !matches(resolveLaneModel(map, lane, lastLaunch.tier)?.model ?? null)
+      : !rows.some(r => matches(r.model));
     return { lane, family: laneModelFamily(lane), tiers: rows, lastLaunch, mismatch };
   });
   return snapshot;

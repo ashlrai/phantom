@@ -41,8 +41,7 @@ import {
   type AgentCheckpoint, type CheckpointOptions,
 } from './checkpoints.js';
 import { addUsage, overBudget, newUsage } from './budget.js';
-import { nullSink } from './streaming.js';
-import type { StreamSink } from './streaming.js';
+import { nullSink, type StreamSink } from './streaming.js';
 import { resolveModelProfile } from './model-profile.js';
 import { assembleSystemPrompt } from './prompts/index.js';
 import { hostVerifiedExecutorRole } from './prompts/roles.js';

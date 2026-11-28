@@ -51,6 +51,37 @@ describe('recurringFlakes', () => {
     expect(recurringFlakes(rows, { nowMs: NOW })).toEqual([]);
   });
 
+  it('combines recurrence and verdict evidence across repository casing changes', () => {
+    const rows = [
+      attempt({ repo: 'Org/Repo', head: HEADS[0] }),
+      attempt({ repo: 'org/repo', head: HEADS[1] }),
+      attempt({ repo: 'ORG/REPO', head: HEADS[2] }),
+      verdict({ repo: 'org/Repo', verdict: 'fail' }),
+      verdict({ repo: 'org/other', verdict: 'pass' }),
+    ];
+    expect(recurringFlakes(rows, { nowMs: NOW })).toEqual([
+      flake({ verdicts: { pass: 0, fail: 1, inconclusive: 0 } }),
+    ]);
+    const test = rows[0]!.test!;
+    expect(flakeJobId('Org/Repo', test)).toBe(flakeJobId('org/repo', test));
+    expect(flakeJobId('org/repo', test.toUpperCase())).not.toBe(flakeJobId('org/repo', test));
+  });
+
+  it('counts only full commit SHAs and treats casing variants as the same head', () => {
+    const rows = [
+      attempt({ head: HEADS[0]!.toUpperCase() }),
+      attempt({ head: HEADS[0] }),
+      attempt({ head: HEADS[1] }),
+      attempt({ head: 'unknown' }),
+      attempt({ head: HEADS[2]!.slice(0, 12) }),
+      verdict({ head: 'unknown', verdict: 'pass' }),
+    ];
+    expect(recurringFlakes(rows, { nowMs: NOW })).toEqual([]);
+    expect(recurringFlakes([...rows, attempt({ head: HEADS[2] })], { nowMs: NOW })).toEqual([
+      flake({ attempts: 4 }),
+    ]);
+  });
+
   it('ignores ok/failed outcome rows, rows without a test id and malformed repos', () => {
     const rows = [
       attempt({ head: HEADS[0] }),

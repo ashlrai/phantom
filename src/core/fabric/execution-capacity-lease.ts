@@ -10,7 +10,7 @@
  * allocation identity can never acquire a new lifetime (ABA) accidentally.
  */
 
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import {
   closeSync,
   constants as fsConstants,
@@ -43,6 +43,7 @@ import {
   isCanonicalIsoTimestamp as canonicalTimestamp,
   isSafeIntegerInRange as safeInteger,
   sha256Prefixed as sha256,
+  timingSafeBufferEqual,
   timingSafeUtf8Equal as sameDigest,
 } from './external-contract-codec.js';
 
@@ -413,7 +414,7 @@ function verifyEvidence(
   });
   let verified = false;
   try { verified = verify(input) === true; } catch { /* fail closed */ }
-  if (!verified || !timingSafeEqual(callbackBytes, before)) return null;
+  if (!verified || !timingSafeBufferEqual(callbackBytes, before)) return null;
   return parseEvidence(envelope);
 }
 
@@ -532,7 +533,7 @@ function sameBound(left: BoundFile, right: BoundFile | null): boolean {
   if (!right || left.found !== right.found) return false;
   return !left.found || (left.dev === right.dev && left.ino === right.ino &&
     left.size === right.size && left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs &&
-    !!left.bytes && !!right.bytes && timingSafeEqual(left.bytes, right.bytes));
+    !!left.bytes && !!right.bytes && timingSafeBufferEqual(left.bytes, right.bytes));
 }
 
 function ledgerDigest(unsigned: PersistedLedgerUnsignedV1): string {
@@ -675,7 +676,7 @@ function saveLedger(
     (leaseTestHooks?.fsyncDirectory ?? fsyncDirectory)(root.path, { expectedIdentity: root });
     const installed = readBoundFile(root);
     const ok = !!installed?.found && installed.dev === temporaryIdentity.dev && installed.ino === temporaryIdentity.ino &&
-      !!installed.bytes && timingSafeEqual(installed.bytes, bytes) && stableRoot(root);
+      !!installed.bytes && timingSafeBufferEqual(installed.bytes, bytes) && stableRoot(root);
     return { ok, committed: true };
   } catch {
     return { ok: false, committed: published };

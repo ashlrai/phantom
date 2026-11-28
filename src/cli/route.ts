@@ -26,8 +26,11 @@ async function routeInput(file: string, limit = 32 * 1024): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
+const defaultRunsDir = (explicit?: string): string =>
+  explicit ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+
 async function routeDecide(args: string[]): Promise<number> {
-  let input: string | undefined, root = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  let input: string | undefined, root = defaultRunsDir();
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -95,7 +98,7 @@ const SEATS_USAGE = 'Usage: phm route seats [--root <directory>] --json';
 
 /** Which Google seat the router uses and whether it reaches Gemini 4 Neon on included capacity. */
 export async function routeSeats(args: string[], out: (text: string) => void = console.log): Promise<number> {
-  let root = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  let root = defaultRunsDir();
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -146,7 +149,7 @@ async function routeShadow(args: string[]): Promise<number> {
     values.set(arg, value);
   }
   if (!seen.has('--json') || (mode === 'eval' && !values.has('--input'))) { console.error(JSON.stringify({ error: SHADOW_USAGE })); return 2; }
-  const root = resolve(values.get('--root') ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'));
+  const root = resolve(defaultRunsDir(values.get('--root')));
   try {
     const { buildShadowPolicyReport, evaluateShadowPolicy, isShadowPolicyName, recordShadowPolicyDecision } = await import('../core/router/shadow-policy.js');
     const rawPolicy = values.get('--policy');
@@ -203,7 +206,7 @@ async function routeFailover(args: string[]): Promise<number> {
     const failed_lane = routeIdSchema.parse(values.get('--failed-lane'));
     const failure = routeFailureKindSchema.parse(values.get('--failure'));
     const attempted = values.get('--attempted')?.split(',').map(lane => routeIdSchema.parse(lane)) ?? [];
-    const root = values.get('--root') ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+    const root = defaultRunsDir(values.get('--root'));
     const result = await runFailover(request, await loadRouteSources(root), { failed_lane, failure, attempted },
       { root, record: seen.has('--record'), nowMs: Date.now() });
     console.log(JSON.stringify(result));

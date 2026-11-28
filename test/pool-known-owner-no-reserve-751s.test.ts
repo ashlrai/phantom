@@ -22,7 +22,7 @@ beforeEach(async () => {
 afterEach(async () => { vi.restoreAllMocks(); await rm(root, { recursive: true, force: true }); });
 
 it.each([95, 98, 99])('%s percent with high burn stays usable through the reader, stops and nested CLI', async pct => {
-  await status({ claude: { use_it_all: { used_pct: pct, reset_at: at(150), burn_pct_per_hour: 20 } } });
+  await status({ claude: { use_it_all: { used_pct: pct, observed_at: at(0), reset_at: at(150), burn_pct_per_hour: 20 } } });
   const data = await read();
   expect(data.pools.find(p => p.pool === 'claude')).toMatchObject({ usedPct: pct, verdict: 'over', state: 'ahead', safeBurnPerHour: (100 - pct) / 150 });
   const file = join(root, 'STOP-docs');

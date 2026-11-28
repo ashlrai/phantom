@@ -150,9 +150,11 @@ export function buildFleetLiveMap(inputs: LiveMapInputs): FleetLiveMap {
   if (!tree) gaps.push('Org unknown: lane structure and messages could not be read.');
   if (liveSource ? !jobsKnown : tree && !tree.jobsKnown) gaps.push('Running jobs unknown: no job source answered.');
   const laneId = (lane: string) => `lane:${lane}`;
-  const orgLanes = new Map(org?.nodes.filter(row => row.kind === 'lane').map(row => [row.lane ?? row.label, row]));
-  const addLane = (lane: string, status = 'unknown', detail = 'counts unknown') =>
-    node('lane', laneId(lane), orgLanes.get(lane)?.label ?? lane, status, detail, orgLanes.get(lane)?.provider ?? providerFor(lane).name);
+  const orgLanes = new Map(org?.nodes.filter(row => row.kind === 'lane' && !row.machine).map(row => [row.lane ?? row.label, row]));
+  const addLane = (lane: string, status = 'unknown', detail = 'counts unknown', machine?: string) =>
+    machine
+      ? node('lane', `peer:${machine}:${lane}`, `${lane} @ ${machine}`, status, detail, providerFor(lane).name)
+      : node('lane', laneId(lane), orgLanes.get(lane)?.label ?? lane, status, detail, orgLanes.get(lane)?.provider ?? providerFor(lane).name);
   const processLive = new Map(org?.nodes.filter(row => row.kind === 'job').map(row => [row.jobId!, row.processLive ?? 'unknown']));
   const localJobs: string[] = [];
   const addJob = (job: OrgTreeJob, lane: string | null) => {
@@ -162,8 +164,8 @@ export function buildFleetLiveMap(inputs: LiveMapInputs): FleetLiveMap {
     if (processLive.get(job.id) === 'yes') localJobs.push(id);
   };
   for (const lane of tree?.lanes ?? []) {
-    const status = lane.held ? 'held' : lane.running === null ? 'unknown' : lane.running > 0 ? 'running' : 'idle';
-    edge('reports-to', addLane(lane.lane, status, orgLaneCounts(lane)), 'leader');
+    const status = lane.source ? lane.state : lane.held ? 'held' : lane.running === null ? 'unknown' : lane.running > 0 ? 'running' : 'idle';
+    edge('reports-to', addLane(lane.lane, status, lane.source ? lane.doing : orgLaneCounts(lane), lane.source ? lane.machine : undefined), 'leader');
     if (!liveSource) for (const job of lane.jobs) addJob(job, lane.lane);
   }
   if (jobsKnown) for (const job of [...inputs.jobs!.jobs].sort((a, b) => cmp(a.lane, b.lane) || cmp(a.id, b.id))) {
@@ -177,7 +179,7 @@ export function buildFleetLiveMap(inputs: LiveMapInputs): FleetLiveMap {
     edge('reports-to', id, laneId(job.lane));
     if (job.processLive) localJobs.push(id);
   }
-  if (liveSource) for (const lane of nodes.values()) if (lane.kind === 'lane') {
+  if (liveSource) for (const lane of nodes.values()) if (lane.kind === 'lane' && lane.id.startsWith('lane:')) {
     const running = jobsKnown ? [...nodes.values()].filter(job => job.kind === 'job' && `lane:${job.lane ?? 'unknown'}` === lane.id).length : null;
     if (lane.status !== 'held') lane.status = running === null ? 'unknown' : running ? 'running' : 'idle';
     lane.detail = running === null ? 'running unknown' : `${running} running`;
@@ -192,9 +194,18 @@ export function buildFleetLiveMap(inputs: LiveMapInputs): FleetLiveMap {
     const id = node('computer', `computer:${row.name}`, row.name, row.stateCode, row.isSelf ? `${row.state} (this computer)` : row.state);
     if (!row.isSelf) nodes.get(id)!.remote = true;
     for (const job of row.jobsRunning === 'unknown' ? [] : row.jobsRunning) {
-      if (liveSource && !nodes.has(`job:${job}`)) continue;
+      // jobsRunning holds node job ids; the claim bridge runs a ready row as
+      // `ready:<job>:<attempt>` (routerJobId in drive/nodes/ready-bridge.ts),
+      // and ready job ids never contain ':'. The map's job id is the ready
+      // row's own. A bridge claim is evidence the local live-jobs reader
+      // cannot see — the row left ready.tsv and executes on the node — so it
+      // draws even when the live report has no such job; a plain computer
+      // claim still waits for the live report's confirmation.
+      const bridgeJob = /^ready:(.+):\d+$/.exec(job)?.[1];
+      const jobKey = bridgeJob ?? job;
+      if (liveSource && bridgeJob === undefined && !nodes.has(`job:${jobKey}`)) continue;
       // A job only the node pool knows about: shown, with its lane unknown.
-      const jobId = node('job', `job:${job}`, job, 'running', 'lane unknown', 'unknown');
+      const jobId = node('job', `job:${jobKey}`, jobKey, 'running', 'lane unknown', 'unknown');
       if (!nodes.get(jobId)!.state) Object.assign(nodes.get(jobId)!, { lane: null, repo: null, state: 'running' });
       edge('runs-on', jobId, id);
     }

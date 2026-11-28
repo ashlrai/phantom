@@ -7,7 +7,7 @@
  * a source can be missing (not landed, unrecognised, dark) — never empty axes.
  */
 import { useEffect, type ReactNode } from 'react';
-import type { FleetLaneState, FleetLiveSnapshotV1 } from '../../../../core/fleet/fleet-types.js';
+import type { FleetLiveLaneState, FleetLiveSnapshotV1 } from '../../../../core/fleet/fleet-types.js';
 import { WORLD_CACHE_TTL_MS } from '../../../../core/world/types.js';
 import type { SeatDecision } from '../../../../core/routing/types.js';
 import type { BudgetView } from '../../../../core/routing/policy.js';
@@ -54,6 +54,7 @@ export function fleetStatus(read: OptionalRead<FleetLiveSnapshotV1> | undefined,
   if (!read) return { kind: 'loading' };
   const live = read.value;
   if (!live) return { kind: 'unknown', reason: read.reason ?? 'the live fleet view did not answer.' };
+  if (live.source?.stale) return { kind: 'unknown', reason: live.source.reason ?? 'the leader snapshot is unavailable.' };
   if (live.state === 'dark' && !hasData) return fleetDarkStatus(live);
   return hasData ? { kind: 'ready' } : { kind: 'empty', message: empty };
 }
@@ -63,7 +64,7 @@ export function fleetStatus(read: OptionalRead<FleetLiveSnapshotV1> | undefined,
 // ---------------------------------------------------------------------------
 
 /** "Local · off" — the chip is the lane and its slots; its why is one line below the strip (and its title). */
-function LaneChip({ lane, runs, readAt, now, children }: { lane: FleetLaneState; runs: readonly FallbackRunsLane[] | null; readAt: string | null; now: number; children?: ReactNode }) {
+function LaneChip({ lane, runs, readAt, now, children }: { lane: FleetLiveLaneState; runs: readonly FallbackRunsLane[] | null; readAt: string | null; now: number; children?: ReactNode }) {
   const text = laneChipText(lane);
   // The server uses zero slots when the last standing lane observation is
   // stale. That is unknown capacity, not an observed disabled lane. Keep the
@@ -71,7 +72,7 @@ function LaneChip({ lane, runs, readAt, now, children }: { lane: FleetLaneState;
   // unless dispatchd's fresher figures can stand in for the missing tick.
   const capacityUnknown = lane.slots === 0 && lane.capReason === STALE_STANDING_LANES;
   const slots = laneFallback(lane, runs, readAt, now)?.slots ?? (capacityUnknown
-    ? `${lane.busy > 0 ? `${lane.busy} working · ` : ''}capacity unknown`
+    ? `${(lane.busy ?? 0) > 0 ? `${lane.busy} working · ` : ''}capacity unknown`
     : text.slots);
   return (
     <li className={styles.lane} data-off={lane.slots === 0 && !capacityUnknown || undefined} title={laneReason(lane) ?? undefined}>

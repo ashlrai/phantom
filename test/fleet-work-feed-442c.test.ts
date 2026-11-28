@@ -92,6 +92,30 @@ describe('bus work feed reader and CLI', { timeout: 60_000 }, () => {
     });
   });
 
+  it('frames the feed as one bounded untrusted block under its own markers', async () => {
+    append(post);
+    const log = output();
+    // --frame prints the same feed lines as a single marked block — the
+    // agents bus work feed --frame twin — never the digest or inbox markers.
+    expect(await cmdFleetWorkFeed(['--root', root, '--frame', 'claude'])).toBe(0);
+    const framed = String(log.mock.calls.at(-1)?.[0]);
+    expect(framed).toContain('BEGIN UNTRUSTED AGENT BUS WORK FEED');
+    expect(framed).toContain('fake-job queued "Review"');
+    expect(framed).toContain('feed=ok');
+    expect(framed).toContain('END UNTRUSTED AGENT BUS WORK FEED');
+    expect(framed).not.toContain('WORK DIGEST');
+    expect(framed).not.toContain('AGENT BUS MESSAGES');
+    log.mockClear();
+    // --json carries the same block on `framed` beside the projection.
+    expect(await cmdFleetWorkFeed(['--root', root, '--frame', 'grok', '--json'])).toBe(0);
+    const wire = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as { status: string; framed?: string };
+    expect(wire.status).toBe('ok');
+    expect(wire.framed).toContain('BEGIN UNTRUSTED AGENT BUS WORK FEED');
+    expect(wire.framed).toContain('fake-job queued "Review"');
+    // An unknown CLI is a usage error, like every other bad flag value.
+    expect(await cmdFleetWorkFeed(['--root', root, '--frame', 'gemini'])).toBe(2);
+  });
+
   it('scrubs and clips the title and claim keys on human lines while JSON keeps them', async () => {
     const dirty = `Fix\n  the\tfake sk-ant-api03-${'a'.repeat(40)} ${'t'.repeat(170)}`;
     const claimKeys = ['repo:fake/repo',
@@ -195,6 +219,24 @@ describe('bus work feed reader and CLI', { timeout: 60_000 }, () => {
     expect(readFileSync(file, 'utf8')).toBe(before);
   });
 
+  it('reads a retained store past the retired 1024-receipt feed cap', () => {
+    // 1100 live receipts — more than the old feed bound refused — with one
+    // announced job and the rest opaque traffic: the feed must still answer.
+    const rows = Array.from({ length: 1100 }, (_, i) => ({
+      cursor: i + 1, receivedAt: now,
+      envelope: { id: `fake-busy-${i + 1}`, from: 'fake-agent', to: 'leaders',
+        priority: 'P2', ttl: 1000, body: i === 0 ? post : { kind: 'note', n: i } },
+    }));
+    const directory = join(root, 'bus-inbox');
+    mkdirSync(directory, { mode: 0o700 });
+    const file = join(directory, 'messages.json');
+    writeFileSync(file, JSON.stringify({ version: 2, highWater: rows.length, rows }), { mode: 0o600 });
+    chmodSync(file, 0o600);
+    const result = readBusWorkFeed({ root });
+    expect(result).toMatchObject({ status: 'ok', receipts: 1100,
+      jobs: [{ id: post.jobId, owner: 'fake-agent', provider: 'devin', status: 'queued' }] });
+  });
+
   it('reports an unreadable inbox and prints a failure footer with exit 1', async () => {
     append(post);
     writeFileSync(join(root, 'bus-inbox', 'messages.json'), 'invalid JSON');
@@ -219,6 +261,12 @@ describe('bus work feed reader and CLI', { timeout: 60_000 }, () => {
     const log = output();
     expect(await cmdFleetWorkFeed(['--root', root, '--claims'])).toBe(0);
     expect(log.mock.calls.some(call => String(call[0]).startsWith(`held ${post.jobId} repo:fake/repo owner=fake-holder`))).toBe(true);
+    // The held line names the claim's origin class — the same detail
+    // `work mine`'s holders and `claim list` already show — so a reader
+    // never cross-references the claim table to learn what kind of hold
+    // blocks the job.
+    expect(log.mock.calls.some(call => String(call[0]).startsWith(`held ${post.jobId} repo:fake/repo owner=fake-holder`) &&
+      String(call[0]).includes(' origin=resource'))).toBe(true);
     expect(log.mock.calls.at(-1)?.[0]).toContain('claims=available');
     log.mockClear();
     expect(await cmdFleetWorkFeed(['--root', root, '--claims', '--status', 'done', '--json'])).toBe(0);
@@ -898,16 +946,55 @@ describe('work-feed --job and --owner filters', () => {
     expect(jobLines(log.mock.calls)).toEqual([expect.stringContaining('fake-sink')]);
   });
 
-  it('rejects bad --job and --owner values with usage on stderr and exit 2', async () => {
+  it('matches --exclude-owner under every label of one agent identity and never widens on unknown identity', async () => {
+    append(post, 1, 'agent:worker-bot');
+    append({ ...post, jobId: 'fake-sink' }, 2, 'fake-other');
+    const jobLines = (calls: unknown[][]) => calls.map(call => String(call[0])).filter(line => line.startsWith('fake-'));
+    const log = output();
+    // No registry: only the literal announcer label is excluded — 'worker-bot'
+    // resolves to no identity, so 'agent:worker-bot' survives under it.
+    expect(await cmdFleetWorkFeed(['--root', root, '--exclude-owner', 'worker-bot'])).toBe(0);
+    expect(jobLines(log.mock.calls)).toHaveLength(2);
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--exclude-owner', 'agent:worker-bot'])).toBe(0);
+    expect(jobLines(log.mock.calls)).toEqual([expect.stringContaining('fake-sink')]);
+    log.mockClear();
+    expect(registerAgentIdentity({ handle: 'worker-bot', aliases: ['lane-7'],
+      runtime: { cli: 'codex', provider: 'codex-cmp', model: null } }, { root, now: () => now }).status).toBe('created');
+    for (const ref of ['worker-bot', 'agent:worker-bot', 'lane-7']) {
+      log.mockClear();
+      expect(await cmdFleetWorkFeed(['--root', root, '--exclude-owner', ref])).toBe(0);
+      expect(jobLines(log.mock.calls)).toEqual([expect.stringContaining('fake-sink')]);
+    }
+    // The other announcer's exclusion keeps worker-bot's job, and an
+    // unresolvable ref excludes nothing — exact-label matching, never widened.
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--exclude-owner', 'fake-other'])).toBe(0);
+    expect(jobLines(log.mock.calls)).toEqual([expect.stringContaining('fake-job')]);
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--exclude-owner', 'ghost'])).toBe(0);
+    expect(jobLines(log.mock.calls)).toHaveLength(2);
+    // --owner and --exclude-owner compose include-then-exclude.
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--owner', 'worker-bot', '--exclude-owner', 'worker-bot'])).toBe(0);
+    expect(jobLines(log.mock.calls)).toHaveLength(0);
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--owner', 'worker-bot', '--exclude-owner', 'fake-other'])).toBe(0);
+    expect(jobLines(log.mock.calls)).toEqual([expect.stringContaining('fake-job')]);
+  });
+
+  it('rejects bad --job, --owner and --exclude-owner values with usage on stderr and exit 2', async () => {
     const log = output();
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     for (const args of [['--job'], ['--job', 'two words'], ['--job', 'a\nb'], ['--job', 'x', '--job', 'y'],
       ['--owner'], ['--owner', 'two words'], ['--owner', 'a\nb'], ['--owner', 'x', '--owner', 'y'],
-      ['--job', 'x', '--owner', 'bad owner']]) {
+      ['--exclude-owner'], ['--exclude-owner', 'two words'], ['--exclude-owner', 'a\nb'],
+      ['--exclude-owner', 'x', '--exclude-owner', 'y'],
+      ['--job', 'x', '--owner', 'bad owner'], ['--exclude-owner', 'bad owner']]) {
       expect(await cmdFleetWorkFeed(args)).toBe(2);
     }
     expect(log).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalledTimes(9);
+    expect(error).toHaveBeenCalledTimes(14);
   });
 });
 

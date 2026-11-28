@@ -43,6 +43,7 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/worktree-bridge-evidence.test.ts', // Advances a real origin/master ref and verifies cache invalidation.
   'test/install-process.test.ts', // Runs isolated real Node and npm child processes.
   'test/update-release-directory.test.ts', // Extracts real archives and smoke-tests a candidate executable.
   'test/channel-health-ingress-failure-322s.test.ts', // Spawns real ingress health probes.
@@ -583,6 +584,7 @@ export const REAL_IO_TEST_FILES = [
   'test/improve-promote-redteam.test.ts', // measures a metric in a real temp git repo with a tracked hooks dir, and diffs real commits
   'test/improve-outcomes.test.ts', // measures a metric at two commits of a real temp git repo through real git worktrees and node
   'test/improve-observe.test.ts', // finds a revert in the log of a real temp git repo
+  'test/improve-measure-sync.test.ts', // real temp git checkouts and a real safe-git fetch/merge-base for the measurement pass
   'test/h2.swarm-resume.test.ts', // real swarm resume fixture (hermetic H-suite) — 4.1s slowest test in the quiet baseline
   'test/m233.partial-diff-on-timeout.test.ts', // real diff/timeout subprocess interaction — 3.3s slowest test in the quiet baseline
   'test/m482.release-artifact-contract.test.ts', // real npm pack/install release artifact contract (68.1s single test — keeps its own 180s override below) — 68.1s slowest test in the quiet baseline

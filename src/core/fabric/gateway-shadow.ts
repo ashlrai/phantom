@@ -15,9 +15,9 @@
  * Append-only (~/.ashlr/fabric/gateway-shadow.jsonl per day); never throws.
  */
 
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync, mkdirSync, appendFileSync, readdirSync, readFileSync } from 'node:fs';
+import { fabricDir } from './claude-rate-limit-event.js';
 
 export interface GatewayShadowRecord {
   ts: string;
@@ -37,7 +37,7 @@ export interface GatewayShadowRecord {
 }
 
 export function gatewayShadowDir(): string {
-  return join(homedir(), '.ashlr', 'fabric');
+  return fabricDir();
 }
 
 function shadowFile(day: string): string {

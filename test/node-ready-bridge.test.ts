@@ -261,6 +261,29 @@ describe('ready.tsv -> node router bridge', () => {
     expect(new Set(second.rows.map(r => r.nodeId))).toEqual(new Set(['node-a', 'node-c']));
   });
 
+  it('keeps a capped sibling from reducing measured host headroom', async () => {
+    const f = fixture([row('RQ-REVIEW-A'), row('RQ-REVIEW-B'), row('RQ-REVIEW-C')], [
+      { id: 'capped', caps: READ, slots: 0 },
+      { id: 'worker', caps: READ, slots: 3 },
+    ]);
+    const capacity = { hostId: 'shared-host', ramBytes: 8 * 1024 ** 3, slots: 2, held: null, sampledAtMs: 1_000_000 };
+    f.nodes.heartbeat(f.sessions.get('capped')!, { capacity });
+    f.nodes.heartbeat(f.sessions.get('worker')!, { capacity });
+    f.nodes.heartbeat(f.sessions.get('capped')!, { slots: 0 });
+    f.nodes.heartbeat(f.sessions.get('worker')!, { slots: 3 });
+
+    const report = await f.pass(false);
+    expect(report.nodes).toMatchObject([
+      { nodeId: 'capped', freeSlots: 0 },
+      { nodeId: 'worker', freeSlots: 2 },
+    ]);
+    expect(report.rows).toMatchObject([
+      { offload: true, nodeId: 'worker' },
+      { offload: true, nodeId: 'worker' },
+      { offload: false, reasons: ['no_free_slot'] },
+    ]);
+  });
+
   it('reserves slots for router assignments only when the router provides a plan', async () => {
     const f = fixture([row('RQ-REVIEW-A')], [{ id: 'worker', caps: [...READ, 'gh'], slots: 1 }]);
     f.nodes.enqueue('needs-auth', { owner: 'ashlr', requires: ['gh'] });
@@ -320,6 +343,35 @@ describe('ready.tsv -> node router bridge', () => {
     const report = await f.pass(false);
     expect(report.nodes.map(n => [n.nodeId, n.freeSlots])).toEqual([['node-a', 0], ['node-b', 0]]);
     expect(report.rows[0]).toMatchObject({ offload: false, reasons: ['no_free_slot'] });
+  });
+
+  it('uses fresh workers on a host while still charging a stale sibling’s claim', async () => {
+    const job = 'RQ-REVIEW-HEARTBEAT';
+    const f = fixture([row(job)], [
+      { id: 'sibling', caps: ['build'], slots: 1 },
+      { id: 'worker', caps: READ, slots: 1 },
+    ]);
+    const sample = { hostId: 'shared-host', ramBytes: 8 * 1024 ** 3, slots: 1, held: null, sampledAtMs: 1_000_000 };
+    const sibling = f.sessions.get('sibling')!;
+    f.nodes.heartbeat(sibling, { capacity: sample });
+    f.advance(5_999);
+    f.nodes.enqueue('needs-build', { owner: 'ashlr', requires: ['build'] });
+    const pulled = f.nodes.pull(sibling)!;
+    expect(pulled.job.id).toBe('needs-build');
+
+    f.advance(2);
+    f.nodes.heartbeat(f.sessions.get('worker')!, {
+      capacity: { ...sample, sampledAtMs: 1_006_001 },
+    });
+    const busy = await f.pass();
+    expect(busy.nodes).toMatchObject([{ nodeId: 'worker', freeSlots: 0 }]);
+    expect(busy.rows[0]).toMatchObject({ offload: false, reasons: ['no_free_slot'] });
+    expect(busy.claimed).toEqual([]);
+
+    f.advance(1_000);
+    const available = await f.pass();
+    expect(available.claimed).toEqual([job]);
+    expect(available.rows[0]).toMatchObject({ offload: true, nodeId: 'worker' });
   });
 
   it('reports unknown headroom when a shared host has incomplete slot telemetry', async () => {

@@ -1,6 +1,6 @@
 import { calibrationMarkdown, readCalibration, type CalibrationArm, type CalibrationReport } from '../core/routing/calibration.js';
 
-export const ROUTER_CALIBRATION_USAGE = 'Usage: phm router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--baseline-jobs <jobs.jsonl> [--baseline-posthog <runs.json>]] [--json]';
+const ROUTER_CALIBRATION_USAGE = 'Usage: phm router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--baseline-jobs <jobs.jsonl> [--baseline-posthog <runs.json>]] [--json]';
 
 type Metric = CalibrationArm['mergeRate'];
 type Delta = number | null;

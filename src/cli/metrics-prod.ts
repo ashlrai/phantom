@@ -1,4 +1,4 @@
-import { collectProduction, productionReads, type ProductionReads } from '../core/metrics/production.js';
+import { collectProduction, isProductionRepo, productionReads, type ProductionReads } from '../core/metrics/production.js';
 
 const USAGE = `Usage: phm metrics prod [--repo OWNER/REPO ...] [--lane NAME] [--bridge-label LABEL] [--json]
 Read bridge PR merge, pinned release ancestry and exact npm or crates.io publication evidence.
@@ -38,14 +38,14 @@ export async function cmdMetricsProd(
     else if (flag === '--lane') lane = value;
     else label = value;
   }
-  if (repos.some(repo => !/^[A-Za-z0-9_][A-Za-z0-9_.-]*\/[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(repo))) { err(USAGE); return 2; }
+  if (repos.some(repo => !isProductionRepo(repo))) { err(USAGE); return 2; }
   try {
     const reads = { ...productionReads, ...overrides };
     if (!repos.length) {
       const current = await reads.github('repos/{owner}/{repo}');
       if (!current || typeof current !== 'object' || !('full_name' in current)
         || typeof current.full_name !== 'string'
-        || !/^[A-Za-z0-9_][A-Za-z0-9_.-]*\/[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(current.full_name)) throw new Error('Repository unavailable');
+        || !isProductionRepo(current.full_name)) throw new Error('Repository unavailable');
       repos.push(current.full_name);
     }
     const reports = [];
