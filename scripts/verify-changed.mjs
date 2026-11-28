@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Script } from 'node:vm';
+import { brotliDecompressSync, crc32, gunzipSync } from 'node:zlib';
 
 /**
  * Paths whose change can move the authority drift snapshots: src/ (Tier-1 roots and closure),
@@ -176,6 +177,21 @@ const POWERSHELL_FILE = /\.ps[dm]?1$/i;
 const BATS_FILE = /\.bats$/i;
 
 /**
+ * Binary assets carry container grammars no text check reads: a truncated
+ * or bit-rotted PNG, JPEG, icon, font or gzip payload ships silently —
+ * browsers paint a broken image or drop the font, and eslint, every
+ * tsconfig, the shebang buckets and the per-extension parsers all skip
+ * non-text files. The extension set is the repo's shipped asset inventory
+ * plus its immediate siblings (.jpeg, .cur, .otf, .ttc, .woff): PNG and
+ * JPEG imagery, RIFF WebP, ICO/CUR icon directories, ICNS icon families,
+ * sfnt fonts (TrueType/OpenType and collections), WOFF/WOFF2 web fonts and
+ * gzip members. test/fixtures/ payloads are exempt like the bats/html/
+ * conflict-marker checks: a fixture may intentionally embed a corrupt
+ * asset as input to another test.
+ */
+const BINARY_ASSET_FILE = /\.(?:png|jpe?g|webp|ico|cur|icns|ttf|otf|ttc|woff2?|gz)$/i;
+
+/**
  * scripts/check-realio-lane-membership.mjs reads every .test.ts file under
  * test/ (contents decide the spawn-marker verdict) plus its lane manifests,
  * the known-fast-spawn allowlist, the inventory helpers and itself. A diff
@@ -305,6 +321,7 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     htmlFiles: changed.filter((path) => existing.has(path) && HTML_FILE.test(path) && !path.startsWith('test/fixtures/')),
     seatbeltFiles: changed.filter((path) => existing.has(path) && /\.sb$/i.test(path)),
     mdcFiles: changed.filter((path) => existing.has(path) && /\.mdc$/i.test(path)),
+    binaryFiles: changed.filter((path) => existing.has(path) && BINARY_ASSET_FILE.test(path) && !path.startsWith('test/fixtures/')),
     detachedScriptFiles: changed.filter((path) => existing.has(path) && DETACHED_SCRIPT_TREE.test(path) && DETACHED_SCRIPT_FILE.test(path)),
     contribTypecheck: changed.some((path) =>
       (path.startsWith(`${CONTRIB_DIR}/`) && TS_FAMILY_FILE.test(path)) ||
@@ -1754,6 +1771,387 @@ export function runSeatbeltSyntaxCheck(root, files, read = readFileSync) {
 }
 
 /**
+ * Binary asset containers, parsed in-process like the JSON and snap
+ * checks — there is no preflight and no SKIP path. Each validator reads
+ * only the container grammar its format's own readers enforce, so a
+ * truncated download, a botched binary merge or a hand-edited header
+ * fails here instead of shipping a broken image, icon or font:
+ *
+ *  - PNG: signature, then every chunk's length, type letters, bounds and
+ *    CRC-32 (zlib.crc32 over type+data, the check every decoder runs).
+ *    IHDR must lead with sane dimensions and a legal bit-depth/color-type
+ *    pair, and IEND must close the file — trailing bytes after it are a
+ *    spec violation, not a tolerated quirk.
+ *  - JPEG: SOI, then the marker walk — standalone markers (TEM, RSTn,
+ *    SOI) carry no length, every other marker's segment must fit, SOS
+ *    hands off to entropy data where FF00 is a stuffed data byte,
+ *    FFD0-FFD7 restart markers are skipped, and the scan ends at EOI
+ *    or hands the next real marker (DNL, a further SOS) back to the
+ *    outer walk.
+ *  - WebP: RIFF header, declared RIFF size equal to the file, and the
+ *    chunk walk with RIFF's even-byte padding rule.
+ *  - ICO/CUR: little-endian ICONDIR, per-entry offset+length bounds, and
+ *    each payload identified as PNG (recursively validated) or a DIB
+ *    header size.
+ *  - ICNS: 'icns' magic, declared file length equal to the file, and the
+ *    back-to-back element walk (element data is not padded).
+ *  - TTF/OTF/TTC: sfnt version, table-directory bounds, every table's
+ *    offset+length inside the file, and the head table's magicNumber —
+ *    the integrity field font tools maintain (checkSumAdjustment is
+ *    deliberately not enforced: subsetters legitimately leave it stale
+ *    and no shipped consumer reads it). TTC recurses per member font.
+ *  - WOFF: header length, table-directory bounds and per-table
+ *    offset+stored-length bounds.
+ *  - WOFF2: header length, the variable-length table directory (flags,
+ *    known-tag index or arbitrary tag, UIntBase128 origLength and
+ *    transformLength with the spec's leading-zero, 5-byte and 32-bit
+ *    limits, duplicate tags and the loca transformLength==0 rule), then
+ *    the brotli stream decompressing to exactly the directory's
+ *    uncompressed total — the same check fontTools' reader applies.
+ *  - gzip: zlib's own inflate, which validates the header, deflate body
+ *    and trailing CRC-32/ISIZE.
+ */
+const BINARY_U16 = (b, o) => b.readUInt16BE(o);
+const BINARY_U16LE = (b, o) => b.readUInt16LE(o);
+const BINARY_U32 = (b, o) => b.readUInt32BE(o);
+const BINARY_U32LE = (b, o) => b.readUInt32LE(o);
+const BINARY_CHUNK_TYPE = /^[A-Za-z][A-Z][A-Za-z]{2}$/;
+
+function binaryPngError(b) {
+  if (b.length < 8 || BINARY_U32(b, 0) !== 0x89504e47 || BINARY_U32(b, 4) !== 0x0d0a1a0a) return 'bad signature';
+  let off = 8;
+  let first = true;
+  let sawIend = false;
+  while (off < b.length) {
+    if (off + 8 > b.length) return `truncated chunk header at ${off}`;
+    const len = BINARY_U32(b, off);
+    const type = b.toString('latin1', off + 4, off + 8);
+    if (!BINARY_CHUNK_TYPE.test(type)) return `bad chunk type at ${off}`;
+    if (off + 12 + len > b.length) return `truncated ${type} chunk at ${off}`;
+    const dataStart = off + 8;
+    if ((crc32(b.subarray(off + 4, dataStart + len)) >>> 0) !== BINARY_U32(b, dataStart + len)) {
+      return `CRC mismatch in ${type} chunk at ${off}`;
+    }
+    if (first) {
+      first = false;
+      if (type !== 'IHDR' || len !== 13) return 'first chunk is not IHDR(13)';
+      const w = BINARY_U32(b, dataStart);
+      const h = BINARY_U32(b, dataStart + 4);
+      if (w === 0 || h === 0) return 'IHDR zero dimension';
+      const bitDepth = b[dataStart + 8];
+      const colorType = b[dataStart + 9];
+      const compression = b[dataStart + 10];
+      const filter = b[dataStart + 11];
+      const interlace = b[dataStart + 12];
+      const depths = { 0: [1, 2, 4, 8, 16], 2: [8, 16], 3: [1, 2, 4, 8], 4: [8, 16], 6: [8, 16] };
+      if (!(depths[colorType] ?? []).includes(bitDepth)) return `IHDR bit depth ${bitDepth} illegal for color type ${colorType}`;
+      if (compression !== 0) return 'IHDR compression method not 0';
+      if (filter !== 0) return 'IHDR filter method not 0';
+      if (interlace !== 0 && interlace !== 1) return 'IHDR bad interlace method';
+    }
+    if (type === 'IEND' && len !== 0) return 'IEND carries data';
+    off += 12 + len;
+    if (type === 'IEND') { sawIend = true; break; }
+  }
+  if (!sawIend) return 'missing IEND';
+  if (off !== b.length) return `trailing ${b.length - off} bytes after IEND`;
+  return null;
+}
+
+function binaryJpegError(b) {
+  if (b.length < 4 || b[0] !== 0xff || b[1] !== 0xd8) return 'missing SOI';
+  let off = 2;
+  while (off < b.length) {
+    if (b[off] !== 0xff) return `expected marker at ${off}`;
+    while (off < b.length && b[off] === 0xff) off += 1;
+    if (off >= b.length) return 'truncated marker';
+    const marker = b[off++];
+    if (marker === 0xd9) return null;
+    if (marker === 0x00) return 'FF00 stuffed byte outside scan data';
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd8)) continue;
+    if (off + 2 > b.length) return 'truncated segment length';
+    const len = BINARY_U16(b, off);
+    if (len < 2) return `bad segment length ${len} for marker FF${marker.toString(16)}`;
+    if (off + len > b.length) return `truncated segment FF${marker.toString(16)} at ${off}`;
+    if (marker !== 0xda) { off += len; continue; }
+    // SOS: skip the header, then entropy data until EOI or the next marker.
+    off += len;
+    while (off < b.length) {
+      if (b[off] !== 0xff) { off += 1; continue; }
+      const ffStart = off;
+      while (off < b.length && b[off] === 0xff) off += 1;
+      if (off >= b.length) return 'truncated marker run in scan data';
+      const m = b[off++];
+      if (m === 0x00) continue;
+      if (m === 0xd9) return null;
+      if (m === 0x01 || (m >= 0xd0 && m <= 0xd7)) continue;
+      off = ffStart;
+      break;
+    }
+    if (off >= b.length) return 'scan data ran to EOF without EOI';
+  }
+  return 'no EOI found';
+}
+
+function binaryWebpError(b) {
+  if (b.length < 12 || b.toString('latin1', 0, 4) !== 'RIFF' || b.toString('latin1', 8, 12) !== 'WEBP') return 'bad RIFF/WEBP header';
+  if (BINARY_U32LE(b, 4) + 8 !== b.length) return `RIFF size ${BINARY_U32LE(b, 4)}+8 != file ${b.length}`;
+  let off = 12;
+  let chunks = 0;
+  while (off < b.length) {
+    if (off + 8 > b.length) return `truncated chunk header at ${off}`;
+    const fourcc = b.toString('latin1', off, off + 4);
+    const size = BINARY_U32LE(b, off + 4);
+    const padded = size + (size & 1);
+    if (off + 8 + padded > b.length) return `truncated ${fourcc} chunk at ${off}`;
+    off += 8 + padded;
+    chunks += 1;
+  }
+  if (chunks === 0) return 'no chunks';
+  return null;
+}
+
+const BINARY_DIB_HEADER_SIZES = new Set([12, 40, 52, 56, 64, 108, 124]);
+
+function binaryIcoError(b) {
+  if (b.length < 6) return 'too small';
+  const type = BINARY_U16LE(b, 2);
+  const count = BINARY_U16LE(b, 4);
+  if (BINARY_U16LE(b, 0) !== 0) return `reserved field ${BINARY_U16LE(b, 0)} != 0`;
+  if (type !== 1 && type !== 2) return `type ${type} is neither icon nor cursor`;
+  if (b.length < 6 + count * 16) return 'truncated directory';
+  for (let i = 0; i < count; i += 1) {
+    const e = 6 + i * 16;
+    const bytesInRes = BINARY_U32LE(b, e + 8);
+    const offset = BINARY_U32LE(b, e + 12);
+    if (bytesInRes === 0) return `entry ${i} empty`;
+    if (offset + bytesInRes > b.length) return `entry ${i} out of bounds`;
+    const payload = b.subarray(offset, offset + bytesInRes);
+    const isPng = payload.length >= 8 && BINARY_U32(payload, 0) === 0x89504e47 && BINARY_U32(payload, 4) === 0x0d0a1a0a;
+    if (isPng) {
+      const pngError = binaryPngError(payload);
+      if (pngError) return `entry ${i}: ${pngError}`;
+      continue;
+    }
+    const dibSize = payload.length >= 4 ? BINARY_U32(payload, 0) : 0;
+    if (!BINARY_DIB_HEADER_SIZES.has(dibSize)) return `entry ${i} payload is neither PNG nor DIB`;
+  }
+  return null;
+}
+
+function binaryIcnsError(b) {
+  if (b.length < 8 || b.toString('latin1', 0, 4) !== 'icns') return 'bad magic';
+  if (BINARY_U32(b, 4) !== b.length) return `length field ${BINARY_U32(b, 4)} != file ${b.length}`;
+  let off = 8;
+  while (off < b.length) {
+    if (off + 8 > b.length) return `truncated element header at ${off}`;
+    const len = BINARY_U32(b, off + 4);
+    if (len < 8 || off + len > b.length) return `bad element length ${len} at ${off}`;
+    off += len;
+  }
+  return null;
+}
+
+function binarySfntError(b, base = 0) {
+  if (base + 12 > b.length) return 'too small for sfnt';
+  const tag = b.toString('latin1', base, base + 4);
+  if (tag === 'ttcf') {
+    const version = BINARY_U32(b, base + 4);
+    if (version !== 0x00010000 && version !== 0x00020000) return `bad ttcf version ${version}`;
+    const numFonts = BINARY_U32(b, base + 8);
+    if (base + 12 + numFonts * 4 > b.length) return 'ttcf directory out of bounds';
+    for (let i = 0; i < numFonts; i += 1) {
+      const off = BINARY_U32(b, base + 12 + i * 4);
+      if (off >= b.length) return `ttcf font ${i} offset out of bounds`;
+      const error = binarySfntError(b, off);
+      if (error) return `ttcf font ${i}: ${error}`;
+    }
+    return null;
+  }
+  const magic = BINARY_U32(b, base);
+  if (!(magic === 0x00010000 || tag === 'OTTO' || tag === 'true' || tag === 'typ1')) return `bad sfnt version ${JSON.stringify(tag)}`;
+  const numTables = BINARY_U16(b, base + 4);
+  const dirEnd = base + 12 + numTables * 16;
+  if (dirEnd > b.length) return `table directory (${numTables} tables) out of bounds`;
+  let headOffset = -1;
+  let headLength = 0;
+  for (let i = 0; i < numTables; i += 1) {
+    const r = base + 12 + i * 16;
+    const tableTag = b.toString('latin1', r, r + 4);
+    const offset = BINARY_U32(b, r + 8);
+    const length = BINARY_U32(b, r + 12);
+    if (offset + length > b.length) return `table ${tableTag} out of bounds (${offset}+${length} > ${b.length})`;
+    if (tableTag === 'head') { headOffset = offset; headLength = length; }
+  }
+  if (headOffset >= 0) {
+    if (headLength < 54 || headOffset + 54 > b.length) return 'head table truncated';
+    if (BINARY_U32(b, headOffset + 12) !== 0x5f0f3cf5) return 'head magicNumber mismatch';
+  }
+  return null;
+}
+
+function binaryWoffError(b) {
+  if (b.length < 44) return 'too small for WOFF';
+  if (b.toString('latin1', 0, 4) !== 'wOFF') return 'bad magic';
+  if (BINARY_U32(b, 8) !== b.length) return `length field ${BINARY_U32(b, 8)} != file ${b.length}`;
+  const numTables = BINARY_U16(b, 12);
+  if (BINARY_U32(b, 16) === 0) return 'totalSfntSize 0';
+  const dirEnd = 44 + numTables * 20;
+  if (dirEnd > b.length) return 'table directory out of bounds';
+  for (let i = 0; i < numTables; i += 1) {
+    const r = 44 + i * 20;
+    const offset = BINARY_U32(b, r + 4);
+    const compLength = BINARY_U32(b, r + 8);
+    const origLength = BINARY_U32(b, r + 12);
+    if (offset + compLength > b.length) return `table ${b.toString('latin1', r, r + 4)} out of bounds`;
+    if (origLength === 0 && compLength !== 0) return `table ${b.toString('latin1', r, r + 4)} origLength 0 with compLength ${compLength}`;
+  }
+  return null;
+}
+
+/** WOFF2 known-tags table (spec order; flags bits 0-5 index it, 0x3F means an arbitrary tag follows). */
+const WOFF2_KNOWN_TAGS = [
+  'cmap', 'head', 'hhea', 'hmtx', 'maxp', 'name', 'OS/2', 'post', 'cvt ', 'fpgm',
+  'glyf', 'loca', 'prep', 'CFF ', 'VORG', 'EBDT', 'EBLC', 'gasp', 'hdmx', 'kern',
+  'LTSH', 'PCLT', 'VDMX', 'vhea', 'vmtx', 'BASE', 'GDEF', 'GPOS', 'GSUB', 'EBSC',
+  'JSTF', 'MATH', 'CBDT', 'CBLC', 'COLR', 'CPAL', 'SVG ', 'sbix', 'acnt', 'avar',
+  'bdat', 'bloc', 'bsln', 'cvar', 'fdsc', 'feat', 'fmtx', 'fvar', 'gvar', 'hsty',
+  'just', 'lcar', 'mort', 'morx', 'opbd', 'prop', 'trak', 'Zapf', 'Silf', 'Glat',
+  'Gloc', 'Feat', 'Sill',
+];
+
+/** UIntBase128 per the WOFF2 spec: 1-5 bytes, high bit continues, no leading 0x80, at most 2^32-1. */
+function binaryWoff2Base128(b, pos) {
+  if (pos >= b.length) return { error: 'truncated base128' };
+  if (b[pos] === 0x80) return { error: 'base128 leading zeros' };
+  let result = 0;
+  for (let i = 0; i < 5; i += 1) {
+    if (pos + i >= b.length) return { error: 'truncated base128' };
+    const code = b[pos + i];
+    if (result & 0xfe000000) return { error: 'base128 exceeds 2^32-1' };
+    result = (result << 7) | (code & 0x7f);
+    if ((code & 0x80) === 0) return { value: result >>> 0, next: pos + i + 1 };
+  }
+  return { error: 'base128 longer than 5 bytes' };
+}
+
+function binaryWoff2Error(b) {
+  if (b.length < 48) return 'too small for WOFF2';
+  if (b.toString('latin1', 0, 4) !== 'wOF2') return 'bad magic';
+  if (BINARY_U32(b, 8) !== b.length) return `length field ${BINARY_U32(b, 8)} != file ${b.length}`;
+  const numTables = BINARY_U16(b, 12);
+  if (BINARY_U16(b, 14) !== 0) return `reserved field ${BINARY_U16(b, 14)} != 0`;
+  const totalSfnt = BINARY_U32(b, 16);
+  const totalCompressed = BINARY_U32(b, 20);
+  const metaOffset = BINARY_U32(b, 28);
+  const metaLength = BINARY_U32(b, 32);
+  const privOffset = BINARY_U32(b, 40);
+  const privLength = BINARY_U32(b, 44);
+  if (totalSfnt === 0) return 'totalSfntSize 0';
+  // The variable-length table directory sits between the 48-byte header and
+  // the brotli stream; its per-entry transform lengths sum to the exact
+  // decompressed size, the check fontTools' reader applies.
+  let pos = 48;
+  let uncompressedSize = 0;
+  const seen = new Set();
+  for (let i = 0; i < numTables; i += 1) {
+    if (pos >= b.length) return `table ${i} directory truncated`;
+    const flags = b[pos++];
+    const knownIndex = flags & 0x3f;
+    let tag;
+    if (knownIndex === 0x3f) {
+      if (pos + 4 > b.length) return `table ${i} tag truncated`;
+      tag = b.toString('latin1', pos, pos + 4);
+      pos += 4;
+    } else {
+      tag = WOFF2_KNOWN_TAGS[knownIndex];
+    }
+    if (seen.has(tag)) return `duplicate table ${tag}`;
+    seen.add(tag);
+    const orig = binaryWoff2Base128(b, pos);
+    if (orig.error) return `table ${tag} origLength: ${orig.error}`;
+    pos = orig.next;
+    const transformVersion = flags >> 6;
+    const transformed = tag === 'glyf' || tag === 'loca' ? transformVersion !== 3 : transformVersion !== 0;
+    let entryLength = orig.value;
+    if (transformed) {
+      const tlen = binaryWoff2Base128(b, pos);
+      if (tlen.error) return `table ${tag} transformLength: ${tlen.error}`;
+      pos = tlen.next;
+      entryLength = tlen.value;
+      if (tag === 'loca' && entryLength !== 0) return "'loca' transformLength must be 0";
+    }
+    uncompressedSize += entryLength;
+    if (!Number.isSafeInteger(uncompressedSize)) return 'uncompressed size overflow';
+  }
+  if (pos + totalCompressed > b.length) return `compressed font data ${totalCompressed} out of bounds`;
+  for (const [name, offset, length] of [['meta', metaOffset, metaLength], ['priv', privOffset, privLength]]) {
+    if (length > 0 && (offset === 0 || offset + length > b.length)) return `${name} block out of bounds`;
+  }
+  try {
+    const out = brotliDecompressSync(b.subarray(pos, pos + totalCompressed));
+    if (out.length !== uncompressedSize) return `brotli stream decodes to ${out.length} bytes, directory total ${uncompressedSize}`;
+  } catch (error) {
+    return `brotli decompress failed: ${error.message}`;
+  }
+  return null;
+}
+
+function binaryGzipError(b) {
+  try {
+    gunzipSync(b);
+    return null;
+  } catch (error) {
+    return `gunzip failed: ${error.message}`;
+  }
+}
+
+const BINARY_ASSET_CHECKERS = [
+  [/\.png$/i, binaryPngError],
+  [/\.jpe?g$/i, binaryJpegError],
+  [/\.webp$/i, binaryWebpError],
+  [/\.ico$/i, binaryIcoError],
+  [/\.cur$/i, binaryIcoError],
+  [/\.icns$/i, binaryIcnsError],
+  [/\.(?:ttf|otf|ttc)$/i, (b) => binarySfntError(b)],
+  [/\.woff$/i, binaryWoffError],
+  [/\.woff2$/i, binaryWoff2Error],
+  [/\.gz$/i, binaryGzipError],
+];
+
+/** First structural error in a binary asset as a string, or null; never throws. */
+export function binaryAssetError(data, path) {
+  const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+  const lower = path.toLowerCase();
+  const checker = BINARY_ASSET_CHECKERS.find(([pattern]) => pattern.test(lower))?.[1];
+  if (!checker) return `no checker for ${path}`;
+  try {
+    return checker(buf);
+  } catch (error) {
+    return `parser error: ${error.message}`;
+  }
+}
+
+/** Syntax-check changed binary assets; false with one FAIL line per corrupt file. */
+export function runBinaryAssetCheck(root, files, read = readFileSync) {
+  const failures = [];
+  for (const path of files) {
+    try {
+      const error = binaryAssetError(read(resolve(root, path)), path);
+      if (error) failures.push(`${path}: ${error}`);
+    } catch (error) {
+      failures.push(`${path}: unreadable: ${error.message}`);
+    }
+  }
+  if (failures.length) {
+    for (const failure of failures) console.error(`FAIL binary asset check: ${failure}`);
+    return false;
+  }
+  console.log('PASS binary asset check');
+  return true;
+}
+
+/**
  * `.patch` and `.diff` files are unified diffs consumed by `git apply` —
  * host-integration candidates, staged dispatcher changes, strategy
  * proposals and evidence exports all fail only when someone tries to
@@ -2931,6 +3329,11 @@ function main() {
     } else if (!runMdcSyntaxCheck(root, selection.mdcFiles)) {
       process.exitCode = 1;
     }
+  }
+  if (selection.binaryFiles.length === 0) {
+    console.log('PASS binary asset check skipped: no binary asset change');
+  } else if (!runBinaryAssetCheck(root, selection.binaryFiles)) {
+    process.exitCode = 1;
   }
   if (conflictFiles.length === 0) {
     console.log('PASS conflict marker check skipped: no changed file to scan');
