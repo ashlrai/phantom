@@ -326,6 +326,20 @@ describe('chooseNodeForLane', () => {
     expect(chooseNodeForLane(view, 'local-model')).toMatchObject({ node: 'node-b', target: 'remote', reason: 'remote-ready' });
   });
 
+  it('local-model ignores omlx-* caps outside the advertised family', () => {
+    // `phm node join --caps` accepts any well-formed cap name, so a typo or a
+    // pack-style name can land in the registry. LOCAL_MODEL_CAPS is the
+    // catalog's whitelist — "anything else named omlx-* is not ours" — and a
+    // node advertising `omlx-typo` must not read as local-model ready.
+    const view = readNodesView(deps(tailnet([peer('node-b', true), peer('node-c', true)]), registry([
+      node('node-a'),
+      node('node-b', { caps: ['omlx-typo', 'omlx-chat'] }),
+      node('node-c', { caps: ['omlx-frontier'] }),
+    ])));
+    expect(nodesThatCanTake(view, 'local-model').map(row => row.name)).toEqual(['node-c']);
+    expect(chooseNodeForLane(view, 'local-model')).toMatchObject({ node: 'node-c', target: 'remote', reason: 'remote-ready' });
+  });
+
   it('market lane names resolve to the remote caps the claim bridge requires', () => {
     // `codex-personal`/`claude-max` are queue lanes, not advertised caps: the
     // claim bridge, `phm nodes plan` and the fleet resource plan all resolve
