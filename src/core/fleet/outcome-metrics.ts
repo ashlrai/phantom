@@ -1,5 +1,6 @@
 /** Offline attempt-cohort metrics. No clock, filesystem, pricing or routing side effects. */
-import { isNodePoolLedgerRow } from './jobs-ledger-dialect.js';
+import { ledgerPhase } from './empty-cause.js';
+import { isNodePoolLedgerRow, ledgerLifecycleEvent, ledgerOutcomeState } from './jobs-ledger-dialect.js';
 
 export interface OutcomeGroup {
   name: string;
@@ -45,7 +46,7 @@ export interface OutcomeMetricsInput {
   sourceState?: 'healthy' | 'degraded';
 }
 type Row = Record<string, unknown>;
-type Event = { row: Row; kind: string; at: number; ref: string; job: string | null; url: string | null };
+type Event = { row: Row; kind: string; state: string | null; at: number; ref: string; job: string | null; url: string | null };
 type Attempt = { launch: Event; finishes: Event[]; prs: Event[] };
 const DAY = 86_400_000;
 /**
@@ -61,7 +62,7 @@ const DAY = 86_400_000;
 const START_KINDS: ReadonlySet<string> = new Set(['launch', 'batch_claim']);
 const FINISH_KINDS: ReadonlySet<string> = new Set(['finish', 'task_outcome']);
 const JOB_REQUIRED_KINDS: ReadonlySet<string> = new Set(['launch', 'finish', 'batch_claim', 'task_outcome']);
-const KINDS: ReadonlySet<string> = new Set(['launch', 'finish', 'publish', 'published', 'outcome', 'merged', 'revert', 'revert_coverage', 'batch_claim', 'task_outcome']);
+const KINDS: ReadonlySet<string> = new Set(['launch', 'finish', 'publish', 'outcome', 'merged', 'revert', 'revert_coverage', 'batch_claim', 'task_outcome']);
 /** RQ-BATCH-* session ids are dispatch infrastructure, not job attempts. */
 const BATCH_SESSION_PREFIX = 'RQ-BATCH-';
 const label = (value: unknown): string | null => typeof value === 'string' && /^[\w][\w.:@/-]{0,159}$/.test(value) ? value : null;
@@ -76,9 +77,7 @@ const time = (value: unknown): number | null => {
  */
 const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
 /** Ledger row time; MERGED prefers mergedAt, CLOSED closedAt. */
-function eventTs(row: Row): number | null {
-  const raw = row.state ?? row.outcome ?? row.status ?? row.phase ?? row.result ?? row.conclusion;
-  const phase = typeof raw === 'string' ? raw.trim().toUpperCase() : '';
+function eventTs(row: Row, phase: string | null): number | null {
   const preferred = phase === 'MERGED' ? 'mergedAt' : phase === 'CLOSED' ? 'closedAt' : null;
   const fields = preferred === null ? TS_KEYS : [preferred, ...TS_KEYS.filter(f => f !== preferred)];
   for (const field of fields) {
@@ -132,13 +131,16 @@ export function buildOutcomeMetrics(input: OutcomeMetricsInput): OutcomeMetrics 
     // a per-attempt id and no row carries attempt fields, so a
     // session-pool `launch`/`finish` pair would mint a phantom attempt.
     if (isNodePoolLedgerRow(row)) continue;
-    const kind = label(row.event ?? row.type ?? row.kind) ?? (row.source === 'metrics-outcomes-reconciler' ? 'outcome' : null);
+    const phase = ledgerPhase(row);
+    const event = ledgerLifecycleEvent(row, phase);
+    const state = ledgerOutcomeState(row, event, phase);
+    const kind = event === 'publish' && (state === 'MERGED' || state === 'CLOSED') ? 'outcome' : event;
     if (!kind || !KINDS.has(kind)) continue;
-    const at = eventTs(row);
+    const at = eventTs(row, state ?? phase);
     const job = label(row.job ?? row.job_id ?? row.jobId ?? row.id);
     const prUrl = url(row.url ?? row.prUrl ?? row.pr_url ?? row.pr ?? row.html_url);
     if (at === null || (JOB_REQUIRED_KINDS.has(kind) && !job)) { ignoredRows++; continue; }
-    if (at <= until) events.push({ row, kind, at, ref: `events:${i}`, job, url: prUrl });
+    if (at <= until) events.push({ row, kind, state, at, ref: `events:${i}`, job, url: prUrl });
   }
   events.sort((a, b) => a.at - b.at || (Number(START_KINDS.has(b.kind)) - Number(START_KINDS.has(a.kind))));
   const attempts: Attempt[] = [], current = new Map<string, Attempt>(), seen = new Set<string>();
@@ -167,7 +169,7 @@ export function buildOutcomeMetrics(input: OutcomeMetricsInput): OutcomeMetrics 
       const a = current.get(e.job);
       if (!a) continue;
       if (FINISH_KINDS.has(e.kind)) a.finishes.push(e);
-      if (e.url && ['publish', 'published'].includes(e.kind)) a.prs.push(e);
+      if (e.url && e.kind === 'publish') a.prs.push(e);
     }
   }
   const cohort = attempts.filter(a => a.launch.at >= since);
@@ -187,8 +189,7 @@ export function buildOutcomeMetrics(input: OutcomeMetricsInput): OutcomeMetrics 
   const coverageEvents = events.filter(e => e.kind === 'revert_coverage');
   let unknownMergeTimes = 0;
   for (const [prUrl, rows] of prs) {
-    const merges = rows.filter(e => e.kind === 'merged' || (e.kind === 'outcome' &&
-      (e.row.state ?? e.row.outcome ?? e.row.status ?? e.row.phase ?? e.row.result ?? e.row.conclusion) === 'MERGED'));
+    const merges = rows.filter(e => e.state === 'MERGED');
     if (!merges.length) continue;
     const stamps = [...new Set(merges.map(e => time(e.row.mergedAt) ?? (e.kind === 'merged' ? e.at : null)).filter((t): t is number => t !== null))];
     if (stamps.length !== 1) { unknownMergeTimes++; continue; }
@@ -203,7 +204,7 @@ export function buildOutcomeMetrics(input: OutcomeMetricsInput): OutcomeMetrics 
       (time(e.row.from) ?? Infinity) <= at && (time(e.row.through) ?? -Infinity) >= at + 7 * DAY &&
       (time(e.row.through) ?? Infinity) <= e.at);
     const measuredTtm = [...new Set(merges.map(e => number(e.row.ttm_s)).filter((v): v is number => v !== null))];
-    const publishedAt = rows.filter(e => ['publish', 'published'].includes(e.kind) && e.at <= at).map(e => e.at);
+    const publishedAt = rows.filter(e => e.kind === 'publish' && e.at <= at).map(e => e.at);
     const ttm = measuredTtm.length === 1 ? measuredTtm[0]! : measuredTtm.length === 0 && publishedAt.length ? (at - publishedAt.reduce((a, b) => Math.min(a, b), Infinity)) / 1000 : null;
     const list = repos.get(repo) ?? [];
     list.push({ at, ttm, reverted, covered: reverted || coverage.length > 0, refs: [...rows, ...coverage].map(e => e.ref) }); repos.set(repo, list);
