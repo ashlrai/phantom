@@ -160,8 +160,9 @@ export async function getLaneQueueCounts(
   }).sort((a, b) => a.lane.localeCompare(b.lane));
   const totalReasons = new Map<string, number>();
   for (const row of rows) for (const r of row.blockedReasons) totalReasons.set(r.reason, (totalReasons.get(r.reason) ?? 0) + r.count);
-  const runningState: QueueCountsSourceState = snapshot.sources.queueState.state === 'healthy' || snapshot.sources.queue.state === 'healthy'
-    ? 'healthy' : snapshot.sources.queueState.state === 'degraded' || snapshot.sources.queue.state === 'degraded' ? 'degraded' : 'missing';
+  const runningSources = [snapshot.sources.dispatcher.state, snapshot.sources.queueState.state, snapshot.sources.queue.state];
+  const runningState: QueueCountsSourceState = runningSources.includes('healthy') ? 'healthy'
+    : runningSources.includes('degraded') ? 'degraded' : 'missing';
   // The merge ledger's file state can be degraded (a truncated tail) while
   // the merge window itself is still fully observed; the report's ledger
   // source answers whether merge counts are complete, not whether every
@@ -175,7 +176,7 @@ export async function getLaneQueueCounts(
     else if (state === 'degraded' || state === 'unavailable') notes.push(`${what} is unreadable or has malformed rows: ${effect}.`);
   };
   say('queue/ready.tsv', sources.ready, 'ready, parked and blocked reasons are unknown');
-  say('queue state (queue.v1.json)', sources.running, 'running counts are unknown');
+  say('dispatcher or queue state', sources.running, 'complete running counts are unknown');
   say('merge ledger (jobs.jsonl)', sources.ledger, 'merges are unknown');
   say('metrics/jobs.jsonl', metrics.state, 'oldest waits are unknown');
   return {
@@ -185,7 +186,7 @@ export async function getLaneQueueCounts(
     totals: {
       ready: readyKnown ? sum(rows, 'ready') : null,
       parked: readyKnown ? sum(rows, 'parked') : null,
-      running: (snapshot.sources.queueState.state === 'healthy' || snapshot.sources.queue.state === 'healthy') && rows.every(r => r.running !== null) ? sum(rows, 'running') : null,
+      running: runningState === 'healthy' && rows.every(r => r.running !== null) ? sum(rows, 'running') : null,
       merges: ledgerState === 'healthy' && rows.every(r => r.merges !== null) ? sum(rows, 'merges') : null,
       blockedReasons: rankReasons(totalReasons),
       stale: readyKnown ? sum(rows, 'stale') : null,

@@ -43,6 +43,23 @@ it('counts ready, parked, running and last-hour merges per lane', async () => {
   expect(report.totals).toEqual({ ready: 3, parked: 1, running: 2, merges: 3, blockedReasons: [{ reason: 'DEP', count: 1 }], stale: 0 });
 });
 
+it.each([
+  { label: 'fresh', tick: minutesAgo(1), otherRunning: 0, source: 'healthy', running: 2, total: 2 },
+  { label: 'partial', tick: minutesAgo(1), otherRunning: null, source: 'degraded', running: 2, total: null },
+  { label: 'stale', tick: minutesAgo(5), otherRunning: 0, source: 'degraded', running: null, total: null },
+  { label: 'future', tick: minutesAgo(-1), otherRunning: 0, source: 'degraded', running: null, total: null },
+])('reports dispatcher-only running counts with a $label snapshot', async ({ tick, otherRunning, source, running, total }) => {
+  await writeFile(join(queueDir, 'status.json'), JSON.stringify({
+    last_tick: tick,
+    lanes: { devin: { running: 2 }, codex: { running: otherRunning } },
+  }));
+  const report = await getLaneQueueCounts({ runsDir: root, now });
+  expect(report.sources.running).toBe(source);
+  expect(report.totals.running).toBe(total);
+  if (running === null) expect(report.lanes).toEqual([]);
+  else expect(report.lanes).toMatchObject([{ lane: 'devin', running }]);
+});
+
 it('ignores merge events with missing or invalid timestamps', async () => {
   await writeFile(join(queueDir, 'ready.tsv'), row('READY', 'a-1', 'devin'));
   await writeFile(join(queueDir, 'jobs.jsonl'), [
