@@ -6,6 +6,7 @@
  * from one working session's conversation to the next.
  */
 import { useLayoutEffect, useState, type RefObject } from 'react';
+import { flatTree, type LiveSessionsV1 } from '../../../../core/fleet/live-sessions.js';
 
 /** The narrowest pane that holds the Leader chat and a session side by side. */
 export const BESIDE_MIN_PX = 900;
@@ -19,14 +20,16 @@ export function fitsBeside(width: number): boolean {
  * "not laid out" (a hidden tab, jsdom): that keeps the last answer, which
  * starts as false, so an unmeasured pane never squeezes two columns.
  */
-export function useBeside(ref: RefObject<HTMLElement | null>): boolean {
-  const [beside, setBeside] = useState(false);
+export function useSurfaceFit(ref: RefObject<HTMLElement | null>): { beside: boolean; measured: boolean } {
+  const [fit, setFit] = useState({ beside: false, measured: false });
   useLayoutEffect(() => {
     const node = ref.current;
     if (!node) return undefined;
     const read = (): void => {
       const width = node.getBoundingClientRect().width;
-      if (width > 0) setBeside(fitsBeside(width));
+      if (!Number.isFinite(width) || width <= 0) return;
+      const beside = fitsBeside(width);
+      setFit(was => was.measured && was.beside === beside ? was : { beside, measured: true });
     };
     read();
     if (typeof ResizeObserver === 'undefined') return undefined;
@@ -34,7 +37,7 @@ export function useBeside(ref: RefObject<HTMLElement | null>): boolean {
     observer.observe(node);
     return () => observer.disconnect();
   }, [ref]);
-  return beside;
+  return fit;
 }
 
 /**
@@ -56,4 +59,9 @@ export function stepWords(working: readonly string[] | null, current: string): s
   const at = working.indexOf(current);
   if (at >= 0) return `${at + 1} of ${working.length} working`;
   return working.length === 0 ? 'Not working now · nobody else is' : `Not working now · ${working.length} working`;
+}
+
+/** A synthetic unknown-parent group is never a restorable conversation. */
+export function holdsSession(list: LiveSessionsV1, id: string): boolean {
+  return flatTree(list.tree.roots).some(({ node }) => node.id === id && node.kind !== 'unknown-parent');
 }
