@@ -13,16 +13,27 @@
 import { modelTiers, type ModelTier } from '../../resources/model-tiers.js';
 import { assessHostHeadroom, type HostHeadroom } from '../../run/host-headroom.js';
 
-const MIB = 1024 ** 2;
-export const LANE_MODEL_ENVELOPE_FRACTION = 0.5;
+export const OMLX_MIB = 1024 ** 2;
+export const OMLX_GIB = 1024 ** 3;
+const LANE_MODEL_ENVELOPE_FRACTION = 0.5;
 /** Resident runtime beyond weights + KV: server process, activations, scratch. */
-export const LANE_PROCESS_OVERHEAD_BYTES = 1024 ** 3;
+const LANE_PROCESS_OVERHEAD_BYTES = OMLX_GIB;
 export const LANE_MAX_SLOTS = 4;
-export const LANE_DEFAULT_SLOTS = 2;
+const LANE_DEFAULT_SLOTS = 2;
 
 /** Caps a node may advertise; anything else named omlx-* is not ours. */
-export const LOCAL_MODEL_CAPS = ['omlx', 'omlx-fast', 'omlx-work', 'omlx-frontier'] as const;
+const LOCAL_MODEL_CAPS = ['omlx', 'omlx-fast', 'omlx-work', 'omlx-frontier'] as const;
 export const isLocalModelCap = (cap: string): boolean => (LOCAL_MODEL_CAPS as readonly string[]).includes(cap);
+
+/** True when `value` is a non-null, non-array object record. */
+export function isOmlxRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Round a byte budget down to a whole MiB boundary. */
+export function floorToMib(bytes: number): number {
+  return Math.floor(bytes / OMLX_MIB) * OMLX_MIB;
+}
 
 export interface OmlxModelQuality {
   humaneval: number | null; mbpp: number | null; livecodebench: number | null; bfcl: number | null;
@@ -57,7 +68,6 @@ export interface OmlxModelCandidate {
 }
 export interface OmlxModelCatalog { schemaVersion: 1; recordedAt: string; candidates: OmlxModelCandidate[] }
 
-const GIB = 1024 ** 3;
 const QWEN_BENCH = 'qwen2.5-coder technical report (arXiv:2409.12186)';
 export const OMLX_MODEL_CANDIDATES: OmlxModelCandidate[] = [
   {
@@ -131,14 +141,12 @@ export const OMLX_MODEL_CATALOG: OmlxModelCatalog = {
   schemaVersion: 1, recordedAt: '2026-11-05', candidates: OMLX_MODEL_CANDIDATES,
 };
 
-const object = (v: unknown): v is Record<string, unknown> =>
-  typeof v === 'object' && v !== null && !Array.isArray(v);
 const pos = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0;
 const optNum = (v: unknown): v is number | null => v === null || pos(v);
 const ID = /^[a-z0-9][a-z0-9.-]{0,127}$/;
 
 function parseCandidate(v: unknown): OmlxModelCandidate {
-  if (!object(v) || typeof v.id !== 'string' || !ID.test(v.id) || typeof v.repo !== 'string' ||
+  if (!isOmlxRecord(v) || typeof v.id !== 'string' || !ID.test(v.id) || typeof v.repo !== 'string' ||
       !/^[\w.-]+\/[\w.-]+$/.test(v.repo) || v.engine !== 'omlx' || !pos(v.paramsBillion) ||
       !['coder', 'instruct', 'distill-reasoning', 'moe'].includes(String(v.kind)) ||
       v.quantization !== '4bit' || !pos(v.contextLength) || !pos(v.servedContext) ||
@@ -146,14 +154,14 @@ function parseCandidate(v: unknown): OmlxModelCandidate {
     throw new Error('Invalid oMLX model candidate');
   }
   const e = v.evidence;
-  if (!object(e) || !optNum(e.decodeTokPerSec) || !optNum(e.prefillTokPerSec) ||
+  if (!isOmlxRecord(e) || !optNum(e.decodeTokPerSec) || !optNum(e.prefillTokPerSec) ||
       !optNum(e.peakBytes) || !optNum(e.mergeRate)) throw new Error('Invalid oMLX model evidence');
   const q = e.quality;
-  if (!object(q) || !optNum(q.humaneval) || !optNum(q.mbpp) || !optNum(q.livecodebench) ||
+  if (!isOmlxRecord(q) || !optNum(q.humaneval) || !optNum(q.mbpp) || !optNum(q.livecodebench) ||
       !optNum(q.bfcl) || typeof q.source !== 'string') {
     throw new Error('Invalid oMLX model quality evidence');
   }
-  const bench = e.bench === null ? null : object(e.bench) ? e.bench : null;
+  const bench = e.bench === null ? null : isOmlxRecord(e.bench) ? e.bench : null;
   if (e.bench !== null && (!bench || typeof bench.suite !== 'string' || typeof bench.host !== 'string' ||
       typeof bench.date !== 'string' || typeof bench.url !== 'string' || !/^https:\/\/[\w.-]+\//.test(bench.url))) {
     throw new Error('Invalid oMLX model benchmark reference');
@@ -163,7 +171,7 @@ function parseCandidate(v: unknown): OmlxModelCandidate {
 }
 
 export function parseOmlxModelCatalog(value: unknown): OmlxModelCatalog {
-  if (!object(value) || value.schemaVersion !== 1 || typeof value.recordedAt !== 'string' ||
+  if (!isOmlxRecord(value) || value.schemaVersion !== 1 || typeof value.recordedAt !== 'string' ||
       !Array.isArray(value.candidates) || !value.candidates.length) throw new Error('Invalid oMLX model catalog');
   const candidates = value.candidates.map(parseCandidate);
   if (new Set(candidates.map(c => c.id)).size !== candidates.length) throw new Error('Duplicate oMLX model candidate');
@@ -237,7 +245,7 @@ export function planOmlxLocalLanes(input: OmlxLaneInput): OmlxLanePlan {
     return base({ backoff: 'unsupported-platform', backoffReason: 'oMLX lanes run on Apple Silicon macOS only' });
   }
   if (!Number.isSafeInteger(total) || total <= 0) return base({ backoff: 'telemetry-unavailable', backoffReason: 'Unknown physical RAM' });
-  const budget = Math.floor(total * LANE_MODEL_ENVELOPE_FRACTION / MIB) * MIB;
+  const budget = floorToMib(total * LANE_MODEL_ENVELOPE_FRACTION);
   if (input.config?.enabled !== true) return base({ budgetBytes: budget, backoff: 'disabled', backoffReason: 'Enable with ~/.ashlr/local-lanes.json {"schemaVersion":1,"enabled":true}' });
   const decision = assessHostHeadroom(input.headroom);
   if (!decision.allowed) {
@@ -251,7 +259,7 @@ export function planOmlxLocalLanes(input: OmlxLaneInput): OmlxLanePlan {
   for (const c of catalog.candidates) {
     if (pinned !== undefined && c.id !== pinned) { rejected.push({ id: c.id, reason: 'not the configured model' }); continue; }
     const need = c.weightsBytes + c.kvSlotBytes + LANE_PROCESS_OVERHEAD_BYTES;
-    if (need > budget) { rejected.push({ id: c.id, reason: `needs ${(need / GIB).toFixed(1)} GiB > ${(budget / GIB).toFixed(1)} GiB envelope` }); continue; }
+    if (need > budget) { rejected.push({ id: c.id, reason: `needs ${(need / OMLX_GIB).toFixed(1)} GiB > ${(budget / OMLX_GIB).toFixed(1)} GiB envelope` }); continue; }
     const tiers = evidenceTiers(c);
     const r = rank(c, tiers);
     if (!best || r > best.rank) best = { c, tiers, rank: r };

@@ -67,10 +67,11 @@ import {
 } from './config.js';
 import type { LocalAgentRequestDefaults } from './config.js';
 import { applyLocalAgentDefaults, normaliseAnthropicRequest } from './anthropic-shim.js';
+import { formatErrorMessage, isRecord } from './paths.js';
 import type { AshlrConfig } from '../../types.js';
 
 /** The one path whose POST bodies are normalised. Everything else is a pipe. */
-export const ANTHROPIC_MESSAGES_PATH = '/v1/messages';
+const ANTHROPIC_MESSAGES_PATH = '/v1/messages';
 
 /**
  * Largest request body we will hold in memory to normalise it.
@@ -82,7 +83,7 @@ export const ANTHROPIC_MESSAGES_PATH = '/v1/messages';
  * oversized request degrades to the unnormalised passthrough it would have had
  * without this proxy at all, instead of failing.
  */
-export const MAX_NORMALISED_BODY_BYTES = 32 * 1024 * 1024;
+const MAX_NORMALISED_BODY_BYTES = 32 * 1024 * 1024;
 
 /**
  * Headers that describe THIS hop and must not be copied to the next one
@@ -283,13 +284,13 @@ export function normaliseMessagesBody(
     reportRequestAttribution(observer, raw.length, raw.length, null);
     return raw;
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+  if (!isRecord(parsed)) {
     reportRequestAttribution(observer, raw.length, raw.length, null);
     return raw;
   }
 
   try {
-    const normalised = normaliseAnthropicRequest(parsed as Record<string, unknown>);
+    const normalised = normaliseAnthropicRequest(parsed);
     // Defaults are applied AFTER the system-turn fold, and both are
     // identity-preserving when they add nothing, so an unconfigured runtime
     // still forwards the client's original bytes untouched.
@@ -357,19 +358,30 @@ export async function startAnthropicProxy(
   const inFlight = new Set<ClientRequest>();
   let closing: Promise<void> | null = null;
 
+  function writeJsonError(
+    res: ServerResponse,
+    status: number,
+    errorType: string,
+    message: string,
+    closeConnection = false,
+  ): void {
+    const body = JSON.stringify({
+      type: 'error',
+      error: { type: errorType, message: `anthropic-proxy: ${message}` },
+    });
+    res.writeHead(status, {
+      'content-type': 'application/json',
+      'content-length': String(Buffer.byteLength(body)),
+      ...(closeConnection ? { connection: 'close' } : {}),
+    });
+    res.end(body);
+  }
+
   /** Answer a request we could not forward. Never writes twice. */
   function failRequest(res: ServerResponse, reason: string): void {
     try {
       if (!res.headersSent && !res.destroyed) {
-        const body = JSON.stringify({
-          type: 'error',
-          error: { type: 'api_error', message: `anthropic-proxy: ${reason}` },
-        });
-        res.writeHead(502, {
-          'content-type': 'application/json',
-          'content-length': String(Buffer.byteLength(body)),
-        });
-        res.end(body);
+        writeJsonError(res, 502, 'api_error', reason);
         return;
       }
       if (!res.writableEnded) res.end();
@@ -438,16 +450,7 @@ export async function startAnthropicProxy(
   function handle(req: IncomingMessage, res: ServerResponse): void {
     if (enforceLocalClients && !isLocalClientRequest(req.headers)) {
       try {
-        const body = JSON.stringify({
-          type: 'error',
-          error: { type: 'permission_error', message: 'anthropic-proxy: non-local Host or Origin refused' },
-        });
-        res.writeHead(403, {
-          'content-type': 'application/json',
-          'content-length': String(Buffer.byteLength(body)),
-          connection: 'close',
-        });
-        res.end(body);
+        writeJsonError(res, 403, 'permission_error', 'non-local Host or Origin refused', true);
       } catch {
         // Socket already gone.
       }
@@ -664,7 +667,7 @@ export async function ensureAnthropicProxy(
     current = handle;
     return { handle };
   } catch (err: unknown) {
-    return { error: err instanceof Error ? err.message : String(err) };
+    return { error: formatErrorMessage(err) };
   } finally {
     if (starting === pending) starting = null;
   }

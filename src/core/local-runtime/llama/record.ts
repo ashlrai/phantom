@@ -11,11 +11,11 @@
  * rather than taking the CLI down.
  */
 
-import { mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { writePrivateFileAtomically } from '../../util/private-file-write.js';
-import { localRuntimeDir, ownershipRecordPath } from './paths.js';
+import { isRecord, localRuntimeDir, ownershipRecordPath, readBoundedJsonFile } from './paths.js';
 import type { LlamaOwnershipRecord, LlamaRuntimeOwner } from './types.js';
 
 /** A record larger than this is not one of ours; refuse to parse it. */
@@ -31,8 +31,8 @@ const OWNERS: readonly LlamaRuntimeOwner[] = ['cli', 'launchd', 'adopted'];
  * decision. Pure, so it is unit-testable without touching the filesystem.
  */
 export function parseOwnershipRecord(value: unknown): LlamaOwnershipRecord | null {
-  if (typeof value !== 'object' || value === null) return null;
-  const raw = value as Record<string, unknown>;
+  if (!isRecord(value)) return null;
+  const raw = value;
 
   if (raw['schemaVersion'] !== 1) return null;
 
@@ -84,13 +84,7 @@ export function parseOwnershipRecord(value: unknown): LlamaOwnershipRecord | nul
 
 /** Read the ownership record, or null when there is not a valid one. Never throws. */
 export function readOwnershipRecord(path = ownershipRecordPath()): LlamaOwnershipRecord | null {
-  try {
-    const stat = statSync(path);
-    if (!stat.isFile() || stat.size > MAX_RECORD_BYTES) return null;
-    return parseOwnershipRecord(JSON.parse(readFileSync(path, 'utf8')) as unknown);
-  } catch {
-    return null;
-  }
+  return parseOwnershipRecord(readBoundedJsonFile(path, MAX_RECORD_BYTES));
 }
 
 /**

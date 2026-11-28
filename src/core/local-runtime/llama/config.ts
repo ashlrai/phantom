@@ -12,6 +12,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { DEFAULT_LOCAL_MODEL_TAG } from '../../run/model-catalog.js';
+import { isRecord } from './paths.js';
 import { readOwnershipRecord } from './record.js';
 import type { AshlrConfig } from '../../types.js';
 import type { LlamaRuntimeConfig } from './types.js';
@@ -29,7 +30,7 @@ export const DEFAULT_LLAMA_HOST = '127.0.0.1';
  * throughput collapses rather than degrading. This is a DEFAULT REQUEST — the
  * live server's `/props.total_slots` remains the source of truth.
  */
-export const DEFAULT_LLAMA_SLOTS = 4;
+const DEFAULT_LLAMA_SLOTS = 4;
 
 /**
  * Total context, SHARED across slots — llama-server divides `-c` by `--parallel`,
@@ -68,7 +69,7 @@ export const DEFAULT_LLAMA_SLOTS = 4;
  * Operators on less memory override it with `--ctx` or
  * `models.llamaServer.context`.
  */
-export const DEFAULT_LLAMA_CONTEXT = 262_144;
+const DEFAULT_LLAMA_CONTEXT = 262_144;
 
 /**
  * Default port for the Anthropic normalising proxy (anthropic-proxy.ts).
@@ -122,7 +123,7 @@ interface LlamaServerConfigSection {
  * a template exception fires BEFORE inference, so the turn dies with no
  * partial output. Hence a closed list rather than a string passthrough.
  */
-export const LOCAL_AGENT_REASONING_EFFORTS = ['low', 'medium', 'xhigh'] as const;
+const LOCAL_AGENT_REASONING_EFFORTS = ['low', 'medium', 'xhigh'] as const;
 export type LocalAgentReasoningEffort = (typeof LOCAL_AGENT_REASONING_EFFORTS)[number];
 
 /**
@@ -220,10 +221,9 @@ function num(value: unknown, min: number, max: number): number | undefined {
  */
 export function resolveLocalAgentDefaults(cfg?: AshlrConfig): LocalAgentRequestDefaults {
   const raw = readSection(cfg).agentDefaults;
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return NO_LOCAL_AGENT_DEFAULTS;
-  const section = raw as Record<string, unknown>;
+  if (!isRecord(raw)) return NO_LOCAL_AGENT_DEFAULTS;
 
-  const effortRaw = str(section['reasoningEffort']);
+  const effortRaw = str(raw['reasoningEffort']);
   const reasoningEffort =
     effortRaw !== undefined
     && (LOCAL_AGENT_REASONING_EFFORTS as readonly string[]).includes(effortRaw)
@@ -232,17 +232,17 @@ export function resolveLocalAgentDefaults(cfg?: AshlrConfig): LocalAgentRequestD
 
   return {
     reasoningEffort,
-    temperature: num(section['temperature'], 0, 2) ?? null,
-    topP: num(section['topP'], 0, 1) ?? null,
-    topK: int(section['topK'], 1, 1_000) ?? null,
+    temperature: num(raw['temperature'], 0, 2) ?? null,
+    topP: num(raw['topP'], 0, 1) ?? null,
+    topK: int(raw['topK'], 1, 1_000) ?? null,
   };
 }
 
 function readSection(cfg?: AshlrConfig): LlamaServerConfigSection {
   const models = (cfg as unknown as Record<string, unknown> | undefined)?.['models'];
-  if (typeof models !== 'object' || models === null) return {};
-  const section = (models as Record<string, unknown>)['llamaServer'];
-  if (typeof section !== 'object' || section === null) return {};
+  if (!isRecord(models)) return {};
+  const section = models['llamaServer'];
+  if (!isRecord(section)) return {};
   return section as LlamaServerConfigSection;
 }
 
@@ -303,7 +303,7 @@ export function allowsNonLoopback(cfg?: AshlrConfig): boolean {
  * Absolute, because a bare name does not survive `sandbox-exec`'s `execvp`,
  * and because the ownership record compares argv against this exact string.
  */
-export function resolveLlamaServerBin(configured?: string): string | null {
+function resolveLlamaServerBin(configured?: string): string | null {
   const explicit = configured ?? str(process.env['LLAMA_SERVER_BIN']);
   if (explicit) {
     if (explicit.includes('/')) return existsSync(explicit) ? explicit : null;
@@ -585,14 +585,18 @@ export function resolveLocalAnthropicBaseUrl(cfg?: AshlrConfig): string {
   return `${originFor(runtime.host, runtime.anthropicPort)}/v1`;
 }
 
+/** Scheme + authority of an OpenAI-compatible base URL, falling back to stripping `/v1`. */
+export function originFromBaseUrl(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).origin;
+  } catch {
+    return baseUrl.replace(/\/v1\/?$/, '');
+  }
+}
+
 /** Scheme + authority of the resolved base URL, with `/v1` stripped. */
 export function resolveLlamaServerOrigin(cfg?: AshlrConfig): string {
-  const base = resolveLlamaServerBaseUrl(cfg);
-  try {
-    return new URL(base).origin;
-  } catch {
-    return base.replace(/\/v1\/?$/, '');
-  }
+  return originFromBaseUrl(resolveLlamaServerBaseUrl(cfg));
 }
 
 /**

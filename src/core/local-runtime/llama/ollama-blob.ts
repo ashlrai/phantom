@@ -21,7 +21,7 @@
 
 import { readFileSync, readdirSync, statSync, type Dirent } from 'node:fs';
 import { join, sep } from 'node:path';
-import { ollamaModelsRoot } from './paths.js';
+import { isRecord, ollamaModelsRoot, readBoundedJsonFile } from './paths.js';
 
 /** Media type of the weights layer inside an Ollama manifest. */
 const MODEL_MEDIA_TYPE = 'application/vnd.ollama.image.model';
@@ -67,6 +67,10 @@ export interface UnresolvedOllamaBlob {
 
 export type OllamaBlobResolution = ResolvedOllamaBlob | UnresolvedOllamaBlob;
 
+function formatCanonicalOllamaRef(namespace: string, name: string, tag: string): string {
+  return namespace === 'library' ? `${name}:${tag}` : `${namespace}/${name}:${tag}`;
+}
+
 /**
  * Parse `qwen3.8:27b-ctx64k`, `library/qwen3.8:27b-ctx64k` or a fully
  * qualified `registry.ollama.ai/library/qwen3.8:27b-ctx64k`.
@@ -108,12 +112,12 @@ export function parseOllamaModelRef(raw: string): OllamaModelRef | null {
     if (!SAFE_SEGMENT.test(segment)) return null;
   }
 
-  const canonical = namespace === 'library' ? `${name}:${tag}` : `${namespace}/${name}:${tag}`;
+  const canonical = formatCanonicalOllamaRef(namespace, name, tag);
   return { registry, namespace, name, tag, canonical };
 }
 
 /** Absolute path of the manifest file for a parsed reference. */
-export function ollamaManifestPath(ref: OllamaModelRef, root = ollamaModelsRoot()): string {
+function ollamaManifestPath(ref: OllamaModelRef, root = ollamaModelsRoot()): string {
   return join(root, 'manifests', ref.registry, ref.namespace, ref.name, ref.tag);
 }
 
@@ -131,12 +135,12 @@ interface ManifestLayer {
  * is the part that must not drift, and it is pure.
  */
 export function selectModelLayer(body: unknown): { digest: string; size: number } | null {
-  if (typeof body !== 'object' || body === null) return null;
-  const layers = (body as Record<string, unknown>)['layers'];
+  if (!isRecord(body)) return null;
+  const layers = body['layers'];
   if (!Array.isArray(layers)) return null;
 
   for (const raw of layers) {
-    if (typeof raw !== 'object' || raw === null) continue;
+    if (!isRecord(raw)) continue;
     const layer = raw as ManifestLayer;
     if (layer.mediaType !== MODEL_MEDIA_TYPE) continue;
     if (typeof layer.digest !== 'string') continue;
@@ -195,24 +199,18 @@ export function resolveOllamaRefForBlobPath(
         continue;
       }
       if (!entry.isFile()) continue;
-      try {
-        const stat = statSync(full);
-        // A manifest is small JSON; anything large is not one and reading it
-        // would be the kind of unbounded work a status probe must not do.
-        if (stat.size > 256 * 1024) continue;
-        const layer = selectModelLayer(JSON.parse(readFileSync(full, 'utf8')));
-        if (layer === null) continue;
-        if (layer.digest.toLowerCase() !== wanted) continue;
-      } catch {
-        continue;
-      }
+      // A manifest is small JSON; anything large is not one and reading it
+      // would be the kind of unbounded work a status probe must not do.
+      const manifest = readBoundedJsonFile(full, MAX_MANIFEST_BYTES);
+      const layer = selectModelLayer(manifest);
+      if (layer === null || layer.digest.toLowerCase() !== wanted) continue;
       // `manifests/<registry>/<namespace>/<name>/<tag>` -> the canonical ref.
       const parts = full.slice(manifestsRoot.length + 1).split(sep);
       if (parts.length < 4) continue;
       const tag = parts[parts.length - 1] as string;
       const name = parts[parts.length - 2] as string;
       const namespace = parts[parts.length - 3] as string;
-      return namespace === 'library' ? `${name}:${tag}` : `${namespace}/${name}:${tag}`;
+      return formatCanonicalOllamaRef(namespace, name, tag);
     }
     return null;
   };
