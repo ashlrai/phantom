@@ -59,7 +59,7 @@ final class ReauthorizationTests: XCTestCase {
     }
     XCTAssertEqual(Reauthorization.successJSON(account: .githubApp),
       "{\"v\":1,\"ok\":true,\"account\":\"github-app\",\"operation\":\"reauthorize-existing-item\"}")
-    XCTAssertEqual(CustodyCLI.version, "1.2.0")
+    XCTAssertEqual(CustodyCLI.version, "1.3.0")
   }
 
   func testHumanAuthenticationPrecedesExactlyOneExistingItemCommit() throws {

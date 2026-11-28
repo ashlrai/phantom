@@ -373,10 +373,11 @@ installed plist has drifted from config.
    judge call with a real token. Verify both in the Phase 1 shadow.
 5. **Ad-hoc signing ties the Keychain access list to one exact build.** Every
    changed helper build can require renewed trust for an existing credential.
-   Helper 1.2.0 provides `/usr/local/libexec/ashlr-custody reauthorize github-app`
+   Helper 1.3.0 provides `/usr/local/libexec/ashlr-custody reauthorize github-app`
    and, separately if needed, `reauthorize claude-token`. Run one yourself in
-   your login Terminal, without sudo or an agent. Touch ID/login-password
-   presence is followed by the OS's own Keychain access-change authorization.
+   your login Terminal, without sudo or an agent. It renews both the decrypt
+   app trust and the partition list, then asks once for the login Keychain
+   password after the existing Touch ID presence step.
    The command requires the root-owned, signed installed helper and exactly
    one existing legacy item. It changes only a supported single-helper
    decryption ACL, preserving the credential, label, other attributes and
