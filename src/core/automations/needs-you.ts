@@ -16,6 +16,7 @@ import {
 } from '../verse/workbench-types.js';
 import { readAutomations, readAutomationState } from './store.js';
 import { VERSE_AUTOMATIONS_PATH, type AutomationFiringV1, type AutomationV1 } from './types.js';
+import { truncateText } from './validate.js';
 
 const STALE_MS = 60_000;
 
@@ -23,9 +24,7 @@ let cache: NeedsYouItem[] = [];
 let cachedAt = 0;
 let refreshing: Promise<void> | null = null;
 
-const cap = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
-
-export function reviewNeedsYouItem(firing: AutomationFiringV1, automation: AutomationV1 | null): NeedsYouItem {
+function reviewNeedsYouItem(firing: AutomationFiringV1, automation: AutomationV1 | null): NeedsYouItem {
   const route = `${VERSE_AUTOMATIONS_PATH}/firings/${firing.id}`;
   const lane = automation && automation.lane !== 'leader-review' ? automation.lane : 'fleet';
   const detailParts = [`${automation?.name ?? firing.automationId} · ${firing.repo}`];
@@ -36,8 +35,8 @@ export function reviewNeedsYouItem(firing: AutomationFiringV1, automation: Autom
     source: 'fleet',
     kind: 'leader-question',
     severity: 'info',
-    title: cap(`Review: ${firing.title}`, NEEDS_YOU_TITLE_MAX),
-    detail: cap(detailParts.join(' — '), NEEDS_YOU_DETAIL_MAX),
+    title: truncateText(`Review: ${firing.title}`, NEEDS_YOU_TITLE_MAX),
+    detail: truncateText(detailParts.join(' — '), NEEDS_YOU_DETAIL_MAX),
     since: firing.dispatchedAt ?? firing.createdAt,
     expiresAt: null,
     subject: { repo: firing.repo, pr: null, seatId: null, sessionId: null, engine: null },

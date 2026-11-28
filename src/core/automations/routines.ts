@@ -20,12 +20,14 @@ export interface RoutineProbe {
 /** Every provider/account implements the same evidence boundary; no company/model switch. */
 export interface RoutineAdapter { id: string; probe(now: Date): Promise<RoutineProbe> }
 export const GROKBOT_NEXT_RESET = '2026-11-01T00:00:00.000Z';
+const ROUTINES_SCHEMA = 'phantom-routines.v1' as const;
 const root = (): string => join(ashlrHome(), 'routines');
+const routinesFile = (): string => join(root(), 'routines.json');
 const strings = (v: unknown): v is string[] => Array.isArray(v) && v.length <= 32 && v.every(identifier) && new Set(v).size === v.length;
 function invalid(): never { throw new Error('Invalid routine document or provider evidence.'); }
-export function parseRoutines(value: unknown): Routine[] {
+function parseRoutines(value: unknown): Routine[] {
   safeJson(value);
-  if (!record(value) || !exact(value, ['schema', 'routines']) || value.schema !== 'phantom-routines.v1' ||
+  if (!record(value) || !exact(value, ['schema', 'routines']) || value.schema !== ROUTINES_SCHEMA ||
       !Array.isArray(value.routines) || value.routines.length > 50) invalid();
   const rows = value.routines.map((r: unknown) => {
     if (!record(r) || !exact(r, ['id', 'schedule', 'prompt', 'capabilities', 'last_ledger_state']) ||
@@ -40,7 +42,7 @@ export function parseRoutines(value: unknown): Routine[] {
   if (new Set(rows.map(r => r.id)).size !== rows.length) invalid();
   return rows;
 }
-export function parseRoutineProbe(value: unknown, now: Date): RoutineProbe {
+function parseRoutineProbe(value: unknown, now: Date): RoutineProbe {
   if (!record(value) || !exact(value, ['health', 'quota_state', 'reset_at', 'observed_at', 'expires_at', 'cost', 'capabilities']) ||
       !['ready', 'unhealthy'].includes(String(value.health)) ||
       !['available', 'low', 'exhausted', 'unknown'].includes(String(value.quota_state)) ||
@@ -82,13 +84,13 @@ export async function rebalanceRoutines(rows: Routine[], adapters: RoutineAdapte
 }
 export async function readRoutines(): Promise<Routine[]> {
   await privateDirectory(root());
-  try { return parseRoutines(await readJson(join(root(), 'routines.json'), 16_384)); }
+  try { return parseRoutines(await readJson(routinesFile(), 16_384)); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
 }
 async function save(rows: Routine[]): Promise<void> {
-  const content = safeJson({ schema: 'phantom-routines.v1', routines: rows });
+  const content = safeJson({ schema: ROUTINES_SCHEMA, routines: rows });
   await privateDirectory(root());
-  await writePrivateFileAtomicallyAsync(join(root(), `.${randomUUID()}.tmp`), join(root(), 'routines.json'), content,
+  await writePrivateFileAtomicallyAsync(join(root(), `.${randomUUID()}.tmp`), routinesFile(), content,
     { anchorPath: ashlrHome(), label: 'Routines', beforePublish: () => undefined });
 }
 /** Merge atomically; conflicting IDs refuse instead of overwriting local work or replaying it. */
@@ -101,7 +103,7 @@ export async function importRoutines(value: unknown): Promise<Routine[]> {
       if (existing && safeJson(existing) !== safeJson(row)) throw new Error('Routine ID conflict; existing routines preserved.');
       if (!existing) rows.push(row);
     }
-    parseRoutines({ schema: 'phantom-routines.v1', routines: rows });
+    parseRoutines({ schema: ROUTINES_SCHEMA, routines: rows });
     await save(rows); return rows;
   });
 }
