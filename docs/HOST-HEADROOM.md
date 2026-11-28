@@ -23,3 +23,8 @@ The collector and pure policy live in `src/core/run/host-headroom.ts`.
 Subscription headroom remains in the browser-safe routing module. This gate
 covers the `spawnEngine` CLI path; separate resource-worker transports and API
 requests do not pass through it.
+
+Node capacity admission (`phm node join`/`beat`/`worker`) reads the same module
+through `readPlatformHostHeadroom`, which also covers Linux `/proc` and, on
+Windows, one inbox PowerShell CIM snapshot; see
+[NODE-ROUTER.md](NODE-ROUTER.md) for those bands.

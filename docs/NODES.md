@@ -166,8 +166,11 @@ normal, free-memory/swap readings must be measured, and disk must have at least
 20 GB free. Unknown telemetry holds admission; runtime pressure stops the worker.
 On macOS the kernel reading is vm_stat/sysctl; on Linux it is /proc/meminfo
 (MemAvailable and used swap) plus /proc/pressure/memory PSI `some avg10`, where
-under 10 is normal and 10 or more holds admission as memory pressure. A platform
-with no reader reports `memory-unmeasured` and stays held.
+under 10 is normal and 10 or more holds admission as memory pressure. On Windows
+it is one inbox PowerShell CIM snapshot: `Available MBytes` over physical RAM,
+used pagefile as swap, and `% Committed Bytes In Use` bands (under 80 normal,
+80–90 warning, 90+ critical). A platform with no reader reports
+`memory-unmeasured` and stays held.
 A worker launches one bounded batch
 of up to its RAM slot ceiling concurrently under one session, waits for every
 started slot, then leaves. No permanent supervisor is installed. Disk telemetry
@@ -182,8 +185,10 @@ atomic slot leases, even with different `ASHLR_HOME` directories. The registry i
 `~/.ashlr-runs/node-host-slots/<hardware-digest>/<boot-uuid>/`, using the OS account
 home rather than the process `HOME`. The hardware digest and boot UUID come from
 the macOS IOPlatformUUID and boot-session readers or, on Linux, the machine-id
-(`/etc/machine-id`, falling back to the D-Bus copy) and kernel boot_id, under
-separate digest domains so the platforms never alias one machine record. New directories are 0700 and lease files 0600;
+(`/etc/machine-id`, falling back to the D-Bus copy) and kernel boot_id, or on
+Windows the MachineGuid registry value and a SHA-256-derived boot UUID from
+`LastBootUpTime` ticks — each under separate digest domains so the platforms
+never alias one machine record. New directories are 0700 and lease files 0600;
 symlinks, ambiguous identity, malformed state and unsafe permissions hold admission.
 The lowest free slot is leased before pull and released only after runner close.
 Exhaustion reports `slots: 0, held: host-slots-exhausted`; unmeasured registry state

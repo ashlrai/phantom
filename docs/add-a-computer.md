@@ -79,8 +79,9 @@ phm node status --owner acme --json
 To report measured capacity, generate the sample on this computer and pass it to
 each beat: `--capacity "$(phm node measure)"`. When `phm node measure` exits 1
 the node is held; omit `--capacity` on that beat. See the
-[node router guide](NODE-ROUTER.md). Memory headroom is measured on macOS and
-Linux; on a platform with no reader the sample reports `memory-unmeasured`, so
+[node router guide](NODE-ROUTER.md). Memory headroom is measured on macOS,
+Linux and Windows (one inbox PowerShell CIM snapshot per read); on a platform
+with no reader the sample reports `memory-unmeasured`, so
 the router keeps work away from that node until one exists.
 
 Check that `<nodeId>` appears live with the intended caps and, for GitHub jobs,

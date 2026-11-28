@@ -1766,6 +1766,7 @@
     "src/core/util/scrub-secrets.ts",
     "src/core/util/scrub.ts",
     "src/core/util/stable-file-read.ts",
+    "src/core/util/windows-powershell.ts",
     "src/core/verse/account-health.ts",
     "src/core/verse/accounts.ts",
     "src/core/verse/adapters/claude.ts",

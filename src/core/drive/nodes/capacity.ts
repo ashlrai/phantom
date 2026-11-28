@@ -19,7 +19,8 @@ export interface CapacityOptions {
   resourceHint?: PackResourceHint;
   readCpu?: () => { parallelism: number; load: number[] } | null;
   /** Injected memory-headroom reader; defaults to the platform reader (macOS
-   * kernel telemetry, Linux /proc; other platforms read nothing and hold). */
+   * kernel telemetry, Linux /proc, Windows CIM; other platforms read nothing
+   * and hold). */
   readMemory?: () => HostHeadroom | null;
   /** Injected free-disk reader in bytes; defaults to statfs of the home directory. */
   readDisk?: () => number | null;

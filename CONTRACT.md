@@ -2628,8 +2628,9 @@ integer `availableParallelism`; one-minute load plus one must fit parallelism.
 `omlx-chat` opts in; API/probe packs and unspecified hints retain memory-only
 admission. Existing RAM, pressure, disk and light-profile limits are unchanged.
 `readNodeCapacity` samples headroom through `readPlatformHostHeadroom`: macOS
-kernel telemetry or Linux /proc (meminfo plus PSI); other platforms read nothing
-and hold `memory-unmeasured`.
+kernel telemetry, Linux /proc (meminfo plus PSI), or Windows CIM (`Available
+MBytes`, commit charge over commit limit, used pagefile) through the inbox
+PowerShell; other platforms read nothing and hold `memory-unmeasured`.
 
 `readNodeCapacity` applies `shareNodeCapacity(capacity, options?)`, with optional
 injected `HostSlots` registry/owned `HostSlotLease`. The physical host's existing
@@ -2643,8 +2644,9 @@ New `NodeCapacity.held` values are `host-slots-exhausted`,
 `host-slots-unmeasured`, `cpu-pressure`, and `cpu-unmeasured`, always with zero
 slots. Pool `status` includes local `capacity`; worker results report holds.
 The private registry uses native hardware digest/boot identity (macOS
-IOPlatformUUID and boot-session UUID, or Linux machine-id and kernel boot_id
-under a separate digest domain); missing identity,
+IOPlatformUUID and boot-session UUID, Linux machine-id and kernel boot_id, or
+Windows MachineGuid and a SHA-256-derived boot UUID from LastBootUpTime ticks,
+each under a separate digest domain); missing identity,
 unsafe paths or corrupt state hold admission. Leases have no time-based expiry:
 a crashed worker's reservation remains until verified offline cleanup or reboot.
 See [node admission](docs/NODES.md#small-mac-enrollment-and-admission).

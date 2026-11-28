@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { assessHostHeadroom, createHostHeadroomGate, parseLinuxPressureLevel, parsePressureLevel, parseSwapUsage,
-  parseVmStat, readLinuxHostHeadroom, readMacHostHeadroom } from '../src/core/run/host-headroom.js';
+  parseVmStat, parseWindowsMemoryTelemetry, readLinuxHostHeadroom, readMacHostHeadroom,
+  readWindowsHostHeadroom } from '../src/core/run/host-headroom.js';
 
 const vm = readFileSync(new URL('./fixtures/host-headroom/vm_stat.txt', import.meta.url), 'utf8');
 const swap = readFileSync(new URL('./fixtures/host-headroom/swapusage.txt', import.meta.url), 'utf8');
@@ -136,5 +137,68 @@ describe('Linux /proc memory telemetry', () => {
     expect(readLinuxHostHeadroom(path => path === '/proc/meminfo' ? meminfo : null)).toBeNull();
     expect(readLinuxHostHeadroom(path => path === '/proc/pressure/memory' ? pressure('1.00') : 'garbage')).toBeNull();
     expect(readLinuxHostHeadroom(() => { throw new Error('private kernel details'); })).toBeNull();
+  });
+});
+
+describe('Windows CIM memory telemetry', () => {
+  const GIB = 1024 ** 3;
+  const telemetry = (fields: Record<string, number> = {}): string => {
+    const f = { totalKB: 16 * GIB / 1024, availMB: 8 * GIB / 1024 ** 2,
+      committedBytes: 12 * GIB, commitLimitBytes: 24 * GIB, pagefileUsedMB: 4 * GIB / 1024 ** 2, ...fields };
+    return `totalKB=${f.totalKB}\navailMB=${f.availMB}\ncommittedBytes=${f.committedBytes}\n`
+      + `commitLimitBytes=${f.commitLimitBytes}\npagefileUsedMB=${f.pagefileUsedMB}\n`;
+  };
+
+  it('parses the five key=value lines into bytes', () => {
+    expect(parseWindowsMemoryTelemetry(telemetry())).toEqual({
+      totalBytes: 16 * GIB, availableBytes: 8 * GIB,
+      committedBytes: 12 * GIB, commitLimitBytes: 24 * GIB,
+      pagefileUsedBytes: 4 * GIB,
+    });
+    expect(parseWindowsMemoryTelemetry(telemetry().replaceAll('\n', '\r\n'))).not.toBeNull();
+  });
+
+  it.each([
+    [''], [null], ['totalKB=1'], [telemetry().replace('availMB=8192', 'availMB=')],
+    [telemetry() + 'availMB=1\n'], [telemetry().replace('totalKB=16777216', 'totalKB=16777216.0')],
+    [telemetry().replace('totalKB=16777216', 'totalKB=-1')], [telemetry({ totalKB: 0 })],
+    [telemetry({ availMB: 32 * 1024 })], [telemetry({ commitLimitBytes: 0 })],
+    [telemetry({ committedBytes: 25 * GIB })], ['warning text\n' + telemetry()],
+    [telemetry({ committedBytes: Number.MAX_SAFE_INTEGER + 1 })],
+  ])('rejects missing, duplicated, malformed or inconsistent telemetry %j', (text) => {
+    expect(parseWindowsMemoryTelemetry(text as string | null)).toBeNull();
+  });
+
+  it('maps committed-bytes share to pressure bands', () => {
+    const read = (committed: number) =>
+      readWindowsHostHeadroom(() => telemetry({ committedBytes: committed, commitLimitBytes: 100 * GIB }), 'C:\\Windows');
+    expect(read(79 * GIB)?.pressureLevel).toBe(1);
+    expect(read(80 * GIB)?.pressureLevel).toBe(2);
+    expect(read(89 * GIB)?.pressureLevel).toBe(2);
+    expect(read(90 * GIB)?.pressureLevel).toBe(4);
+    expect(read(100 * GIB)?.pressureLevel).toBe(4);
+  });
+
+  it('reads available share, pagefile use and level through the fixed PowerShell path', () => {
+    const read = vi.fn<(file: string, args: string[]) => string>(() => telemetry());
+    expect(readWindowsHostHeadroom(read, 'C:\\Windows')).toEqual({ freePercent: 50, swapGb: 4, pressureLevel: 1 });
+    const [file, args] = read.mock.calls[0]!;
+    expect(String(file)).toMatch(/WindowsPowerShell\\v1\.0\\powershell\.exe$/);
+    expect(args.slice(0, 6)).toEqual(['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand']);
+    const script = Buffer.from(String(args[6]), 'base64').toString('utf16le');
+    for (const name of ['Win32_OperatingSystem', 'Win32_PerfFormattedData_PerfOS_Memory', 'Win32_PageFileUsage']) {
+      expect(script).toContain(name);
+    }
+    expect(script).toContain('AvailableMBytes');
+    expect(script).toContain('CommittedBytes');
+    expect(script).toContain('CommitLimit');
+  });
+
+  it('fails closed on command errors, partial output and unusable roots', () => {
+    expect(readWindowsHostHeadroom(() => { throw new Error('private process details'); }, 'C:\\Windows')).toBeNull();
+    expect(readWindowsHostHeadroom(() => 'totalKB=1\n', 'C:\\Windows')).toBeNull();
+    for (const root of ['', '/unix/root', 'C:\\Windows\\evil\n', 'relative\\path']) {
+      expect(readWindowsHostHeadroom(vi.fn(() => telemetry()), root)).toBeNull();
+    }
   });
 });

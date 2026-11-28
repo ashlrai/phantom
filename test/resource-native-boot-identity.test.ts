@@ -50,7 +50,7 @@ describe('bounded local native boot identity', () => {
     expect(readNativeBootIdentity()).toBeNull();
   });
 
-  it.each(['win32', 'freebsd'])('does not launch commands on unsupported platform %s', (value) => {
+  it.each(['freebsd', 'aix', 'sunos'])('does not launch commands on unsupported platform %s', (value) => {
     Object.defineProperty(process, 'platform', { ...platform, value });
     expect(readNativeBootIdentity()).toBeNull(); expect(exec).not.toHaveBeenCalled();
   });
@@ -97,5 +97,61 @@ describe('Linux boot identity', () => {
     [{ ...files, '/etc/machine-id': `${machineId.slice(0, 31)}\n` }],
   ])('fails closed on missing or malformed Linux identity %#', (map) => {
     expect(readNativeBootIdentity(read(map))).toBeNull();
+  });
+});
+
+describe('Windows boot identity', () => {
+  const ticks = '639233256780000000';
+  const snapshot = (guid = machine, bootTicks = ticks) => `machineGuid=${guid}\nbootTicks=${bootTicks}\n`;
+  beforeEach(() => {
+    Object.defineProperty(process, 'platform', { ...platform, value: 'win32' });
+    vi.stubEnv('SystemRoot', 'C:\\Windows');
+  });
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it('hashes MachineGuid under the windows domain and derives a stable UUID boot id', () => {
+    exec.mockReturnValueOnce(snapshot());
+    const identity = readNativeBootIdentity();
+    expect(identity?.machineDigest).toBe(
+      createHash('sha256').update(`ashlr-native-machine-v1\0windows\0${machine}`).digest('hex'));
+    expect(identity?.bootId).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/);
+    expect(identity?.bootId).not.toBe('00000000-0000-0000-0000-000000000000');
+    const [file, args] = exec.mock.calls[0]!;
+    expect(String(file)).toMatch(/WindowsPowerShell\\v1\.0\\powershell\.exe$/);
+    expect(args.slice(0, 6)).toEqual(['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand']);
+    const script = Buffer.from(String(args[6]), 'base64').toString('utf16le');
+    expect(script).toContain('MachineGuid');
+    expect(script).toContain('Win32_OperatingSystem');
+    exec.mockReturnValueOnce(snapshot());
+    expect(readNativeBootIdentity()?.bootId).toBe(identity?.bootId);
+    exec.mockReturnValueOnce(snapshot(machine, '639233256790000000'));
+    expect(readNativeBootIdentity()?.bootId).not.toBe(identity?.bootId);
+  });
+
+  it.each([
+    ['missing keys', ''],
+    ['guid only', 'machineGuid=' + machine + '\n'],
+    ['ticks only', 'bootTicks=' + ticks + '\n'],
+    ['duplicate key', snapshot() + 'bootTicks=' + ticks + '\n'],
+    ['unknown line', 'banner\n' + snapshot()],
+    ['malformed guid', snapshot('not-a-uuid')],
+    ['zero guid', snapshot('00000000-0000-0000-0000-000000000000')],
+    ['non-digit ticks', snapshot(machine, 'not-digits')],
+    ['negative ticks', snapshot(machine, '-1')],
+    ['zero ticks', snapshot(machine, '0')],
+    ['ticks above DateTime.MaxValue', snapshot(machine, '4000000000000000000')],
+    ['decimal ticks', snapshot(machine, '639233256780000000.5')],
+  ])('fails closed on %s', (_label, text) => {
+    exec.mockReturnValueOnce(text);
+    expect(readNativeBootIdentity()).toBeNull();
+  });
+
+  it('fails closed on command errors and a missing system root', () => {
+    exec.mockImplementationOnce(() => { throw new Error('private process details'); });
+    expect(readNativeBootIdentity()).toBeNull();
+    vi.stubEnv('SystemRoot', '');
+    exec.mockReturnValueOnce(snapshot());
+    expect(readNativeBootIdentity()).toBeNull();
+    expect(exec).toHaveBeenCalledTimes(1);
   });
 });
