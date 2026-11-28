@@ -3,6 +3,7 @@
  * text, so none can appear here. */
 import type { WorkBoardResult } from './work-board.js';
 import type { WorkItemState } from './work-item-state.js';
+import { scrubSecrets } from '../util/scrub.js';
 
 const ORDER: WorkItemState[] = ['BLOCKED', 'RUNNING', 'ASSIGNED', 'RECEIVED', 'VERIFIED'];
 const MAX_ATTENTION_LINES = 3;
@@ -26,7 +27,11 @@ export function summarizeWorkBoard(board: WorkBoardResult, now: Date): string[] 
     ...board.items.filter(item => item.state === 'RECEIVED' && item.missing.includes('named owner')),
   ].slice(0, MAX_ATTENTION_LINES).map(item => {
     const missing = item.missing.map(entry => label(entry, 40)).join(', ');
-    return `${item.state} ${label(item.id, 12)} (${label(item.channel, 24)})${missing ? `: missing ${missing}` : ''}`;
+    const raw = item.state === 'BLOCKED' && item.result?.kind === 'blocked' ? item.result.dependency.trim() : '';
+    const dependency = raw && raw.toLowerCase() !== 'unknown'
+      ? scrubSecrets(raw).replace(/[\p{Cc}\u2028\u2029]+/gu, ' ').trim().slice(0, 120) : '';
+    const details = [dependency && `dependency ${dependency}`, missing && `missing ${missing}`].filter(Boolean).join('; ');
+    return `${item.state} ${label(item.id, 12)} (${label(item.channel, 24)})${details ? `: ${details}` : ''}`;
   });
   return [head, ...attention];
 }
