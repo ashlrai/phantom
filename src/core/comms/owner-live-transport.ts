@@ -5,6 +5,8 @@
  */
 import { parseSlackThreadRef, isSlackUserId } from '../agents/slack-network.js';
 import { loadConfigAt } from '../config.js';
+import type { TelegramSendOpts, TelegramSendResult } from '../integrations/telegram.js';
+import type { AshlrConfig } from '../types.js';
 import { OWNER_SECRET_HANDLES, fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings, type OwnerChannelTransport, type OwnerThreadSettings } from './owner-channel.js';
 import type { OwnerChannel } from './leader-mailbox.js';
 
@@ -13,6 +15,7 @@ type SlackProbe = (method: string, input?: Record<string, unknown>) => Promise<R
 export interface LiveTransportDeps {
   sendMail?: (message: { to: string; subject: string; body: string }) => Promise<{ ok: boolean }>;
   slackCall?: SlackProbe;
+  telegramSend?: (text: string, opts: TelegramSendOpts | undefined, cfg: AshlrConfig) => Promise<TelegramSendResult>;
 }
 
 function refused(): { status: 'refused'; reason: string } {
@@ -85,11 +88,16 @@ export function liveOwnerTransports(settings: OwnerThreadSettings, _runsDir: str
       async deliver(input) {
         const fixed = loadOwnerThreadSettings(fixedOwnerConfigDir());
         if (fixed.secretHandles.telegram !== OWNER_SECRET_HANDLES.telegram || input.ownerId !== fixed.owners.telegram) return refused();
-        const { sendTelegramMessage } = await import('../integrations/telegram.js');
+        const { sendTelegramMessage, telegramReplyMessageId } = await import('../integrations/telegram.js');
         const cfg = loadConfigAt(fixedOwnerConfigDir());
         const chatId = cfg.comms?.telegram?.chatId;
         if (!chatId || input.ownerId !== `telegram:${chatId}`) return refused();
-        const result = await sendTelegramMessage(input.text, undefined, cfg);
+        // The stored channel ref is the inbound message id; a reply threads
+        // under it like every other Telegram send, and a missing or foreign
+        // ref shape still sends unthreaded rather than failing the reply.
+        const replyToMessageId = telegramReplyMessageId(input.channelRef);
+        const send = deps.telegramSend ?? sendTelegramMessage;
+        const result = await send(input.text, replyToMessageId ? { replyToMessageId } : undefined, cfg);
         return result.ok ? { status: 'sent', reason: 'sent' } : refused();
       },
     },

@@ -34,7 +34,7 @@
  * best-effort; a failed Telegram send never unwrites an accepted entry.
  */
 
-import { sendTelegramMessage, type InboundEvent, type TelegramSendOpts, type TelegramSendResult } from '../integrations/telegram.js';
+import { sendTelegramMessage, telegramReplyMessageId, type InboundEvent, type TelegramSendOpts, type TelegramSendResult } from '../integrations/telegram.js';
 import { createChannelReceiver, OPERATOR_SENDER_ID, type ChannelAck, type ChannelMessage, type ChannelReceiveResult } from '../fleet/channel-envelope.js';
 import { formatChannelAck } from '../fleet/channel-ack-text.js';
 import type { AshlrConfig } from '../types.js';
@@ -92,10 +92,9 @@ export async function deliverTelegramCosResult(id: string, approvedDigest: strin
   cfg: AshlrConfig, deps: TelegramInboxDeps = {}): Promise<void> {
   await deliverCosResult(id, approvedDigest, async draft => {
     const owner = configuredOwnerIds(cfg)[0];
+    const replyToMessageId = telegramReplyMessageId(draft.origin.threadId);
     if (!owner || draft.origin.channel !== 'telegram' || draft.origin.senderId !== `telegram:${owner}` ||
-        !/^[1-9]\d*$/.test(draft.origin.threadId ?? '')) throw new Error('No verified Telegram origin');
-    const replyToMessageId = Number(draft.origin.threadId);
-    if (!Number.isSafeInteger(replyToMessageId)) throw new Error('Invalid Telegram origin');
+        replyToMessageId === undefined) throw new Error('No verified Telegram origin');
     const result = await (deps.send ?? sendTelegramMessage)(draft.text, { replyToMessageId }, cfg);
     if (!result.ok) throw new Error('Telegram delivery failed');
     if (result.messageId) recordTelegramMessages([result.messageId], { kind: 'update', threadId: id });

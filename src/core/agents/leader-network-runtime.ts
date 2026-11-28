@@ -176,10 +176,9 @@ export function defaultLeaderDelivery(cfg: AshlrConfig, options: LeaderRuntimeOp
       return createSlackLeaderAdapter({ ...options, call: options.slackCall }).deliver(identity, message);
     }
     if (identity.channel === 'telegram') {
-      const { sendTelegramMessage } = await import('../integrations/telegram.js');
+      const { sendTelegramMessage, telegramReplyMessageId } = await import('../integrations/telegram.js');
       if (cfg.comms?.enabled !== true || identity.id !== `telegram:${cfg.comms.telegram?.chatId}`) return { status: 'refused', reason: 'No matching configured private channel.' };
-      const ref = message.channel_ref;
-      const replyToMessageId = ref && /^[1-9]\d*$/.test(ref) && Number.isSafeInteger(Number(ref)) ? Number(ref) : undefined;
+      const replyToMessageId = telegramReplyMessageId(message.channel_ref);
       const result = await sendTelegramMessage(text, replyToMessageId ? { replyToMessageId } : undefined, cfg);
       if (!result.ok) throw new Error('Channel delivery outcome is unconfirmed.');
       return { status: 'sent', reason: 'Channel transport accepted the reply.' };

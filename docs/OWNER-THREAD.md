@@ -2,7 +2,10 @@
 
 One ordered thread for the owner. Desktop, Telegram, email, iMessage and Slack
 all land here. A leader reply goes back to the channel the owner used and to
-the desktop thread. Ordinary owner-thread messages and replies are not broadcast
+the desktop thread. Where the channel keeps a thread reference — Slack's DM
+thread, Telegram's inbound message id — the reply is posted as a reply to the
+owner's message; a missing or foreign-shaped reference never blocks the send.
+Ordinary owner-thread messages and replies are not broadcast
 into agent group chats. The separately gated, explicit agent-chat share below is
 an opt-in exception for selected text, not a mirror of this thread.
 
