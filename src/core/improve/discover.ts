@@ -2225,6 +2225,24 @@
  *     item; a missing log is a clean empty source, items emit only
  *     for the fleet's own repository since the bus describes this
  *     install's machinery and carries no repo column;
+ *   - the Ideas surface's owner verdicts: every "not now"/"never"
+ *     answer on a surfaced idea appends one line to
+ *     ~/.ashlr/idea-verdicts.jsonl, whose only readers were the
+ *     suppression map (liveIdeaVerdicts keeps verdicted ideas from
+ *     resurfacing) and one prompt block (declinedIdeaFeedback feeds
+ *     the ten most recent live reasons into the generative invent
+ *     prompt) — so an owner who keeps marking distinct ideas 'never'
+ *     inside the window was telling the machinery its aim is wrong
+ *     with the signal queued as nothing (ideaVerdictBacklogItems
+ *     below). An item emits only at the recurring bar of distinct
+ *     'never'-verdicted ideas inside the 7-day window; 'not now'
+ *     deferrals are quoted as context since a deferral is
+ *     prioritization, reason text is never quoted (free owner
+ *     prose), idea ids quote only inside a conservative printable
+ *     shape with the WorkSource segment tallied per producer,
+ *     truncated tails are stated as lower bounds, and items emit
+ *     only for the fleet's own repository since the verdicts carry
+ *     no repo column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title: running discovery again adds only what is new and
@@ -2410,6 +2428,7 @@ import { poolDetectBacklogItems } from './pool-detect-backlog.js';
 import { modelRadarBacklogItems } from './model-radar-backlog.js';
 import { racingOutcomeBacklogItems } from './racing-outcome-backlog.js';
 import { busHopBacklogItems } from './bus-hop-backlog.js';
+import { ideaVerdictBacklogItems } from './idea-verdict-backlog.js';
 
 export interface DiscoverDeps {
   gh?: AutomationGh;
@@ -5052,6 +5071,23 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // and an unreadable one yields the degraded item. Read-only and
   // bounded; items emit only for the fleet's own repository.
   await feed('busHopBacklogItems', () => busHopBacklogItems({ repo }));
+
+  // Owner idea verdicts: every "not now"/"never" answer on the Ideas
+  // surface appends one line to ~/.ashlr/idea-verdicts.jsonl, and the
+  // journal's only readers were the suppression map (liveIdeaVerdicts
+  // keeps verdicted ideas from resurfacing) and one prompt block
+  // (declinedIdeaFeedback feeds the ten most recent live reasons into
+  // the generative invent prompt) — so an owner who keeps marking
+  // distinct ideas 'never' inside the window was telling the machinery
+  // its aim is wrong (scanner mix, scoring weights, generative
+  // direction) with the signal visible to no session and queued as
+  // nothing. A cell emits only at the recurring bar of distinct
+  // 'never'-verdicted ideas inside the 7-day window; 'not now'
+  // deferrals are quoted as context since a deferral is prioritization,
+  // reason text is never quoted (free owner prose), truncated tails are
+  // stated as lower bounds, and only the fleet's own repository
+  // inherits the item since the verdicts carry no repo column.
+  await feed('ideaVerdictBacklogItems', () => ideaVerdictBacklogItems({ repo }));
   return { items, errors };
 }
 
