@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. One hundred thirty-seven sources, all of which Phantom
+ * evidence instead of a hand-kept list. One hundred fifty sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -959,6 +959,28 @@
  *     stated as lower bounds, legacy .log files and lock files are not
  *     folded, and items emit only for the fleet's own repository since
  *     the journal carries no repo column;
+ *   - the agent-action ledger's recurring adverse cells: the sanitized
+ *     AgentActionEvent rows recordAgentAction
+ *     (src/core/fleet/agent-action-ledger.ts) appends per fleet action
+ *     to <ashlr>/agent-actions/<UTC-date>.jsonl — the daemon loop's
+ *     tick/selection/dispatch/repair records, the sandboxed engine's
+ *     per-run telemetry, leader-seat role completions and the
+ *     merge/judge surfaces — until now read only by point-in-time
+ *     surfaces (the web workspace card, control recent actions, the
+ *     verse outcome-task context, the autonomy trajectory folds), so
+ *     an action that keeps ending 'failed' or keeps landing in the
+ *     writer's honest 'unknown' bucket never became work
+ *     (agentActionsBacklogItems below). A cell keyed on actor, kind,
+ *     action, outcome, reason, backend, source and tier emits only at
+ *     the recurring bars of three in-window records across two
+ *     distinct UTC days inside the 14-day window — adverse outcomes on
+ *     this high-volume stream are sparse, so the window is double the
+ *     sibling convention — while 'skipped', 'blocked' and the
+ *     lifecycle/success outcomes stay out as the writer's
+ *     deliberate-hold and normal-flow vocabulary, partition reads are
+ *     bounded no-follow tails with truncation stated as lower bounds,
+ *     and items emit only for the fleet's own repository since the
+ *     journal describes this install's machinery;
  *   - the owner-thread delivery ledger's recurring failed deliveries:
  *     the {messageId, channel, state, reason?, at} rows recordDelivery
  *     (src/core/leader/delivery-receipts.ts) appends per fanout
@@ -2301,6 +2323,7 @@ import { marketPostureBacklogItems } from './market-posture-backlog.js';
 import { liveConfigBacklogItems } from './live-config-backlog.js';
 import { leaderRepliesBacklogItems } from './leader-replies-backlog.js';
 import { agentDiagnosticsBacklogItems } from './agent-diagnostics-backlog.js';
+import { agentActionsBacklogItems } from './agent-actions-backlog.js';
 import { deliveryReceiptsBacklogItems } from './delivery-receipts-backlog.js';
 import { postrunBacklogItems } from './postrun-backlog.js';
 import { usageLiveAlertsBacklogItems } from './usage-live-alerts-backlog.js';
@@ -3793,6 +3816,24 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // the items since the journal describes this install's engine
   // invocations and carries no repo column.
   await feed('agentDiagnosticsBacklogItems', () => agentDiagnosticsBacklogItems({ repo }));
+
+  // Agent-action ledger (<ashlr>/agent-actions/<UTC-date>.jsonl): the
+  // sanitized AgentActionEvent rows recordAgentAction appends per fleet
+  // action — daemon tick/selection/dispatch/repair records, sandboxed
+  // engine runs, leader-seat role completions, merge/judge surfaces —
+  // recurring 'failed' and 'unknown' outcomes become backlog items too.
+  // Until now the journal's only readers were point-in-time surfaces
+  // (the web workspace card, control recent actions, the verse
+  // outcome-task context, the autonomy trajectory folds), so an action
+  // that keeps failing or keeps landing unclassified never became
+  // work. The read mirrors the writer's partition layout with bounded
+  // no-follow tails; a cell emits at three in-window records across two
+  // distinct UTC days inside the 14-day window — 'skipped', 'blocked'
+  // and the lifecycle/success outcomes are the writer's
+  // deliberate-hold and normal-flow vocabulary and never emit — and
+  // only the fleet's own repository inherits the items since the
+  // journal describes this install's machinery.
+  await feed('agentActionsBacklogItems', () => agentActionsBacklogItems({ repo }));
 
   // Owner-thread delivery ledger (<runs>/leader/delivery-receipts.jsonl):
   // the {messageId, channel, state, reason?, at} rows recordDelivery
